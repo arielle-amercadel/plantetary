@@ -14,15 +14,19 @@ import type {
 } from "./quest-types";
 import {
   addCalendarDays,
+  addQuestToHistoryAtDate,
   createSnapshot,
   dateFromKey,
   findCategoryMatch,
+  getXpLedgerTotal,
   getLocalDateKey,
-  getQuestXp,
   getSnapshotStatus,
   getStreakValues,
-  addQuestToHistory,
-  removeQuestFromHistory,
+  migrateStoredData,
+  recordPersonalXpAward,
+  removeQuestFromHistoryAtDate,
+  reversePersonalXpAward,
+  toggleDailyQuestCompletion,
   weekdayNames,
   weekdays,
 } from "./quest-logic";
@@ -59,6 +63,18 @@ function isCompletionHistory(value: unknown): value is CompletionHistory {
 }
 
 const questStorageKey = "plantetary-quest-data";
+const validBackupStorageKey = "plantetary-quest-data-backup-v1";
+const invalidBackupStorageKey = "plantetary-quest-data-invalid-backup";
+
+function preserveRawValueIfAbsent(backupKey: string, rawValue: string): boolean {
+  try {
+    if (window.localStorage.getItem(backupKey) !== null) return true;
+    window.localStorage.setItem(backupKey, rawValue);
+    return window.localStorage.getItem(backupKey) === rawValue;
+  } catch {
+    return false;
+  }
+}
 
 const initialCategoryLists: CategoryLists = {
   daily: ["Wellness", "Self-care", "Personal growth"],
@@ -128,6 +144,11 @@ const initialQuestLists: QuestLists = {
   ],
 };
 
+const initialStoredQuestData = migrateStoredData({
+  questLists: initialQuestLists,
+  categoryLists: initialCategoryLists,
+});
+
 function isQuest(value: unknown): value is Quest {
   if (typeof value !== "object" || value === null) return false;
 
@@ -187,45 +208,78 @@ type QuestStoreValue = {
 const QuestStoreContext = createContext<QuestStoreValue | null>(null);
 
 export function QuestProvider({ children }: { children: ReactNode }) {
-  const [questLists, setQuestLists] = useState(initialQuestLists);
-  const [categoryLists, setCategoryLists] = useState(initialCategoryLists);
-  const [completionHistory, setCompletionHistory] = useState<CompletionHistory>({});
+  const [questLists, setQuestLists] = useState(initialStoredQuestData.questLists);
+  const [categoryLists, setCategoryLists] = useState(initialStoredQuestData.categoryLists);
+  const [completionHistory, setCompletionHistory] = useState<CompletionHistory>(
+    initialStoredQuestData.completionHistory ?? {},
+  );
+  const [personalXpByQuestId, setPersonalXpByQuestId] = useState<Record<string, number> | undefined>(
+    initialStoredQuestData.personalXpByQuestId,
+  );
+  const [legacyXpBonus, setLegacyXpBonus] = useState(initialStoredQuestData.legacyXpBonus ?? 0);
+  const [schemaVersion, setSchemaVersion] = useState(initialStoredQuestData.schemaVersion ?? 2);
   const [todayKey, setTodayKey] = useState("");
   const [hasRestored, setHasRestored] = useState(false);
+  const [canPersistStorage, setCanPersistStorage] = useState(true);
 
   useEffect(() => {
-    let restoredQuestLists = initialQuestLists;
-    let restoredCategoryLists = initialCategoryLists;
-    let restoredCompletionHistory: CompletionHistory = {};
+    let canPersist = true;
+    let restoredData = initialStoredQuestData;
 
     try {
       if (typeof window !== "undefined") {
-        const savedData = window.localStorage.getItem(questStorageKey);
-        if (savedData) {
-          const parsedData: unknown = JSON.parse(savedData);
+        const rawData = window.localStorage.getItem(questStorageKey);
+        if (rawData !== null) {
+          let parsedData: unknown;
+          try {
+            parsedData = JSON.parse(rawData);
+          } catch {
+            parsedData = undefined;
+          }
+
           if (isStoredQuestData(parsedData)) {
-            restoredQuestLists = parsedData.questLists;
-            restoredCategoryLists = parsedData.categoryLists;
-            if (isCompletionHistory(parsedData.completionHistory)) {
-              restoredCompletionHistory = parsedData.completionHistory;
+            const validHistory = parsedData.completionHistory === undefined ||
+              isCompletionHistory(parsedData.completionHistory);
+            const validatedData: StoredQuestData = validHistory
+              ? parsedData
+              : { ...parsedData, completionHistory: undefined };
+            const migratedData = migrateStoredData(validatedData);
+            if (
+              (migratedData !== validatedData || validatedData !== parsedData) &&
+              !preserveRawValueIfAbsent(validBackupStorageKey, rawData)
+            ) {
+              canPersist = false;
+              console.error("Plantetary could not back up saved data before migrating it. Changes will not be saved this session.");
             }
+            restoredData = migratedData;
+          } else if (!preserveRawValueIfAbsent(invalidBackupStorageKey, rawData)) {
+            canPersist = false;
+            console.error("Plantetary could not back up invalid saved data. Defaults will not overwrite it this session.");
           }
         }
       }
-    } catch {}
+    } catch {
+      canPersist = false;
+      console.error("Plantetary could not safely access saved data. Changes will not be saved this session.");
+    }
 
     queueMicrotask(() => {
       const restoredToday = getLocalDateKey(new Date());
-      if (!restoredCompletionHistory[restoredToday]) {
-        restoredCompletionHistory[restoredToday] = createSnapshot(
-          restoredQuestLists.daily,
-          dateFromKey(restoredToday),
-        );
-      }
-      setQuestLists(restoredQuestLists);
-      setCategoryLists(restoredCategoryLists);
-      setCompletionHistory(restoredCompletionHistory);
+      const restoredHistory = restoredData.completionHistory ?? {};
+      const completionHistory = restoredHistory[restoredToday]
+        ? restoredHistory
+        : {
+          ...restoredHistory,
+          [restoredToday]: createSnapshot(restoredData.questLists.daily, dateFromKey(restoredToday)),
+        };
+      setQuestLists(restoredData.questLists);
+      setCategoryLists(restoredData.categoryLists);
+      setCompletionHistory(completionHistory);
+      setPersonalXpByQuestId(restoredData.personalXpByQuestId);
+      setLegacyXpBonus(restoredData.legacyXpBonus ?? 0);
+      setSchemaVersion(restoredData.schemaVersion ?? 2);
       setTodayKey(restoredToday);
+      setCanPersistStorage(canPersist);
       setHasRestored(true);
     });
   }, []);
@@ -247,21 +301,26 @@ export function QuestProvider({ children }: { children: ReactNode }) {
   }, [questLists.daily]);
 
   useEffect(() => {
-    if (!hasRestored || typeof window === "undefined") return;
+    if (!hasRestored || !canPersistStorage || typeof window === "undefined") return;
 
     try {
       window.localStorage.setItem(
         questStorageKey,
-        JSON.stringify({ questLists, categoryLists, completionHistory }),
+        JSON.stringify({
+          schemaVersion,
+          questLists,
+          categoryLists,
+          completionHistory,
+          personalXpByQuestId,
+          legacyXpBonus,
+        }),
       );
     } catch {
       return;
     }
-  }, [hasRestored, questLists, categoryLists, completionHistory, todayKey]);
+  }, [hasRestored, canPersistStorage, questLists, categoryLists, completionHistory, personalXpByQuestId, legacyXpBonus, schemaVersion, todayKey]);
 
-  const totalXp = [...questLists.daily, ...questLists.personal]
-    .filter((quest) => quest.completed)
-    .reduce((total, quest) => total + getQuestXp(quest.difficulty), 0);
+  const totalXp = getXpLedgerTotal(completionHistory, personalXpByQuestId, legacyXpBonus);
   const historyForDisplay = completionHistory;
   const streaks = todayKey
     ? getStreakValues(historyForDisplay, todayKey)
@@ -296,8 +355,9 @@ export function QuestProvider({ children }: { children: ReactNode }) {
 
   function addQuest(list: QuestListKey, quest: Quest) {
     updateQuestList(list, (quests) => [...quests, quest]);
-    if (list === "daily" && todayKey !== "") {
-      setCompletionHistory((current) => addQuestToHistory(current, quest, todayKey));
+    if (list === "daily") {
+      const actionDate = new Date();
+      setCompletionHistory((current) => addQuestToHistoryAtDate(current, quest, actionDate));
     }
   }
 
@@ -313,30 +373,30 @@ export function QuestProvider({ children }: { children: ReactNode }) {
   }
 
   function toggleQuest(list: QuestListKey, questId: string) {
-    if (list === "daily" && todayKey) {
+    if (list === "daily") {
+      const actionDateKey = getLocalDateKey(new Date());
       const quest = questLists.daily.find((item) => item.id === questId);
-      const snapshot = completionHistory[todayKey]
-        ?? createSnapshot(questLists.daily, dateFromKey(todayKey));
-      if (quest && snapshot.scheduledQuestIds.includes(questId)) {
-        const isCompletedToday = snapshot.completedQuestIds.includes(questId);
-        const nextCompletedIds = new Set(snapshot.completedQuestIds);
-        if (isCompletedToday) nextCompletedIds.delete(questId);
-        else nextCompletedIds.add(questId);
-        setCompletionHistory((current) => {
-          return {
-            ...current,
-            [todayKey]: {
-              scheduledQuestIds: current[todayKey]?.scheduledQuestIds ?? snapshot.scheduledQuestIds,
-              completedQuestIds: [...nextCompletedIds],
-            },
-          };
-        });
+      const actionSnapshot = completionHistory[actionDateKey];
+      if (quest && actionSnapshot?.scheduledQuestIds.includes(questId)) {
+        setCompletionHistory((current) =>
+          toggleDailyQuestCompletion(current, actionDateKey, questId, quest.difficulty),
+        );
         updateQuestList(list, (quests) => quests.map((item) =>
-          item.id === questId ? { ...item, completed: !isCompletedToday } : item,
+          item.id === questId ? { ...item, completed: !item.completed } : item,
         ));
         return;
       }
     }
+
+    if (list === "personal") {
+      const quest = questLists.personal.find((item) => item.id === questId);
+      if (quest) {
+        setPersonalXpByQuestId((current) => quest.completed
+          ? reversePersonalXpAward(current, questId)
+          : recordPersonalXpAward(current, questId, quest.difficulty));
+      }
+    }
+
     updateQuestList(list, (quests) =>
       quests.map((quest) =>
         quest.id === questId ? { ...quest, completed: !quest.completed } : quest,
@@ -346,8 +406,9 @@ export function QuestProvider({ children }: { children: ReactNode }) {
 
   function deleteQuest(list: QuestListKey, questId: string) {
     updateQuestList(list, (quests) => quests.filter((quest) => quest.id !== questId));
-    if (list === "daily" && todayKey !== "") {
-      setCompletionHistory((current) => removeQuestFromHistory(current, questId, todayKey));
+    if (list === "daily") {
+      const actionDate = new Date();
+      setCompletionHistory((current) => removeQuestFromHistoryAtDate(current, questId, actionDate));
     }
   }
 

@@ -4,6 +4,7 @@ import type {
   Difficulty,
   Quest,
   StreakDay,
+  StoredQuestData,
   Weekday,
 } from "./quest-types";
 
@@ -80,10 +81,18 @@ export function addQuestToHistory(
   return {
     ...history,
     [todayKey]: {
+      ...snapshot,
       scheduledQuestIds: [...snapshot.scheduledQuestIds, quest.id],
-      completedQuestIds: snapshot.completedQuestIds,
     },
   };
+}
+
+export function addQuestToHistoryAtDate(
+  history: CompletionHistory,
+  quest: Quest,
+  actionDate: Date,
+): CompletionHistory {
+  return addQuestToHistory(history, quest, getLocalDateKey(actionDate));
 }
 
 export function removeQuestFromHistory(
@@ -99,10 +108,18 @@ export function removeQuestFromHistory(
   return {
     ...history,
     [todayKey]: {
+      ...snapshot,
       scheduledQuestIds: snapshot.scheduledQuestIds.filter((id) => id !== questId),
-      completedQuestIds: snapshot.completedQuestIds,
     },
   };
+}
+
+export function removeQuestFromHistoryAtDate(
+  history: CompletionHistory,
+  questId: string,
+  actionDate: Date,
+): CompletionHistory {
+  return removeQuestFromHistory(history, questId, getLocalDateKey(actionDate));
 }
 
 export function rescheduleQuestInHistory(
@@ -193,6 +210,10 @@ function isValidXpAmount(amount: number): boolean {
   return Number.isFinite(amount) && amount >= 0;
 }
 
+function isValidXpAward(amount: unknown): amount is number {
+  return typeof amount === "number" && Number.isFinite(amount) && amount > 0;
+}
+
 function sumXpRecord(record: Record<string, number> | undefined): number {
   if (!record) return 0;
   return Object.values(record).reduce(
@@ -228,7 +249,7 @@ export function recordDailyXpAward(
 
   const currentAwards = snapshot.xpAwardedByQuestId;
   const existingAward = currentAwards?.[questId];
-  if (existingAward !== undefined && isValidXpAmount(existingAward)) return completionHistory;
+  if (existingAward !== undefined && isValidXpAward(existingAward)) return completionHistory;
 
   return {
     ...completionHistory,
@@ -260,6 +281,29 @@ export function reverseDailyXpAward(
   return { ...completionHistory, [dateKey]: nextSnapshot };
 }
 
+export function toggleDailyQuestCompletion(
+  completionHistory: CompletionHistory,
+  dateKey: string,
+  questId: string,
+  difficulty: Difficulty,
+): CompletionHistory {
+  const snapshot = completionHistory[dateKey];
+  if (!snapshot || !snapshot.scheduledQuestIds.includes(questId)) return completionHistory;
+
+  const wasCompleted = snapshot.completedQuestIds.includes(questId);
+  const completedQuestIds = wasCompleted
+    ? snapshot.completedQuestIds.filter((id) => id !== questId)
+    : [...snapshot.completedQuestIds, questId];
+  const nextHistory = {
+    ...completionHistory,
+    [dateKey]: { ...snapshot, completedQuestIds },
+  };
+
+  return wasCompleted
+    ? reverseDailyXpAward(nextHistory, dateKey, questId)
+    : recordDailyXpAward(nextHistory, dateKey, questId, difficulty);
+}
+
 export function recordPersonalXpAward(
   personalXpByQuestId: Record<string, number> | undefined,
   questId: string,
@@ -267,7 +311,7 @@ export function recordPersonalXpAward(
 ): Record<string, number> {
   const awards = personalXpByQuestId ?? {};
   const existingAward = awards[questId];
-  if (existingAward !== undefined && isValidXpAmount(existingAward)) return awards;
+  if (existingAward !== undefined && isValidXpAward(existingAward)) return awards;
   return { ...awards, [questId]: getQuestXp(difficulty) };
 }
 
@@ -279,6 +323,100 @@ export function reversePersonalXpAward(
   const remainingAwards = { ...personalXpByQuestId };
   delete remainingAwards[questId];
   return Object.keys(remainingAwards).length > 0 ? remainingAwards : undefined;
+}
+
+function normalizeXpRecord(value: unknown): Record<string, number> | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+
+  const entries = Object.entries(value);
+  const validEntries = entries.filter(([, amount]) => isValidXpAward(amount));
+  if (validEntries.length === entries.length) return value as Record<string, number>;
+  return Object.fromEntries(validEntries) as Record<string, number>;
+}
+
+function getLegacyCompletedQuestXp(data: StoredQuestData): number {
+  return [...data.questLists.daily, ...data.questLists.personal]
+    .filter((quest) => quest.completed)
+    .reduce((total, quest) => total + getQuestXp(quest.difficulty), 0);
+}
+
+export function migrateStoredData(data: StoredQuestData): StoredQuestData {
+  const currentVersion = typeof data.schemaVersion === "number" && Number.isFinite(data.schemaVersion)
+    ? data.schemaVersion
+    : 0;
+  const targetVersion = Math.max(2, currentVersion);
+  const dailyQuestsById = new Map(data.questLists.daily.map((quest) => [quest.id, quest]));
+  const originalHistory = data.completionHistory ?? {};
+  let historyChanged = false;
+  const completionHistory: CompletionHistory = {};
+
+  for (const [dateKey, snapshot] of Object.entries(originalHistory)) {
+    const originalAwards = snapshot.xpAwardedByQuestId;
+    const normalizedAwards = normalizeXpRecord(originalAwards);
+    let awardsChanged = normalizedAwards !== originalAwards;
+    const awards = { ...normalizedAwards };
+    for (const questId of snapshot.scheduledQuestIds) {
+      if (!snapshot.completedQuestIds.includes(questId) || awards[questId] !== undefined) continue;
+      const quest = dailyQuestsById.get(questId);
+      if (quest) {
+        awards[questId] = getQuestXp(quest.difficulty);
+        awardsChanged = true;
+      }
+    }
+
+    const hasAwards = Object.keys(awards).length > 0;
+    const nextAwards = hasAwards ? (awardsChanged ? awards : originalAwards) : undefined;
+    if (nextAwards !== originalAwards) {
+      historyChanged = true;
+      completionHistory[dateKey] = { ...snapshot, xpAwardedByQuestId: nextAwards };
+    } else {
+      completionHistory[dateKey] = snapshot;
+    }
+  }
+
+  const originalPersonalAwards = data.personalXpByQuestId;
+  const normalizedPersonalAwards = normalizeXpRecord(originalPersonalAwards);
+  let personalAwardsChanged = normalizedPersonalAwards !== originalPersonalAwards;
+  const personalAwards = { ...normalizedPersonalAwards };
+  for (const quest of data.questLists.personal) {
+    if (quest.completed && personalAwards[quest.id] === undefined) {
+      personalAwards[quest.id] = getQuestXp(quest.difficulty);
+      personalAwardsChanged = true;
+    }
+  }
+  const hasPersonalAwards = Object.keys(personalAwards).length > 0;
+  const personalXpByQuestId = hasPersonalAwards
+    ? (personalAwardsChanged ? personalAwards : originalPersonalAwards)
+    : undefined;
+  const originalLegacyBonus = data.legacyXpBonus;
+  const validLegacyBonus = typeof originalLegacyBonus === "number" && isValidXpAmount(originalLegacyBonus)
+    ? originalLegacyBonus
+    : 0;
+  const knownLedgerXp = getXpLedgerTotal(completionHistory, personalXpByQuestId);
+  const legacyXpBonus = Math.max(validLegacyBonus, getLegacyCompletedQuestXp(data) - knownLedgerXp, 0);
+
+  const historyUnchanged = !historyChanged && (
+    data.completionHistory === undefined
+      ? Object.keys(originalHistory).length === 0
+      : originalHistory === data.completionHistory
+  );
+  const personalAwardsUnchanged = personalXpByQuestId === originalPersonalAwards;
+  const legacyBonusUnchanged = legacyXpBonus === originalLegacyBonus;
+  if (
+    currentVersion >= 2 &&
+    targetVersion === data.schemaVersion &&
+    historyUnchanged &&
+    personalAwardsUnchanged &&
+    legacyBonusUnchanged
+  ) return data;
+
+  return {
+    ...data,
+    schemaVersion: targetVersion,
+    completionHistory,
+    personalXpByQuestId,
+    legacyXpBonus,
+  };
 }
 
 export function findCategoryMatch(categories: string[], name: string): string | undefined {

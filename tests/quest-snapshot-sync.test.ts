@@ -1,9 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
   addQuestToHistory,
+  addQuestToHistoryAtDate,
   getSnapshotStatus,
   getStreakValues,
   removeQuestFromHistory,
+  removeQuestFromHistoryAtDate,
   rescheduleQuestInHistory,
 } from "../src/app/quest-logic";
 import type { CompletionHistory, CompletionSnapshot, Quest } from "../src/app/quest-types";
@@ -53,6 +55,25 @@ describe("daily completion snapshot synchronization", () => {
     expect(next).not.toBe(history);
   });
 
+  it("uses the action date for additions and preserves snapshot ledger fields", () => {
+    const yesterday = "2026-10-19";
+    const actionDate = new Date(2026, 9, 20);
+    const today = "2026-10-20";
+    const history: CompletionHistory = {
+      [yesterday]: { ...snapshot(["old"], ["old"]), xpAwardedByQuestId: { old: 5 } },
+      [today]: { ...snapshot(["existing"]), xpAwardedByQuestId: { existing: 10 } },
+    };
+
+    const next = addQuestToHistoryAtDate(history, makeQuest({ id: "new", selectedDays: ["Tue"] }), actionDate);
+
+    expect(next[yesterday]).toBe(history[yesterday]);
+    expect(next[today]).toEqual({
+      scheduledQuestIds: ["existing", "new"],
+      completedQuestIds: [],
+      xpAwardedByQuestId: { existing: 10 },
+    });
+  });
+
   it("leaves history unchanged when an added quest is not scheduled today", () => {
     const history = historyWithToday(snapshot(["existing"]));
     const result = addQuestToHistory(history, makeQuest({ id: "tuesday", selectedDays: ["Tue"] }), todayKey);
@@ -77,6 +98,23 @@ describe("daily completion snapshot synchronization", () => {
     const next = removeQuestFromHistory(history, "b", todayKey);
 
     expect(next[todayKey]).toEqual(snapshot(["a"]));
+  });
+
+  it("uses the action date for deletions and preserves snapshot ledger fields", () => {
+    const actionDate = new Date(2026, 9, 20);
+    const history: CompletionHistory = {
+      "2026-10-19": { ...snapshot(["old"], ["old"]), xpAwardedByQuestId: { old: 5 } },
+      "2026-10-20": { ...snapshot(["remove", "keep"]), xpAwardedByQuestId: { remove: 10, keep: 20 } },
+    };
+
+    const next = removeQuestFromHistoryAtDate(history, "remove", actionDate);
+
+    expect(next["2026-10-19"]).toBe(history["2026-10-19"]);
+    expect(next["2026-10-20"]).toEqual({
+      scheduledQuestIds: ["keep"],
+      completedQuestIds: [],
+      xpAwardedByQuestId: { remove: 10, keep: 20 },
+    });
   });
 
   it("leaves the history unchanged when the deleted quest was completed today", () => {
