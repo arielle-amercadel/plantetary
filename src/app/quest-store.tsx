@@ -1,6 +1,6 @@
 "use client";
 
-import { createContext, useContext, useState } from "react";
+import { createContext, useContext, useEffect, useState } from "react";
 import type { ReactNode } from "react";
 
 export type Difficulty = "Easy" | "Medium" | "Hard";
@@ -23,6 +23,12 @@ export type Quest = {
 
 type QuestLists = Record<QuestListKey, Quest[]>;
 type CategoryLists = Record<QuestListKey, string[]>;
+type StoredQuestData = {
+  questLists: QuestLists;
+  categoryLists: CategoryLists;
+};
+
+const questStorageKey = "plantetary-quest-data";
 
 const initialCategoryLists: CategoryLists = {
   daily: ["Wellness", "Self-care", "Personal growth"],
@@ -92,6 +98,49 @@ const initialQuestLists: QuestLists = {
   ],
 };
 
+const weekdays: Weekday[] = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+
+function isQuest(value: unknown): value is Quest {
+  if (typeof value !== "object" || value === null) return false;
+
+  const quest = value as Record<string, unknown>;
+  return (
+    typeof quest.id === "string" &&
+    typeof quest.title === "string" &&
+    typeof quest.category === "string" &&
+    typeof quest.schedule === "string" &&
+    (quest.difficulty === "Easy" || quest.difficulty === "Medium" || quest.difficulty === "Hard") &&
+    typeof quest.completed === "boolean" &&
+    (quest.repeatSchedule === undefined ||
+      quest.repeatSchedule === "Every day" || quest.repeatSchedule === "Selected days") &&
+    (quest.selectedDays === undefined ||
+      (Array.isArray(quest.selectedDays) && quest.selectedDays.every((day) => weekdays.includes(day)))) &&
+    (quest.dueDate === undefined || typeof quest.dueDate === "string") &&
+    (quest.notes === undefined || typeof quest.notes === "string")
+  );
+}
+
+function isStoredQuestData(value: unknown): value is StoredQuestData {
+  if (typeof value !== "object" || value === null) return false;
+
+  const data = value as Record<string, unknown>;
+  const questLists = data.questLists as Record<string, unknown> | undefined;
+  const categoryLists = data.categoryLists as Record<string, unknown> | undefined;
+
+  return Boolean(
+    questLists &&
+      Array.isArray(questLists.daily) &&
+      questLists.daily.every(isQuest) &&
+      Array.isArray(questLists.personal) &&
+      questLists.personal.every(isQuest) &&
+      categoryLists &&
+      Array.isArray(categoryLists.daily) &&
+      categoryLists.daily.every((category) => typeof category === "string") &&
+      Array.isArray(categoryLists.personal) &&
+      categoryLists.personal.every((category) => typeof category === "string"),
+  );
+}
+
 const xpByDifficulty: Record<Difficulty, number> = {
   Easy: 5,
   Medium: 10,
@@ -149,6 +198,45 @@ const QuestStoreContext = createContext<QuestStoreValue | null>(null);
 export function QuestProvider({ children }: { children: ReactNode }) {
   const [questLists, setQuestLists] = useState(initialQuestLists);
   const [categoryLists, setCategoryLists] = useState(initialCategoryLists);
+  const [hasRestored, setHasRestored] = useState(false);
+
+  useEffect(() => {
+    let restoredQuestLists = initialQuestLists;
+    let restoredCategoryLists = initialCategoryLists;
+
+    try {
+      if (typeof window !== "undefined") {
+        const savedData = window.localStorage.getItem(questStorageKey);
+        if (savedData) {
+          const parsedData: unknown = JSON.parse(savedData);
+          if (isStoredQuestData(parsedData)) {
+            restoredQuestLists = parsedData.questLists;
+            restoredCategoryLists = parsedData.categoryLists;
+          }
+        }
+      }
+    } catch {}
+
+    queueMicrotask(() => {
+      setQuestLists(restoredQuestLists);
+      setCategoryLists(restoredCategoryLists);
+      setHasRestored(true);
+    });
+  }, []);
+
+  useEffect(() => {
+    if (!hasRestored || typeof window === "undefined") return;
+
+    try {
+      window.localStorage.setItem(
+        questStorageKey,
+        JSON.stringify({ questLists, categoryLists }),
+      );
+    } catch {
+      return;
+    }
+  }, [hasRestored, questLists, categoryLists]);
+
   const totalXp = [...questLists.daily, ...questLists.personal]
     .filter((quest) => quest.completed)
     .reduce((total, quest) => total + getQuestXp(quest.difficulty), 0);
