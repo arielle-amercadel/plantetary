@@ -392,28 +392,6 @@ button {
   border-radius: 8px;
 }
 
-.streak-current {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  min-width: 0;
-}
-
-.streak-flame {
-  flex: 0 0 18px;
-  width: 18px;
-  height: 21px;
-  color: #c8754f;
-  image-rendering: pixelated;
-}
-
-.streak-current-copy {
-  display: flex;
-  min-width: 0;
-  flex-direction: column;
-  gap: 0;
-}
-
 .level-progress {
   display: flex;
   align-items: center;
