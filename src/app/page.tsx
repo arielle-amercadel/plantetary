@@ -11,7 +11,7 @@ import { getLevelProgress, useQuestStore } from "./quest-store";
 export default function Home() {
   const [isAddingDailyQuest, setIsAddingDailyQuest] = useState(false);
   const [isAddingPersonalQuest, setIsAddingPersonalQuest] = useState(false);
-  const { questLists, totalXp, addQuest, toggleQuest, deleteQuest } = useQuestStore();
+  const { questLists, totalXp, currentStreak, longestStreak, dailyCompletedQuestIds, dailyScheduledQuestIds, addQuest, toggleQuest, deleteQuest } = useQuestStore();
   const { level, xpIntoLevel, xpForNextLevel, xpProgressPercent } = getLevelProgress(totalXp);
 
   return (
@@ -78,9 +78,20 @@ export default function Home() {
               <span className="stat-note">36 daily · 12 personal</span>
             </div>
             <div className="stat-card">
-              <strong className="stat-value">7 days</strong>
-              <span className="stat-title">Current streak</span>
-              <span className="stat-note">Little steps add up</span>
+              <div className="streak-current">
+                <svg className="streak-flame" viewBox="0 0 16 20" role="img" aria-label="Flame">
+                  <path
+                    d="M8 0 6 5 3 7 4 10 1 12 2 16 5 19 11 19 14 16 15 12 12 9 13 6 10 7Z"
+                    fill="currentColor"
+                  />
+                  <path d="m8 11-2 3 2 3 3-2-1-3Z" fill="#f7f1e6" />
+                </svg>
+                <div className="streak-current-copy">
+                  <strong className="stat-value">{currentStreak}</strong>
+                  <span className="stat-title">Current Streak</span>
+                </div>
+              </div>
+              <span className="stat-note">Longest Streak {longestStreak}</span>
             </div>
           </section>
 
@@ -93,7 +104,9 @@ export default function Home() {
                 addLabel="Add habit"
                 noteIcon="/icon-refresh.svg"
                 note="A fresh start every day at midnight. Your history stays with you."
-                quests={questLists.daily}
+                quests={questLists.daily.map((quest) => dailyScheduledQuestIds.includes(quest.id)
+                  ? { ...quest, completed: dailyCompletedQuestIds.includes(quest.id) }
+                  : quest)}
                 isAdding={isAddingDailyQuest}
                 onAddingChange={setIsAddingDailyQuest}
                 onToggleQuest={(questId) => toggleQuest("daily", questId)}
