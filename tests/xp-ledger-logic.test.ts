@@ -7,6 +7,7 @@ import {
   recordPersonalXpAward,
   reverseDailyXpAward,
   reversePersonalXpAward,
+  toggleDailyQuestCompletion,
 } from "../src/app/quest-logic";
 import type { CompletionHistory, CompletionSnapshot, Difficulty, Quest } from "../src/app/quest-types";
 
@@ -64,6 +65,27 @@ describe("XP ledger logic", () => {
     expect(next["2026-10-19"].xpAwardedByQuestId).toBeUndefined();
     expect(next["2026-10-20"].xpAwardedByQuestId).toEqual({ daily: 10 });
     expect(getXpLedgerTotal(next)).toBe(10);
+  });
+
+  it("toggles daily XP only on the explicitly supplied calendar date", () => {
+    const history: CompletionHistory = {
+      "2026-10-19": snapshot(["daily"]),
+      "2026-10-20": { ...snapshot(["daily"], ["daily"]), xpAwardedByQuestId: { daily: 10 } },
+    };
+    const completedOnMonday = toggleDailyQuestCompletion(history, "2026-10-19", "daily", "Medium");
+    const uncheckedOnMonday = toggleDailyQuestCompletion(completedOnMonday, "2026-10-19", "daily", "Medium");
+
+    expect(completedOnMonday["2026-10-19"].xpAwardedByQuestId).toEqual({ daily: 10 });
+    expect(uncheckedOnMonday["2026-10-19"].xpAwardedByQuestId).toBeUndefined();
+    expect(uncheckedOnMonday["2026-10-20"].xpAwardedByQuestId).toEqual({ daily: 10 });
+  });
+
+  it("does not change or award XP when today's snapshot is absent or unscheduled", () => {
+    const noSnapshot: CompletionHistory = {};
+    const unscheduled: CompletionHistory = { "2026-10-19": snapshot(["another-quest"]) };
+
+    expect(toggleDailyQuestCompletion(noSnapshot, "2026-10-19", "daily", "Medium")).toBe(noSnapshot);
+    expect(toggleDailyQuestCompletion(unscheduled, "2026-10-19", "daily", "Medium")).toBe(unscheduled);
   });
 
   it("records personal XP once and reverses only that personal award", () => {
