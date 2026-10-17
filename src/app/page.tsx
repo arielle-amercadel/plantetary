@@ -1,121 +1,21 @@
 
+"use client";
+
 import Image from "next/image";
-import QuestPanel, { type Quest } from "./quest-panel";
-
-const dailyQuests: Quest[] = [
-  { id: "water", title: "Drink a glass of water", category: "Wellness", schedule: "Every day", xp: 20, completed: true },
-  { id: "skincare", title: "Morning skincare", category: "Self-care", schedule: "Every day", xp: 20, completed: true },
-  { id: "reading", title: "Read for 20 minutes", category: "Personal growth", schedule: "Every day", xp: 20, completed: false },
-  { id: "stretch", title: "Evening stretch", category: "Wellness", schedule: "Every day", xp: 20, completed: false },
-];
-
-const personalQuests: Quest[] = [
-  { id: "biology", title: "Review biology notes", category: "Study", schedule: "Due today", xp: 30, completed: false },
-  { id: "moodboard", title: "Finish portfolio moodboard", category: "Projects", schedule: "Due Oct 20", xp: 30, completed: false },
-  { id: "desk", title: "Tidy the desk", category: "Chores", schedule: "No due date", xp: 30, completed: true },
-];
-
-function FigmaIcon({
-  src,
-  size = 18,
-}: {
-  src: string;
-  size?: number;
-}) {
-  return (
-    <Image
-      src={src}
-      alt=""
-      aria-hidden="true"
-      width={size}
-      height={size}
-    />
-  );
-}
+import Link from "next/link";
+import { useState } from "react";
+import AppShell, { FigmaIcon } from "./app-shell";
+import QuestPanel from "./quest-panel";
+import { getLevelProgress, useQuestStore } from "./quest-store";
 
 export default function Home() {
+  const [isAddingDailyQuest, setIsAddingDailyQuest] = useState(false);
+  const [isAddingPersonalQuest, setIsAddingPersonalQuest] = useState(false);
+  const { questLists, totalXp, addQuest, toggleQuest, deleteQuest } = useQuestStore();
+  const { level, xpIntoLevel, xpForNextLevel, xpProgressPercent } = getLevelProgress(totalXp);
+
   return (
-    <main className="plantetary-app" id="dashboard">
-      <aside className="sidebar">
-        <div className="sidebar-brand">
-          <a className="brand-title" href="#dashboard" aria-label="Plantetary home">
-            <FigmaIcon src="/icon-sprout-brand.svg" size={24} />
-            <span>Plantetary</span>
-          </a>
-          <p>Small steps. A little more growth.</p>
-        </div>
-
-        <nav className="sidebar-nav" aria-label="Main navigation">
-          <a className="nav-link is-active" href="#dashboard">
-            <FigmaIcon src="/icon-home.svg" />
-            <span>Home</span>
-          </a>
-          <a className="nav-link" href="#daily-quests">
-            <FigmaIcon src="/icon-square-plus.svg" />
-            <span>Add quest</span>
-          </a>
-          <a className="nav-link" href="#plant-collection">
-            <FigmaIcon src="/icon-book-sidebar.svg" />
-            <span>Plant Journal</span>
-          </a>
-        </nav>
-
-        <section className="player-summary" aria-label="Player progress">
-          <h2>Mira’s adventure</h2>
-          <p>Level 5 · Budding botanist</p>
-          <div
-            className="sidebar-xp-track"
-            role="progressbar"
-            aria-label="Experience toward level 6"
-            aria-valuemin={0}
-            aria-valuemax={300}
-            aria-valuenow={180}
-          >
-            <span />
-          </div>
-          <p className="sidebar-xp-label">180 / 300 XP to level 6</p>
-        </section>
-
-        <div className="sidebar-spacer" />
-
-        <aside className="encouragement">
-          <Image
-            src="/plant-potted.png"
-            alt=""
-            width={80}
-            height={80}
-            unoptimized
-            className="pixel-art"
-          />
-          <p>You don’t have to do it all. A little progress still counts.</p>
-        </aside>
-
-        <div className="player-account">
-          <div className="player-avatar" aria-hidden="true">M</div>
-          <div className="account-copy">
-            <strong>Mira</strong>
-            <span>Your cozy corner</span>
-          </div>
-          <button className="icon-button account-settings" type="button" aria-label="Settings">
-            <FigmaIcon src="/icon-settings.svg" />
-          </button>
-        </div>
-      </aside>
-
-      <div className="workspace">
-        <header className="workspace-topbar">
-          <div className="breadcrumb">
-            <FigmaIcon src="/icon-sprout.svg" size={17} />
-            <span>Your cozy corner</span>
-            <span className="breadcrumb-divider">/</span>
-            <strong>Home</strong>
-          </div>
-          <div className="date-label">
-            <FigmaIcon src="/icon-sun.svg" size={17} />
-            <span>Saturday, October 17</span>
-          </div>
-        </header>
-
+    <AppShell page="home">
         <div className="garden-banner" aria-label="Mira’s pixel-art garden">
           <Image
             src="/plantetary-garden.png"
@@ -128,39 +28,42 @@ export default function Home() {
           />
         </div>
 
-        <div className="dashboard-content">
+        <main className="dashboard-content">
           <section className="welcome-row" aria-labelledby="welcome-heading">
             <div>
               <h1 id="welcome-heading">A little progress, a little magic.</h1>
               <p>Welcome back, Mira. Let’s make room for the things that matter.</p>
             </div>
-            <a className="primary-button" href="#daily-quests">
+            <Link
+              className="primary-button"
+              href="/quests/new"
+            >
               <FigmaIcon src="/icon-plus-cta.svg" size={16} />
               <span>Add quest</span>
-            </a>
+            </Link>
           </section>
 
           <section className="progress-overview" aria-label="Your progress">
             <div className="level-progress">
-              <div className="level-badge">5</div>
+              <div className="level-badge">{level}</div>
               <div className="experience-details">
                 <div className="rank-line">
                   <strong>Budding botanist</strong>
-                  <span>Level 5</span>
+                  <span>Level {level}</span>
                 </div>
                 <div
                   className="experience-track"
                   role="progressbar"
-                  aria-label="Experience toward level 6"
+                  aria-label={`Experience toward level ${level + 1}`}
                   aria-valuemin={0}
-                  aria-valuemax={300}
-                  aria-valuenow={180}
+                  aria-valuemax={xpForNextLevel}
+                  aria-valuenow={xpIntoLevel}
                 >
-                  <span />
+                  <span style={{ width: `${xpProgressPercent}%` }} />
                 </div>
                 <div className="experience-labels">
-                  <span>180 / 300 XP</span>
-                  <span>120 XP to level 6</span>
+                  <span>{xpIntoLevel} / {xpForNextLevel} XP</span>
+                  <span>{xpForNextLevel - xpIntoLevel} XP to level {level + 1}</span>
                 </div>
               </div>
             </div>
@@ -190,7 +93,12 @@ export default function Home() {
                 addLabel="Add habit"
                 noteIcon="/icon-refresh.svg"
                 note="A fresh start every day at midnight. Your history stays with you."
-                initialQuests={dailyQuests}
+                quests={questLists.daily}
+                isAdding={isAddingDailyQuest}
+                onAddingChange={setIsAddingDailyQuest}
+                onToggleQuest={(questId) => toggleQuest("daily", questId)}
+                onAddQuest={(quest) => addQuest("daily", quest)}
+                onDeleteQuest={(questId) => deleteQuest("daily", questId)}
               />
               <QuestPanel
                 id="personal-quests"
@@ -199,7 +107,12 @@ export default function Home() {
                 addLabel="Add quest"
                 noteIcon="/icon-flag.svg"
                 note="One-time adventures, at your own pace."
-                initialQuests={personalQuests}
+                quests={questLists.personal}
+                isAdding={isAddingPersonalQuest}
+                onAddingChange={setIsAddingPersonalQuest}
+                onToggleQuest={(questId) => toggleQuest("personal", questId)}
+                onAddQuest={(quest) => addQuest("personal", quest)}
+                onDeleteQuest={(questId) => deleteQuest("personal", questId)}
               />
               <div className="quest-history">
                 <span>Every completed quest is part of your story.</span>
@@ -265,8 +178,7 @@ export default function Home() {
               </aside>
             </aside>
           </div>
-        </div>
-      </div>
-    </main>
+        </main>
+    </AppShell>
   );
 }

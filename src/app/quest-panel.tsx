@@ -2,15 +2,8 @@
 
 import Image from "next/image";
 import { useState } from "react";
-
-export type Quest = {
-  id: string;
-  title: string;
-  category: string;
-  schedule: string;
-  xp: number;
-  completed: boolean;
-};
+import CategoryPicker, { CUSTOM_CATEGORY_VALUE } from "./category-picker";
+import { getCustomCategoryError, getQuestXp, useQuestStore, type Difficulty, type Quest } from "./quest-store";
 
 type QuestPanelProps = {
   id: string;
@@ -19,7 +12,12 @@ type QuestPanelProps = {
   addLabel: string;
   noteIcon: string;
   note: string;
-  initialQuests: Quest[];
+  quests: Quest[];
+  isAdding: boolean;
+  onAddingChange: (isAdding: boolean) => void;
+  onToggleQuest: (questId: string) => void;
+  onAddQuest: (quest: Quest) => void;
+  onDeleteQuest: (questId: string) => void;
 };
 
 export default function QuestPanel({
@@ -29,43 +27,47 @@ export default function QuestPanel({
   addLabel,
   noteIcon,
   note,
-  initialQuests,
+  quests,
+  isAdding,
+  onAddingChange,
+  onToggleQuest,
+  onAddQuest,
+  onDeleteQuest,
 }: QuestPanelProps) {
-  const [quests, setQuests] = useState(initialQuests);
-  const [isAdding, setIsAdding] = useState(false);
+  const list = id === "daily-quests" ? "daily" : "personal";
+  const defaultCategory = list === "daily" ? "Wellness" : "Personal";
+  const { categoryLists, addCategory } = useQuestStore();
   const [newTitle, setNewTitle] = useState("");
+  const [newDifficulty, setNewDifficulty] = useState<Difficulty>("Easy");
+  const [categorySelection, setCategorySelection] = useState(defaultCategory);
+  const [customCategoryName, setCustomCategoryName] = useState("");
   const completedCount = quests.filter((quest) => quest.completed).length;
-
-  function toggleQuest(questId: string) {
-    setQuests((current) =>
-      current.map((quest) =>
-        quest.id === questId ? { ...quest, completed: !quest.completed } : quest,
-      ),
-    );
-  }
-
-  function removeQuest(questId: string) {
-    setQuests((current) => current.filter((quest) => quest.id !== questId));
-  }
+  const customCategoryError = categorySelection === CUSTOM_CATEGORY_VALUE
+    ? getCustomCategoryError(categoryLists[list], customCategoryName)
+    : "";
 
   function addQuest(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const trimmedTitle = newTitle.trim();
-    if (!trimmedTitle) return;
+    const category = categorySelection === CUSTOM_CATEGORY_VALUE
+      ? customCategoryName.trim()
+      : categorySelection;
+    if (!trimmedTitle || !category || customCategoryError) return;
+    if (categorySelection === CUSTOM_CATEGORY_VALUE && !addCategory(list, category)) return;
 
-    setQuests((current) => [
-      ...current,
-      {
-        id: `${id}-${Date.now()}`,
-        title: trimmedTitle,
-        category: id === "daily-quests" ? "Wellness" : "Personal",
-        schedule: id === "daily-quests" ? "Every day" : "Due today",
-        xp: id === "daily-quests" ? 20 : 30,
-        completed: false,
-      },
-    ]);
+    onAddQuest({
+      id: `${id}-${Date.now()}`,
+      title: trimmedTitle,
+      category,
+      schedule: id === "daily-quests" ? "Every day" : "Due today",
+      difficulty: newDifficulty,
+      completed: false,
+    });
     setNewTitle("");
-    setIsAdding(false);
+    setNewDifficulty("Easy");
+    setCategorySelection(defaultCategory);
+    setCustomCategoryName("");
+    onAddingChange(false);
   }
 
   return (
@@ -83,7 +85,7 @@ export default function QuestPanel({
         <button
           className="quest-add-button"
           type="button"
-          onClick={() => setIsAdding((current) => !current)}
+          onClick={() => onAddingChange(!isAdding)}
           aria-expanded={isAdding}
         >
           <Image src="/icon-plus.svg" alt="" aria-hidden="true" width={15} height={15} />
@@ -100,8 +102,30 @@ export default function QuestPanel({
             value={newTitle}
             onChange={(event) => setNewTitle(event.target.value)}
           />
+          <CategoryPicker
+            id={`${id}-category`}
+            label={`${title} category`}
+            options={categoryLists[list]}
+            selection={categorySelection}
+            onSelectionChange={(selection) => {
+              setCategorySelection(selection);
+              if (selection !== CUSTOM_CATEGORY_VALUE) setCustomCategoryName("");
+            }}
+            customName={customCategoryName}
+            onCustomNameChange={setCustomCategoryName}
+            customNameError={customCategoryError}
+          />
+          <select
+            aria-label="Quest difficulty"
+            value={newDifficulty}
+            onChange={(event) => setNewDifficulty(event.target.value as Difficulty)}
+          >
+            <option value="Easy">Easy</option>
+            <option value="Medium">Medium</option>
+            <option value="Hard">Hard</option>
+          </select>
           <button type="submit">Add</button>
-          <button type="button" onClick={() => setIsAdding(false)}>
+          <button type="button" onClick={() => onAddingChange(false)}>
             Cancel
           </button>
         </form>
@@ -115,7 +139,7 @@ export default function QuestPanel({
               type="button"
               aria-label={`${quest.completed ? "Mark incomplete" : "Complete"}: ${quest.title}`}
               aria-pressed={quest.completed}
-              onClick={() => toggleQuest(quest.id)}
+              onClick={() => onToggleQuest(quest.id)}
             >
               {quest.completed && (
                 <Image src="/icon-check.svg" alt="" aria-hidden="true" width={15} height={15} />
@@ -124,9 +148,12 @@ export default function QuestPanel({
             <div className="quest-copy">
               <strong>{quest.title}</strong>
               <span>{quest.category} <span aria-hidden="true">·</span> {quest.schedule}</span>
+              {quest.notes && <span className="quest-notes">{quest.notes}</span>}
             </div>
-            <span className={`quest-status${quest.completed ? " is-done" : ""}`}>
-              {quest.completed ? "Done" : `+${quest.xp} XP`}
+            <span className="quest-status">
+              <span className="quest-difficulty">{quest.difficulty}</span>
+              <span className="quest-status-divider" aria-hidden="true">·</span>
+              <span>+{getQuestXp(quest.difficulty)} XP</span>
             </span>
             <button
               className="quest-row-action"
@@ -140,7 +167,7 @@ export default function QuestPanel({
             <button
               className="quest-row-action is-delete"
               type="button"
-              onClick={() => removeQuest(quest.id)}
+              onClick={() => onDeleteQuest(quest.id)}
               aria-label={`Remove ${quest.title}`}
             >
               <Image src="/icon-trash.svg" alt="" aria-hidden="true" width={14} height={14} />
