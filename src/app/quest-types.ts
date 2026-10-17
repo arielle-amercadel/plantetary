@@ -22,11 +22,15 @@ export type StoredQuestData = {
   questLists: QuestLists;
   categoryLists: CategoryLists;
   completionHistory?: CompletionHistory;
+  schemaVersion?: number;
+  legacyXpBonus?: number;
+  personalXpByQuestId?: Record<string, number>;
 };
 
 export type CompletionSnapshot = {
   scheduledQuestIds: string[];
   completedQuestIds: string[];
+  xpAwardedByQuestId?: Record<string, number>;
 };
 export type CompletionHistory = Record<string, CompletionSnapshot>;
 export type StreakDay = { date: string; label: string; status: "complete" | "incomplete" | "unscheduled" };
