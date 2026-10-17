@@ -65,6 +65,78 @@ export function createSnapshot(quests: Quest[], date: Date): CompletionSnapshot 
   };
 }
 
+export function addQuestToHistory(
+  history: CompletionHistory,
+  quest: Quest,
+  todayKey: string,
+): CompletionHistory {
+  const snapshot = history[todayKey];
+  if (!snapshot) return history;
+
+  if (!isQuestScheduledOnDate(quest, dateFromKey(todayKey)) || snapshot.scheduledQuestIds.includes(quest.id)) {
+    return history;
+  }
+
+  return {
+    ...history,
+    [todayKey]: {
+      scheduledQuestIds: [...snapshot.scheduledQuestIds, quest.id],
+      completedQuestIds: snapshot.completedQuestIds,
+    },
+  };
+}
+
+export function removeQuestFromHistory(
+  history: CompletionHistory,
+  questId: string,
+  todayKey: string,
+): CompletionHistory {
+  const snapshot = history[todayKey];
+  if (!snapshot || snapshot.completedQuestIds.includes(questId) || !snapshot.scheduledQuestIds.includes(questId)) {
+    return history;
+  }
+
+  return {
+    ...history,
+    [todayKey]: {
+      scheduledQuestIds: snapshot.scheduledQuestIds.filter((id) => id !== questId),
+      completedQuestIds: snapshot.completedQuestIds,
+    },
+  };
+}
+
+export function rescheduleQuestInHistory(
+  history: CompletionHistory,
+  quest: Quest,
+  todayKey: string,
+): CompletionHistory {
+  const snapshot = history[todayKey];
+  if (!snapshot) return history;
+
+  if (isQuestScheduledOnDate(quest, dateFromKey(todayKey))) {
+    if (snapshot.scheduledQuestIds.includes(quest.id)) return history;
+    return {
+      ...history,
+      [todayKey]: {
+        scheduledQuestIds: [...snapshot.scheduledQuestIds, quest.id],
+        completedQuestIds: snapshot.completedQuestIds,
+      },
+    };
+  }
+
+  if (snapshot.completedQuestIds.includes(quest.id) || !snapshot.scheduledQuestIds.includes(quest.id)) {
+    return history;
+  }
+
+  return {
+    ...history,
+    [todayKey]: {
+      scheduledQuestIds: snapshot.scheduledQuestIds.filter((id) => id !== quest.id),
+      completedQuestIds: snapshot.completedQuestIds,
+    },
+  };
+}
+
 export function getStreakValues(history: CompletionHistory, todayKey: string) {
   let longestStreak = 0;
   let run = 0;

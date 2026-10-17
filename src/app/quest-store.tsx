@@ -21,6 +21,8 @@ import {
   getQuestXp,
   getSnapshotStatus,
   getStreakValues,
+  addQuestToHistory,
+  removeQuestFromHistory,
   weekdayNames,
   weekdays,
 } from "./quest-logic";
@@ -294,6 +296,9 @@ export function QuestProvider({ children }: { children: ReactNode }) {
 
   function addQuest(list: QuestListKey, quest: Quest) {
     updateQuestList(list, (quests) => [...quests, quest]);
+    if (list === "daily" && todayKey !== "") {
+      setCompletionHistory((current) => addQuestToHistory(current, quest, todayKey));
+    }
   }
 
   function addCategory(list: QuestListKey, name: string) {
@@ -341,6 +346,9 @@ export function QuestProvider({ children }: { children: ReactNode }) {
 
   function deleteQuest(list: QuestListKey, questId: string) {
     updateQuestList(list, (quests) => quests.filter((quest) => quest.id !== questId));
+    if (list === "daily" && todayKey !== "") {
+      setCompletionHistory((current) => removeQuestFromHistory(current, questId, todayKey));
+    }
   }
 
   return (
