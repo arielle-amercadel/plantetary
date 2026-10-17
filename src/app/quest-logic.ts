@@ -184,7 +184,101 @@ const xpByDifficulty: Record<Difficulty, number> = {
 };
 
 export function getQuestXp(difficulty: Difficulty): number {
-  return xpByDifficulty[difficulty];
+  const xp = xpByDifficulty[difficulty];
+  if (xp === undefined) throw new Error("Invalid quest difficulty");
+  return xp;
+}
+
+function isValidXpAmount(amount: number): boolean {
+  return Number.isFinite(amount) && amount >= 0;
+}
+
+function sumXpRecord(record: Record<string, number> | undefined): number {
+  if (!record) return 0;
+  return Object.values(record).reduce(
+    (total, amount) => total + (isValidXpAmount(amount) ? amount : 0),
+    0,
+  );
+}
+
+export function getXpLedgerTotal(
+  completionHistory: CompletionHistory = {},
+  personalXpByQuestId?: Record<string, number>,
+  legacyXpBonus = 0,
+): number {
+  const dailyXp = Object.values(completionHistory).reduce(
+    (total, snapshot) => total + sumXpRecord(snapshot.xpAwardedByQuestId),
+    0,
+  );
+  return dailyXp + sumXpRecord(personalXpByQuestId) + (isValidXpAmount(legacyXpBonus) ? legacyXpBonus : 0);
+}
+
+export function recordDailyXpAward(
+  completionHistory: CompletionHistory,
+  dateKey: string,
+  questId: string,
+  difficulty: Difficulty,
+): CompletionHistory {
+  const snapshot = completionHistory[dateKey];
+  if (
+    !snapshot ||
+    !snapshot.scheduledQuestIds.includes(questId) ||
+    !snapshot.completedQuestIds.includes(questId)
+  ) return completionHistory;
+
+  const currentAwards = snapshot.xpAwardedByQuestId;
+  const existingAward = currentAwards?.[questId];
+  if (existingAward !== undefined && isValidXpAmount(existingAward)) return completionHistory;
+
+  return {
+    ...completionHistory,
+    [dateKey]: {
+      ...snapshot,
+      xpAwardedByQuestId: {
+        ...currentAwards,
+        [questId]: getQuestXp(difficulty),
+      },
+    },
+  };
+}
+
+export function reverseDailyXpAward(
+  completionHistory: CompletionHistory,
+  dateKey: string,
+  questId: string,
+): CompletionHistory {
+  const snapshot = completionHistory[dateKey];
+  const currentAwards = snapshot?.xpAwardedByQuestId;
+  if (!snapshot || !currentAwards || !Object.hasOwn(currentAwards, questId)) return completionHistory;
+
+  const remainingAwards = { ...currentAwards };
+  delete remainingAwards[questId];
+  const nextSnapshot = { ...snapshot };
+  if (Object.keys(remainingAwards).length > 0) nextSnapshot.xpAwardedByQuestId = remainingAwards;
+  else delete nextSnapshot.xpAwardedByQuestId;
+
+  return { ...completionHistory, [dateKey]: nextSnapshot };
+}
+
+export function recordPersonalXpAward(
+  personalXpByQuestId: Record<string, number> | undefined,
+  questId: string,
+  difficulty: Difficulty,
+): Record<string, number> {
+  const awards = personalXpByQuestId ?? {};
+  const existingAward = awards[questId];
+  if (existingAward !== undefined && isValidXpAmount(existingAward)) return awards;
+  return { ...awards, [questId]: getQuestXp(difficulty) };
+}
+
+export function reversePersonalXpAward(
+  personalXpByQuestId: Record<string, number> | undefined,
+  questId: string,
+): Record<string, number> | undefined {
+  if (!personalXpByQuestId || !Object.hasOwn(personalXpByQuestId, questId)) return personalXpByQuestId;
+  const remainingAwards = { ...personalXpByQuestId };
+  delete remainingAwards[questId];
+  return Object.keys(remainingAwards).length > 0 ? remainingAwards : undefined;
 }
 
 export function findCategoryMatch(categories: string[], name: string): string | undefined {
