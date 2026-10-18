@@ -6,14 +6,16 @@ import Link from "next/link";
 import { useState } from "react";
 import AppShell, { FigmaIcon } from "./app-shell";
 import QuestPanel from "./quest-panel";
+import { getHomeQuestListsForDisplay } from "./quest-logic";
 import { getLevelProgress, useQuestStore } from "./quest-store";
 import { getNextPlantProgress, plantCatalog } from "./plant-journal-logic";
 
 export default function Home() {
   const [isAddingDailyQuest, setIsAddingDailyQuest] = useState(false);
   const [isAddingPersonalQuest, setIsAddingPersonalQuest] = useState(false);
-  const { questLists, totalXp, completedTodayCounts, completedOverallCounts, discoveredPlantIds, currentStreak, dailyCompletedQuestIds, dailyScheduledQuestIds, recoverableDailyQuestIds, hasRestored, addQuest, toggleQuest, deleteQuest, recoverOrphanedDailyQuest } = useQuestStore();
+  const { questLists, todayKey, totalXp, completedTodayCounts, completedOverallCounts, discoveredPlantIds, currentStreak, dailyCompletedQuestIds, dailyScheduledQuestIds, recoverableDailyQuestIds, hasRestored, addQuest, toggleQuest, deleteQuest, recoverOrphanedDailyQuest } = useQuestStore();
   const { level, xpIntoLevel, xpForNextLevel, xpProgressPercent } = getLevelProgress(totalXp);
+  const homeQuestLists = getHomeQuestListsForDisplay(questLists, todayKey);
   const discoveredPlants = plantCatalog.filter((plant) => discoveredPlantIds.includes(plant.id));
   const nextDiscovery = hasRestored ? getNextPlantProgress(totalXp, discoveredPlantIds) : undefined;
 
@@ -122,7 +124,7 @@ export default function Home() {
                 addLabel="Add habit"
                 noteIcon="/icon-refresh.svg"
                 note="A fresh start every day at midnight. Your history stays with you."
-                quests={questLists.daily.map((quest) => dailyScheduledQuestIds.includes(quest.id)
+                quests={homeQuestLists.daily.map((quest) => dailyScheduledQuestIds.includes(quest.id)
                   ? { ...quest, completed: dailyCompletedQuestIds.includes(quest.id) }
                   : quest)}
                 isAdding={isAddingDailyQuest}
@@ -138,7 +140,7 @@ export default function Home() {
                 addLabel="Add quest"
                 noteIcon="/icon-flag.svg"
                 note="One-time adventures, at your own pace."
-                quests={questLists.personal}
+                quests={homeQuestLists.personal}
                 isAdding={isAddingPersonalQuest}
                 onAddingChange={setIsAddingPersonalQuest}
                 onToggleQuest={(questId) => toggleQuest("personal", questId)}

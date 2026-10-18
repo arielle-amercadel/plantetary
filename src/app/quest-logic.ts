@@ -138,6 +138,51 @@ export function updateQuestInLists(
   };
 }
 
+export function getAllQuestListsForDisplay(questLists: QuestLists, todayKey: string): QuestLists {
+  const today = isCompletionDateKey(todayKey) ? dateFromKey(todayKey) : undefined;
+  const daily = questLists.daily
+    .map((quest, index) => ({ quest, index }))
+    .sort((a, b) => {
+      const aScheduledToday = today ? isQuestScheduledOnDate(a.quest, today) : false;
+      const bScheduledToday = today ? isQuestScheduledOnDate(b.quest, today) : false;
+      return Number(bScheduledToday) - Number(aScheduledToday) || a.index - b.index;
+    })
+    .map(({ quest }) => quest);
+  const personal = questLists.personal
+    .map((quest, index) => ({ quest, index }))
+    .sort((a, b) => {
+      const aHasDate = isCompletionDateKey(a.quest.dueDate);
+      const bHasDate = isCompletionDateKey(b.quest.dueDate);
+      if (aHasDate !== bHasDate) return aHasDate ? -1 : 1;
+      if (aHasDate && bHasDate && a.quest.dueDate !== b.quest.dueDate) {
+        return a.quest.dueDate!.localeCompare(b.quest.dueDate!);
+      }
+      return a.index - b.index;
+    })
+    .map(({ quest }) => quest);
+  return { daily, personal };
+}
+
+export function getHomeQuestListsForDisplay(questLists: QuestLists, todayKey: string): QuestLists {
+  const date = isCompletionDateKey(todayKey) ? dateFromKey(todayKey) : undefined;
+  return {
+    daily: date
+      ? questLists.daily.filter((quest) => isQuestScheduledOnDate(quest, date))
+      : [],
+    personal: questLists.personal,
+  };
+}
+
+export function findQuestForEditing(
+  questLists: QuestLists,
+  questId: string,
+): { quest: Quest; list: QuestListKey } | undefined {
+  const dailyQuest = questLists.daily.find((quest) => quest.id === questId);
+  if (dailyQuest) return { quest: dailyQuest, list: "daily" };
+  const personalQuest = questLists.personal.find((quest) => quest.id === questId);
+  return personalQuest ? { quest: personalQuest, list: "personal" } : undefined;
+}
+
 export function hasQuestScheduleChanged(previous: Quest, updated: Quest): boolean {
   const previousDays = previous.selectedDays;
   const updatedDays = updated.selectedDays;
@@ -358,6 +403,14 @@ export function isCompletionDateKey(value: unknown): value is string {
   const leapYear = year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0);
   const daysInMonth = [31, leapYear ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
   return day >= 1 && day <= daysInMonth[month - 1];
+}
+
+export function isQuestPastDue(quest: Quest, list: QuestListKey, todayKey: string): boolean {
+  return list === "personal" &&
+    !quest.completed &&
+    isCompletionDateKey(quest.dueDate) &&
+    isCompletionDateKey(todayKey) &&
+    quest.dueDate < todayKey;
 }
 
 function countSnapshotCompletions(snapshot: CompletionSnapshot | undefined): number {

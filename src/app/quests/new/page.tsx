@@ -7,7 +7,7 @@ import { Suspense, useState } from "react";
 import AppShell, { FigmaIcon } from "../../app-shell";
 import CategoryPicker, { CUSTOM_CATEGORY_VALUE } from "../../category-picker";
 import { getCustomCategoryError, getQuestXp, useQuestStore } from "../../quest-store";
-import { formatWeekdaySchedule, scheduledDaysForQuest } from "../../quest-logic";
+import { findQuestForEditing, formatWeekdaySchedule, scheduledDaysForQuest } from "../../quest-logic";
 import type {
   Difficulty,
   Quest,
@@ -38,13 +38,9 @@ function CreateQuestRoute() {
   const searchParams = useSearchParams();
   const editId = searchParams.get("edit");
   const { questLists, hasRestored } = useQuestStore();
-  const editingQuest = editId === null
-    ? undefined
-    : questLists.daily.find((quest) => quest.id === editId)
-      ?? questLists.personal.find((quest) => quest.id === editId);
-  const editingList: QuestListKey | undefined = editingQuest
-    ? questLists.daily.some((quest) => quest.id === editId) ? "daily" : "personal"
-    : undefined;
+  const editSelection = editId === null ? undefined : findQuestForEditing(questLists, editId);
+  const editingQuest = editSelection?.quest;
+  const editingList: QuestListKey | undefined = editSelection?.list;
 
   if (!hasRestored) return null;
   if (editId !== null && (!editingQuest || !editingList)) {

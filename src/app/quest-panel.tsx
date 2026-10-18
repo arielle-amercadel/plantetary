@@ -4,7 +4,7 @@ import Image from "next/image";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import CategoryPicker, { CUSTOM_CATEGORY_VALUE } from "./category-picker";
-import { getDailyQuestScheduleLabel, isQuestScheduledOnDate } from "./quest-logic";
+import { getDailyQuestScheduleLabel, isQuestPastDue, isQuestScheduledOnDate } from "./quest-logic";
 import { getCustomCategoryError, getQuestXp, useQuestStore, type Difficulty, type Quest } from "./quest-store";
 
 type QuestPanelProps = {
@@ -15,6 +15,7 @@ type QuestPanelProps = {
   noteIcon: string;
   note: string;
   quests: Quest[];
+  showAddButton?: boolean;
   isAdding: boolean;
   onAddingChange: (isAdding: boolean) => void;
   onToggleQuest: (questId: string) => void;
@@ -30,6 +31,7 @@ export default function QuestPanel({
   noteIcon,
   note,
   quests,
+  showAddButton = true,
   isAdding,
   onAddingChange,
   onToggleQuest,
@@ -39,7 +41,7 @@ export default function QuestPanel({
   const router = useRouter();
   const list = id === "daily-quests" ? "daily" : "personal";
   const defaultCategory = list === "daily" ? "Wellness" : "Personal";
-  const { categoryLists, addCategory, dailyScheduledQuestIds } = useQuestStore();
+  const { categoryLists, addCategory, dailyScheduledQuestIds, todayKey } = useQuestStore();
   const [newTitle, setNewTitle] = useState("");
   const [newDifficulty, setNewDifficulty] = useState<Difficulty>("Easy");
   const [categorySelection, setCategorySelection] = useState(defaultCategory);
@@ -85,18 +87,20 @@ export default function QuestPanel({
             {completedCount} / {quests.length} done
           </span>
         </div>
-        <button
-          className="quest-add-button"
-          type="button"
-          onClick={() => onAddingChange(!isAdding)}
-          aria-expanded={isAdding}
-        >
-          <Image src="/icon-plus.svg" alt="" aria-hidden="true" width={15} height={15} />
-          <span>{addLabel}</span>
-        </button>
+        {showAddButton && (
+          <button
+            className="quest-add-button"
+            type="button"
+            onClick={() => onAddingChange(!isAdding)}
+            aria-expanded={isAdding}
+          >
+            <Image src="/icon-plus.svg" alt="" aria-hidden="true" width={15} height={15} />
+            <span>{addLabel}</span>
+          </button>
+        )}
       </header>
 
-      {isAdding && (
+      {showAddButton && isAdding && (
         <form className="new-quest-form" onSubmit={addQuest}>
           <input
             autoFocus
@@ -136,7 +140,10 @@ export default function QuestPanel({
 
       <ul className="quest-list">
         {quests.map((quest) => (
-          <li className={`quest-row${quest.completed ? " is-complete" : ""}`} key={quest.id}>
+          <li
+            className={`quest-row${quest.completed ? " is-complete" : ""}${isQuestPastDue(quest, list, todayKey) ? " is-past-due" : ""}`}
+            key={quest.id}
+          >
             <button
               className={`quest-check${quest.completed ? " is-checked" : ""}`}
               type="button"
@@ -155,6 +162,7 @@ export default function QuestPanel({
             <div className="quest-copy">
               <strong>{quest.title}</strong>
               <span>{quest.category} <span aria-hidden="true">·</span> {list === "daily" ? getDailyQuestScheduleLabel(quest) : quest.schedule}</span>
+              {isQuestPastDue(quest, list, todayKey) && <span className="past-due-badge">Past Due</span>}
               {quest.notes && <span className="quest-notes">{quest.notes}</span>}
             </div>
             <span className="quest-status">

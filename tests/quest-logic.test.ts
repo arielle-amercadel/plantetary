@@ -12,6 +12,7 @@ import {
   getQuestXp,
   getSnapshotStatus,
   getStreakValues,
+  isQuestPastDue,
   isQuestScheduledOnDate,
 } from "../src/app/quest-logic";
 import type { CompletionHistory, CompletionSnapshot, Quest } from "../src/app/quest-types";
@@ -60,6 +61,19 @@ describe("XP and level logic", () => {
 describe("local dates and quest schedules", () => {
   it("formats a local calendar date", () => {
     expect(getLocalDateKey(new Date(2026, 0, 5))).toBe("2026-01-05");
+  });
+
+  it("marks only incomplete Personal Quests with a valid past local due date", () => {
+    const todayKey = getLocalDateKey(new Date(2026, 9, 18, 0, 15));
+    const personal = makeQuest({ schedule: "Due Oct 17", dueDate: "2026-10-17" });
+
+    expect(isQuestPastDue(personal, "personal", todayKey)).toBe(true);
+    expect(isQuestPastDue({ ...personal, dueDate: todayKey }, "personal", todayKey)).toBe(false);
+    expect(isQuestPastDue({ ...personal, dueDate: "2026-10-19" }, "personal", todayKey)).toBe(false);
+    expect(isQuestPastDue({ ...personal, completed: true }, "personal", todayKey)).toBe(false);
+    expect(isQuestPastDue({ ...personal, dueDate: undefined }, "personal", todayKey)).toBe(false);
+    expect(isQuestPastDue(personal, "daily", todayKey)).toBe(false);
+    expect(isQuestPastDue({ ...personal, dueDate: "2026-02-30" }, "personal", todayKey)).toBe(false);
   });
 
   it("matches every-day, selected-day, and legacy schedules", () => {

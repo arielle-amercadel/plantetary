@@ -272,6 +272,38 @@ button {
   min-width: 0;
 }
 
+@media (min-width: 1051px) {
+  .plantetary-app {
+    display: grid;
+    grid-template-columns: 232px minmax(0, 1fr);
+    height: 100vh;
+    height: 100dvh;
+    min-height: 0;
+    overflow: hidden;
+  }
+
+  .sidebar {
+    position: fixed;
+    inset: 0 auto 0 0;
+    height: 100vh;
+    height: 100dvh;
+    max-height: 100vh;
+    max-height: 100dvh;
+    min-height: 0;
+    overflow-x: hidden;
+    overflow-y: auto;
+    overscroll-behavior-y: contain;
+  }
+
+  .workspace {
+    grid-column: 2;
+    height: 100vh;
+    height: 100dvh;
+    overflow-y: auto;
+    overscroll-behavior-y: contain;
+  }
+}
+
 .workspace-topbar {
   display: flex;
   align-items: center;
@@ -621,6 +653,12 @@ button {
   background: #f4ede2;
 }
 
+.quest-row.is-past-due {
+  border: 1px solid rgba(192, 90, 74, 0.32);
+  border-radius: 4px;
+  background: rgba(192, 90, 74, 0.09);
+}
+
 .quest-check {
   display: grid;
   width: 22px;
@@ -658,6 +696,19 @@ button {
   color: var(--muted);
   font-size: 11px;
   line-height: 1.4;
+}
+
+.quest-copy .past-due-badge {
+  width: fit-content;
+  margin-top: 2px;
+  padding: 2px 6px;
+  border: 1px solid #e2c5aa;
+  border-radius: 4px;
+  color: #86543b;
+  background: #f7e9dc;
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1.3;
 }
 
 .quest-copy .quest-notes {
@@ -1599,13 +1650,18 @@ button {
 
 @media (max-width: 1050px) {
   .sidebar {
-    position: static;
+    position: sticky;
+    top: 0;
+    z-index: 10;
     flex: 0 0 auto;
     flex-direction: row;
     align-items: center;
     width: auto;
     height: auto;
     min-height: 0;
+    max-height: 100vh;
+    overflow-x: auto;
+    overflow-y: auto;
     padding: 14px 20px;
   }
 

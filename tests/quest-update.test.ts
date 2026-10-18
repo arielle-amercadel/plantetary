@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { getXpLedgerTotal, hasQuestScheduleChanged, updateQuestInLists } from "../src/app/quest-logic";
+import {
+  findQuestForEditing,
+  getAllQuestListsForDisplay,
+  getHomeQuestListsForDisplay,
+  getXpLedgerTotal,
+  hasQuestScheduleChanged,
+  updateQuestInLists,
+} from "../src/app/quest-logic";
 import type { CompletionHistory, Quest, QuestLists } from "../src/app/quest-types";
 
 function makeQuest(overrides: Partial<Quest> = {}): Quest {
@@ -115,5 +122,92 @@ describe("updating an existing quest", () => {
     const lists = makeQuestLists();
 
     expect(updateQuestInLists(lists, "daily", "missing", { title: "No quest" })).toBe(lists);
+  });
+});
+
+describe("All Quests display data", () => {
+  it("includes every Daily Quest and puts today's scheduled quests first", () => {
+    const todayQuest = makeQuest({ id: "today", repeatSchedule: "Selected days", selectedDays: ["Mon"], schedule: "Mon" });
+    const otherDayQuest = makeQuest({ id: "other-day", repeatSchedule: "Selected days", selectedDays: ["Tue"], schedule: "Tue" });
+    const everyDayQuest = makeQuest({ id: "every-day" });
+    const result = getAllQuestListsForDisplay(
+      { daily: [otherDayQuest, todayQuest, everyDayQuest], personal: [] },
+      "2026-10-19",
+    );
+
+    expect(result.daily.map((quest) => quest.id)).toEqual(["today", "every-day", "other-day"]);
+    expect(result.daily).toHaveLength(3);
+    expect(result.daily[2].schedule).toBe("Tue");
+  });
+
+  it("sorts dated Personal Quests soonest first and keeps undated quests after them", () => {
+    const later = makeQuest({ id: "later", dueDate: "2026-11-05" });
+    const undated = makeQuest({ id: "undated", dueDate: undefined });
+    const earlier = makeQuest({ id: "earlier", dueDate: "2026-10-20" });
+    const invalid = makeQuest({ id: "invalid", dueDate: "not-a-date" });
+    const result = getAllQuestListsForDisplay(
+      { daily: [], personal: [later, undated, earlier, invalid] },
+      "2026-10-19",
+    );
+
+    expect(result.personal.map((quest) => quest.id)).toEqual(["earlier", "later", "undated", "invalid"]);
+  });
+
+  it("returns exact quest data and its list for the existing edit form", () => {
+    const daily = makeQuest({
+      id: "daily-edit",
+      title: "Water the seedlings",
+      category: "Garden",
+      difficulty: "Hard",
+      repeatSchedule: "Selected days",
+      selectedDays: ["Mon", "Wed"],
+      schedule: "Mon, Wed",
+      notes: "In the morning",
+    });
+    const personal = makeQuest({ id: "personal-edit", dueDate: "2026-11-02", schedule: "Due Nov 2" });
+    const lists = { daily: [daily], personal: [personal] };
+
+    expect(findQuestForEditing(lists, "daily-edit")).toEqual({ quest: daily, list: "daily" });
+    expect(findQuestForEditing(lists, "personal-edit")).toEqual({ quest: personal, list: "personal" });
+    expect(findQuestForEditing(lists, "missing")).toBeUndefined();
+  });
+
+  it("reflects an edit in the shared list projection without duplicating the quest", () => {
+    const lists = makeQuestLists();
+    const updated = updateQuestInLists(lists, "daily", "daily-1", { title: "New title" });
+    const displayed = getAllQuestListsForDisplay(updated, "2026-10-19");
+
+    expect(displayed.daily).toHaveLength(1);
+    expect(displayed.daily[0].title).toBe("New title");
+    expect(displayed.daily[0].completed).toBe(true);
+  });
+});
+
+describe("Home quest display data", () => {
+  it("shows only Daily Quests scheduled for the local weekday and leaves Personal Quests unchanged", () => {
+    const everyDay = makeQuest({ id: "every-day", repeatSchedule: "Every day" });
+    const mondayQuest = makeQuest({ id: "monday", repeatSchedule: "Selected days", selectedDays: ["Mon"], schedule: "Mon" });
+    const tuesdayQuest = makeQuest({ id: "tuesday", repeatSchedule: "Selected days", selectedDays: ["Tue"], schedule: "Tue" });
+    const personal = [makeQuest({ id: "personal", dueDate: "2026-11-05" })];
+    const source = { daily: [tuesdayQuest, everyDay, mondayQuest], personal };
+
+    const result = getHomeQuestListsForDisplay(source, "2026-10-19");
+
+    expect(result.daily.map((quest) => quest.id)).toEqual(["every-day", "monday"]);
+    expect(result.personal).toBe(personal);
+  });
+
+  it("shows no Daily Quests when the date has no matching scheduled quests", () => {
+    const tuesdayQuest = makeQuest({ id: "tuesday", repeatSchedule: "Selected days", selectedDays: ["Tue"], schedule: "Tue" });
+
+    expect(getHomeQuestListsForDisplay({ daily: [tuesdayQuest], personal: [] }, "2026-10-19").daily).toEqual([]);
+  });
+
+  it("does not filter other-day quests out of the All Quests display", () => {
+    const mondayQuest = makeQuest({ id: "monday", repeatSchedule: "Selected days", selectedDays: ["Mon"], schedule: "Mon" });
+    const tuesdayQuest = makeQuest({ id: "tuesday", repeatSchedule: "Selected days", selectedDays: ["Tue"], schedule: "Tue" });
+
+    expect(getAllQuestListsForDisplay({ daily: [tuesdayQuest, mondayQuest], personal: [] }, "2026-10-19").daily.map((quest) => quest.id))
+      .toEqual(["monday", "tuesday"]);
   });
 });

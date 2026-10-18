@@ -29,7 +29,7 @@ export default function AppShell({
   page,
 }: {
   children: ReactNode;
-  page: "home" | "create" | "journal" | "history";
+  page: "home" | "create" | "journal" | "history" | "all-quests";
 }) {
   const { totalXp, todayKey } = useQuestStore();
   const { level, xpIntoLevel, xpForNextLevel, xpProgressPercent } = getLevelProgress(totalXp);
@@ -49,6 +49,10 @@ export default function AppShell({
           <Link className={`nav-link${page === "home" ? " is-active" : ""}`} href="/">
             <FigmaIcon src="/icon-home.svg" />
             <span>Home</span>
+          </Link>
+          <Link className={`nav-link${page === "all-quests" ? " is-active" : ""}`} href="/all-quests">
+            <FigmaIcon src="/icon-check.svg" />
+            <span>All Quests</span>
           </Link>
           <Link className={`nav-link${page === "create" ? " is-active" : ""}`} href="/quests/new">
             <FigmaIcon src="/icon-square-plus.svg" />
@@ -114,7 +118,7 @@ export default function AppShell({
             <FigmaIcon src="/icon-sprout.svg" size={17} />
             <span>Your cozy corner</span>
             <span className="breadcrumb-divider">/</span>
-            <strong>{page === "home" ? "Home" : page === "journal" ? "Plant Journal" : page === "history" ? "Completion History" : "Create Quest"}</strong>
+            <strong>{page === "home" ? "Home" : page === "all-quests" ? "All Quests" : page === "journal" ? "Plant Journal" : page === "history" ? "Completion History" : "Create Quest"}</strong>
           </div>
           <div className="date-label">
             <FigmaIcon src="/icon-sun.svg" size={17} />
