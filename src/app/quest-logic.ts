@@ -66,6 +66,13 @@ export function createSnapshot(quests: Quest[], date: Date): CompletionSnapshot 
   };
 }
 
+export function isDailyQuestScheduledForToggle(
+  quest: Quest | undefined,
+  snapshot: CompletionSnapshot | undefined,
+): boolean {
+  return Boolean(quest && snapshot?.scheduledQuestIds.includes(quest.id));
+}
+
 export function addQuestToHistory(
   history: CompletionHistory,
   quest: Quest,
