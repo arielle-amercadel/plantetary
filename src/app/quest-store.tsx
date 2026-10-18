@@ -28,6 +28,7 @@ import {
   removeQuestFromHistoryAtDate,
   reversePersonalXpAward,
   toggleDailyQuestCompletion,
+  updateQuestInLists,
   weekdayNames,
   weekdays,
 } from "./quest-logic";
@@ -200,7 +201,13 @@ type QuestStoreValue = {
   streakWeek: StreakDay[];
   dailyCompletedQuestIds: string[];
   dailyScheduledQuestIds: string[];
+  hasRestored: boolean;
   addQuest: (list: QuestListKey, quest: Quest) => void;
+  updateQuest: (
+    list: QuestListKey,
+    questId: string,
+    updates: Partial<Omit<Quest, "id" | "completed">>,
+  ) => boolean;
   addCategory: (list: QuestListKey, name: string) => boolean;
   toggleQuest: (list: QuestListKey, questId: string) => void;
   deleteQuest: (list: QuestListKey, questId: string) => void;
@@ -362,6 +369,16 @@ export function QuestProvider({ children }: { children: ReactNode }) {
     }
   }
 
+  function updateQuest(
+    list: QuestListKey,
+    questId: string,
+    updates: Partial<Omit<Quest, "id" | "completed">>,
+  ): boolean {
+    if (!questLists[list].some((quest) => quest.id === questId)) return false;
+    setQuestLists((current) => updateQuestInLists(current, list, questId, updates));
+    return true;
+  }
+
   function addCategory(list: QuestListKey, name: string) {
     const trimmedName = name.trim();
     if (!trimmedName || findCategoryMatch(categoryLists[list], trimmedName)) return false;
@@ -415,7 +432,7 @@ export function QuestProvider({ children }: { children: ReactNode }) {
 
   return (
     <QuestStoreContext.Provider
-      value={{ questLists, categoryLists, totalXp, ...streaks, streakWeek, dailyCompletedQuestIds, dailyScheduledQuestIds, addQuest, addCategory, toggleQuest, deleteQuest }}
+      value={{ questLists, categoryLists, totalXp, ...streaks, streakWeek, dailyCompletedQuestIds, dailyScheduledQuestIds, hasRestored, addQuest, updateQuest, addCategory, toggleQuest, deleteQuest }}
     >
       {children}
     </QuestStoreContext.Provider>

@@ -3,6 +3,8 @@ import type {
   CompletionSnapshot,
   Difficulty,
   Quest,
+  QuestListKey,
+  QuestLists,
   StreakDay,
   StoredQuestData,
   Weekday,
@@ -71,6 +73,23 @@ export function isDailyQuestScheduledForToggle(
   snapshot: CompletionSnapshot | undefined,
 ): boolean {
   return Boolean(quest && snapshot?.scheduledQuestIds.includes(quest.id));
+}
+
+export function updateQuestInLists(
+  questLists: QuestLists,
+  list: QuestListKey,
+  questId: string,
+  updates: Partial<Omit<Quest, "id" | "completed">>,
+): QuestLists {
+  const quests = questLists[list];
+  if (!quests.some((quest) => quest.id === questId)) return questLists;
+
+  return {
+    ...questLists,
+    [list]: quests.map((quest) => quest.id === questId
+      ? { ...quest, ...updates, id: quest.id, completed: quest.completed }
+      : quest),
+  };
 }
 
 export function addQuestToHistory(

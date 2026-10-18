@@ -1,6 +1,7 @@
 "use client";
 
 import Image from "next/image";
+import { useRouter } from "next/navigation";
 import { useState } from "react";
 import CategoryPicker, { CUSTOM_CATEGORY_VALUE } from "./category-picker";
 import { getCustomCategoryError, getQuestXp, useQuestStore, type Difficulty, type Quest } from "./quest-store";
@@ -34,6 +35,7 @@ export default function QuestPanel({
   onAddQuest,
   onDeleteQuest,
 }: QuestPanelProps) {
+  const router = useRouter();
   const list = id === "daily-quests" ? "daily" : "personal";
   const defaultCategory = list === "daily" ? "Wellness" : "Personal";
   const { categoryLists, addCategory, dailyScheduledQuestIds } = useQuestStore();
@@ -159,9 +161,9 @@ export default function QuestPanel({
             <button
               className="quest-row-action"
               type="button"
-              disabled
-              aria-label={`Edit ${quest.title} in the future quest editor`}
-              title="Quest editing will be added with the Edit Quest screen"
+              onClick={() => router.push(`/quests/new?edit=${encodeURIComponent(quest.id)}`)}
+              aria-label={`Edit ${quest.title}`}
+              title={`Edit ${quest.title}`}
             >
               <Image src="/icon-pencil.svg" alt="" aria-hidden="true" width={14} height={14} />
             </button>

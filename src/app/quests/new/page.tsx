@@ -2,11 +2,12 @@
 
 import Image from "next/image";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { Suspense, useState } from "react";
 import AppShell, { FigmaIcon } from "../../app-shell";
 import CategoryPicker, { CUSTOM_CATEGORY_VALUE } from "../../category-picker";
 import { getCustomCategoryError, getQuestXp, useQuestStore } from "../../quest-store";
+import { scheduledDaysForQuest } from "../../quest-logic";
 import type {
   Difficulty,
   Quest,
@@ -26,18 +27,93 @@ function formatDueDate(value: string) {
 }
 
 export default function CreateQuestPage() {
+  return (
+    <Suspense fallback={null}>
+      <CreateQuestRoute />
+    </Suspense>
+  );
+}
+
+function CreateQuestRoute() {
+  const searchParams = useSearchParams();
+  const editId = searchParams.get("edit");
+  const { questLists, hasRestored } = useQuestStore();
+  const editingQuest = editId === null
+    ? undefined
+    : questLists.daily.find((quest) => quest.id === editId)
+      ?? questLists.personal.find((quest) => quest.id === editId);
+  const editingList: QuestListKey | undefined = editingQuest
+    ? questLists.daily.some((quest) => quest.id === editId) ? "daily" : "personal"
+    : undefined;
+
+  if (!hasRestored) return null;
+  if (editId !== null && (!editingQuest || !editingList)) {
+    return (
+      <AppShell page="create">
+        <main className="create-quest-content">
+          <header className="create-quest-heading">
+            <div>
+              <span className="create-quest-eyebrow">QUEST NOT FOUND</span>
+              <h1>Quest not found</h1>
+              <p>This quest may have been removed. Return to your dashboard to choose another.</p>
+            </div>
+            <FigmaIcon src="/icon-sprout.svg" size={28} />
+          </header>
+          <Link className="create-cancel-button" href="/">Return to dashboard</Link>
+        </main>
+      </AppShell>
+    );
+  }
+
+  return (
+    <CreateQuestForm
+      key={editId ?? "create"}
+      editId={editId}
+      editingQuest={editingQuest}
+      editingList={editingList}
+    />
+  );
+}
+
+function CreateQuestForm({
+  editId,
+  editingQuest,
+  editingList,
+}: {
+  editId: string | null;
+  editingQuest?: Quest;
+  editingList?: QuestListKey;
+}) {
+  const isEditing = editId !== null;
   const router = useRouter();
-  const { addQuest, addCategory, categoryLists } = useQuestStore();
-  const [title, setTitle] = useState("");
-  const [questType, setQuestType] = useState<QuestListKey | "">("");
-  const [categorySelection, setCategorySelection] = useState("");
+  const { addQuest, updateQuest, addCategory, categoryLists } = useQuestStore();
+  const [title, setTitle] = useState(editingQuest?.title ?? "");
+  const [questType, setQuestType] = useState<QuestListKey | "">(editingList ?? "");
+  const [categorySelection, setCategorySelection] = useState(editingQuest?.category ?? "");
   const [customCategoryName, setCustomCategoryName] = useState("");
-  const [difficulty, setDifficulty] = useState<Difficulty | "">("");
-  const [repeatSchedule, setRepeatSchedule] = useState<RepeatSchedule | "">("");
-  const [selectedDays, setSelectedDays] = useState<Weekday[]>([]);
-  const [dueDate, setDueDate] = useState("");
-  const [notes, setNotes] = useState("");
-  const categoryOptions = questType ? categoryLists[questType] : [];
+  const [difficulty, setDifficulty] = useState<Difficulty | "">(editingQuest?.difficulty ?? "");
+  const [repeatSchedule, setRepeatSchedule] = useState<RepeatSchedule | "">(
+    editingQuest
+      ? editingQuest.repeatSchedule ?? (editingQuest.schedule.trim().toLowerCase() === "every day" ? "Every day" : "Selected days")
+      : "",
+  );
+  const [selectedDays, setSelectedDays] = useState<Weekday[]>(editingQuest
+    ? editingQuest.repeatSchedule === "Every day"
+      ? weekdays
+      : scheduledDaysForQuest(editingQuest)
+    : [],
+  );
+  const [dueDate, setDueDate] = useState(editingQuest?.dueDate ?? "");
+  const [dueDateTouched, setDueDateTouched] = useState(false);
+  const [notes, setNotes] = useState(editingQuest?.notes ?? "");
+  const [saveError, setSaveError] = useState("");
+  const categoryOptions = questType
+    ? categoryLists[questType].includes(editingQuest?.category ?? "")
+      ? categoryLists[questType]
+      : editingQuest?.category
+        ? [...categoryLists[questType], editingQuest.category]
+        : categoryLists[questType]
+    : [];
   const categoryValue = categorySelection === CUSTOM_CATEGORY_VALUE
     ? customCategoryName.trim()
     : categorySelection;
@@ -51,7 +127,11 @@ export default function CreateQuestPage() {
       : repeatSchedule === "Selected days"
         ? selectedDays.length > 0 ? selectedDays.join(", ") : "Choose days"
         : "Choose a repeat schedule"
-    : formatDueDate(dueDate);
+    : dueDate
+      ? formatDueDate(dueDate)
+      : isEditing && !dueDateTouched && editingQuest?.dueDate === undefined
+        ? editingQuest?.schedule ?? ""
+        : formatDueDate("");
   const hasValidSchedule = questType === "daily"
     ? Boolean(repeatSchedule) && (repeatSchedule !== "Selected days" || selectedDays.length > 0)
     : questType === "personal";
@@ -60,6 +140,7 @@ export default function CreateQuestPage() {
   );
 
   function selectQuestType(type: QuestListKey) {
+    if (isEditing) return;
     setQuestType(type);
     setCategorySelection("");
     setCustomCategoryName("");
@@ -80,23 +161,38 @@ export default function CreateQuestPage() {
     const dailyRepeatSchedule = questType === "daily" && repeatSchedule
       ? repeatSchedule
       : undefined;
-    const quest: Quest = {
-      id: `${questType}-${Date.now()}`,
+    const updates: Partial<Omit<Quest, "id" | "completed">> = {
       title: title.trim(),
       category: categoryValue,
       schedule,
       difficulty,
-      completed: false,
       notes: notes.trim(),
       ...(dailyRepeatSchedule
         ? {
             repeatSchedule: dailyRepeatSchedule,
             selectedDays: dailyRepeatSchedule === "Every day" ? weekdays : selectedDays,
+            dueDate: undefined,
           }
-        : { dueDate: dueDate || undefined }),
+        : { dueDate: dueDate || undefined, repeatSchedule: undefined, selectedDays: undefined }),
     };
 
-    addQuest(questType, quest);
+    if (isEditing && editId !== null && editingList) {
+      if (!updateQuest(editingList, editId, updates)) {
+        setSaveError("This quest is no longer available. Return to the dashboard and try again.");
+        return;
+      }
+    } else {
+      const quest: Quest = {
+        ...updates,
+        id: `${questType}-${Date.now()}`,
+        title: title.trim(),
+        category: categoryValue,
+        schedule,
+        difficulty,
+        completed: false,
+      };
+      addQuest(questType, quest);
+    }
     router.push("/");
   }
 
@@ -111,9 +207,9 @@ export default function CreateQuestPage() {
       <main className="create-quest-content">
         <header className="create-quest-heading">
           <div>
-            <span className="create-quest-eyebrow">A NEW ADVENTURE</span>
-            <h1>Create a quest</h1>
-            <p>Give a small step a place in your garden.</p>
+            <span className="create-quest-eyebrow">{isEditing ? "EDITING A QUEST" : "A NEW ADVENTURE"}</span>
+            <h1>{isEditing ? "Edit quest" : "Create a quest"}</h1>
+            <p>{isEditing ? "Update this step in your garden." : "Give a small step a place in your garden."}</p>
           </div>
           <FigmaIcon src="/icon-sprout.svg" size={28} />
         </header>
@@ -128,6 +224,7 @@ export default function CreateQuestPage() {
                     <button
                       className={`create-type-option${questType === "daily" ? " is-selected" : ""}`}
                       type="button"
+                      disabled={isEditing}
                       aria-pressed={questType === "daily"}
                       onClick={() => selectQuestType("daily")}
                     >
@@ -145,6 +242,7 @@ export default function CreateQuestPage() {
                     <button
                       className={`create-type-option${questType === "personal" ? " is-selected" : ""}`}
                       type="button"
+                      disabled={isEditing}
                       aria-pressed={questType === "personal"}
                       onClick={() => selectQuestType("personal")}
                     >
@@ -252,7 +350,10 @@ export default function CreateQuestPage() {
                     name="dueDate"
                     type="date"
                     value={dueDate}
-                    onChange={(event) => setDueDate(event.target.value)}
+                      onChange={(event) => {
+                        setDueDate(event.target.value);
+                        setDueDateTouched(true);
+                      }}
                   />
                 </div>
                 </section>
@@ -286,6 +387,8 @@ export default function CreateQuestPage() {
                 </div>
               </section>
 
+              {saveError && <p role="alert">{saveError}</p>}
+
               <section className="create-form-section">
                 <div className="create-field">
                   <label htmlFor="quest-notes">Notes <span>· optional</span></label>
@@ -306,7 +409,7 @@ export default function CreateQuestPage() {
               <Link className="create-cancel-button" href="/">Cancel</Link>
               <button className="create-save-button" type="submit" disabled={!canSave}>
                 <Image src="/icon-check.svg" alt="" aria-hidden="true" width={15} height={15} />
-                <span>Save quest</span>
+                <span>{isEditing ? "Save changes" : "Save quest"}</span>
               </button>
             </footer>
           </div>
