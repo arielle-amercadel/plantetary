@@ -147,7 +147,7 @@ export default function Home() {
               />
               <div className="quest-history">
                 <span>Every completed quest is part of your story.</span>
-                <a href="#daily-quests">View completion history <span aria-hidden="true">→</span></a>
+                <Link href="/completion-history">View completion history <span aria-hidden="true">→</span></Link>
               </div>
             </div>
 

@@ -15,12 +15,14 @@ import type {
 import {
   addCalendarDays,
   addQuestToHistoryAtDate,
-  createSnapshot,
   dateFromKey,
+  ensureCompletionSnapshotForDate,
   findCategoryMatch,
   getXpLedgerTotal,
   getLocalDateKey,
   isCompletionDateKey,
+  getCompletionHistoryView,
+  normalizeCompletionHistoryDetails,
   getCompletedOverallCounts,
   getCompletedTodayCounts,
   getRecoverableOrphanedDailyQuestIds,
@@ -32,12 +34,15 @@ import {
   clearPersonalCompletionDate,
   preserveDeletedLegacyPersonalCompletionCount,
   recordPersonalCompletionDate,
+  recordCompletionDetails,
+  removeCompletionDetails,
   recordPersonalXpAward,
   removeQuestFromHistoryAtDate,
   recoverOrphanedDailyQuestFromHistory,
   rescheduleQuestInHistory,
   reversePersonalXpAward,
   toggleDailyQuestCompletion,
+  toggleDailyQuestCompletionWithDetails,
   updateQuestInLists,
   weekdayNames,
   weekdays,
@@ -221,6 +226,8 @@ type QuestStoreValue = {
   totalXp: number;
   completedTodayCounts: { daily: number; personal: number; total: number };
   completedOverallCounts: { daily: number; personal: number; total: number };
+  completionHistoryView: ReturnType<typeof getCompletionHistoryView>;
+  todayKey: string;
   discoveredPlantIds: string[];
   currentStreak: number;
   longestStreak: number;
@@ -285,6 +292,9 @@ export function QuestProvider({ children }: { children: ReactNode }) {
           if (isStoredQuestData(parsedData)) {
             const validHistory = parsedData.completionHistory === undefined ||
               isCompletionHistory(parsedData.completionHistory);
+            const normalizedCompletionHistory = validHistory && parsedData.completionHistory
+              ? normalizeCompletionHistoryDetails(parsedData.completionHistory)
+              : parsedData.completionHistory;
             const validPersonalCompletionDates = normalizePersonalCompletionDates(
               parsedData.personalCompletedOnByQuestId,
             );
@@ -293,13 +303,14 @@ export function QuestProvider({ children }: { children: ReactNode }) {
               ? parsedData.deletedLegacyPersonalCompletionCount
               : undefined;
             const optionalFieldsUnchanged =
+              normalizedCompletionHistory === parsedData.completionHistory &&
               validPersonalCompletionDates === parsedData.personalCompletedOnByQuestId &&
               validDeletedLegacyCount === parsedData.deletedLegacyPersonalCompletionCount;
             const validatedData: StoredQuestData = validHistory && optionalFieldsUnchanged
               ? parsedData
               : {
                 ...parsedData,
-                completionHistory: validHistory ? parsedData.completionHistory : undefined,
+                completionHistory: validHistory ? normalizedCompletionHistory : undefined,
                 personalCompletedOnByQuestId: validPersonalCompletionDates,
                 deletedLegacyPersonalCompletionCount: validDeletedLegacyCount,
               };
@@ -326,12 +337,11 @@ export function QuestProvider({ children }: { children: ReactNode }) {
     queueMicrotask(() => {
       const restoredToday = getLocalDateKey(new Date());
       const restoredHistory = restoredData.completionHistory ?? {};
-      const completionHistory = restoredHistory[restoredToday]
-        ? restoredHistory
-        : {
-          ...restoredHistory,
-          [restoredToday]: createSnapshot(restoredData.questLists.daily, dateFromKey(restoredToday)),
-        };
+      const completionHistory = ensureCompletionSnapshotForDate(
+        restoredHistory,
+        restoredData.questLists.daily,
+        restoredToday,
+      );
       setQuestLists(restoredData.questLists);
       setCategoryLists(restoredData.categoryLists);
       setCompletionHistory(completionHistory);
@@ -351,15 +361,20 @@ export function QuestProvider({ children }: { children: ReactNode }) {
     const updateToday = () => {
       const nextTodayKey = getLocalDateKey(new Date());
       setTodayKey(nextTodayKey);
-      setCompletionHistory((current) => current[nextTodayKey]
-        ? current
-        : { ...current, [nextTodayKey]: createSnapshot(questLists.daily, dateFromKey(nextTodayKey)) });
+      setCompletionHistory((current) =>
+        ensureCompletionSnapshotForDate(current, questLists.daily, nextTodayKey),
+      );
+    };
+    const updateTodayWhenVisible = () => {
+      if (document.visibilityState === "visible") updateToday();
     };
     const interval = window.setInterval(updateToday, 60_000);
     window.addEventListener("focus", updateToday);
+    document.addEventListener("visibilitychange", updateTodayWhenVisible);
     return () => {
       window.clearInterval(interval);
       window.removeEventListener("focus", updateToday);
+      document.removeEventListener("visibilitychange", updateTodayWhenVisible);
     };
   }, [questLists.daily]);
 
@@ -421,6 +436,14 @@ export function QuestProvider({ children }: { children: ReactNode }) {
     questLists.personal,
     deletedLegacyPersonalCompletionCount,
   );
+  const completionHistoryView = getCompletionHistoryView(
+    completionHistory,
+    personalCompletedOnByQuestId,
+    personalXpByQuestId,
+    questLists.personal,
+    deletedLegacyPersonalCompletionCount,
+    questLists.daily,
+  );
   const recoverableDailyQuestIds = todayKey
     ? getRecoverableOrphanedDailyQuestIds(completionHistory[todayKey], questLists.daily)
     : [];
@@ -439,7 +462,12 @@ export function QuestProvider({ children }: { children: ReactNode }) {
     updateQuestList(list, (quests) => [...quests, quest]);
     if (list === "daily") {
       const actionDate = new Date();
-      setCompletionHistory((current) => addQuestToHistoryAtDate(current, quest, actionDate));
+      const actionDateKey = getLocalDateKey(actionDate);
+      setCompletionHistory((current) => addQuestToHistoryAtDate(
+        ensureCompletionSnapshotForDate(current, questLists.daily, actionDateKey),
+        quest,
+        actionDate,
+      ));
     }
   }
 
@@ -459,7 +487,11 @@ export function QuestProvider({ children }: { children: ReactNode }) {
     setQuestLists((current) => updateQuestInLists(current, list, questId, updates));
     if (list === "daily" && hasQuestScheduleChanged(existingQuest, updatedQuest)) {
       const actionDateKey = getLocalDateKey(new Date());
-      setCompletionHistory((current) => rescheduleQuestInHistory(current, updatedQuest, actionDateKey));
+      setCompletionHistory((current) => rescheduleQuestInHistory(
+        ensureCompletionSnapshotForDate(current, questLists.daily, actionDateKey),
+        updatedQuest,
+        actionDateKey,
+      ));
     }
     return true;
   }
@@ -480,18 +512,23 @@ export function QuestProvider({ children }: { children: ReactNode }) {
       const actionDate = new Date();
       const actionDateKey = getLocalDateKey(actionDate);
       const quest = questLists.daily.find((item) => item.id === questId);
-      const actionSnapshot = completionHistory[actionDateKey];
+      const actionHistory = ensureCompletionSnapshotForDate(completionHistory, questLists.daily, actionDateKey);
+      const actionSnapshot = actionHistory[actionDateKey];
       if (!quest) return;
       if (!isDailyQuestScheduledForToggle(quest, actionSnapshot, actionDate)) return;
 
       const nextHistoryForDiscovery = toggleDailyQuestCompletion(
-        completionHistory,
+        actionHistory,
         actionDateKey,
         questId,
         quest.difficulty,
       );
       setCompletionHistory((current) =>
-        toggleDailyQuestCompletion(current, actionDateKey, questId, quest.difficulty),
+        toggleDailyQuestCompletionWithDetails(
+          ensureCompletionSnapshotForDate(current, questLists.daily, actionDateKey),
+          actionDateKey,
+          quest,
+        ),
       );
       const nextTotalXp = getXpLedgerTotal(nextHistoryForDiscovery, personalXpByQuestId, legacyXpBonus);
       setDiscoveredPlantIds((current) =>
@@ -513,6 +550,13 @@ export function QuestProvider({ children }: { children: ReactNode }) {
         setPersonalCompletedOnByQuestId((current) => quest.completed
           ? clearPersonalCompletionDate(current, questId)
           : recordPersonalCompletionDate(current, questId, actionDateKey));
+        const previousCompletionDate = personalCompletedOnByQuestId?.[questId];
+        setCompletionHistory((current) => {
+          const withActionDate = ensureCompletionSnapshotForDate(current, questLists.daily, actionDateKey);
+          return quest.completed
+            ? removeCompletionDetails(withActionDate, "personal", questId, previousCompletionDate)
+            : recordCompletionDetails(withActionDate, actionDateKey, "personal", quest);
+        });
         setPersonalXpByQuestId((current) => quest.completed
           ? reversePersonalXpAward(current, questId)
           : recordPersonalXpAward(current, questId, quest.difficulty));
@@ -546,7 +590,12 @@ export function QuestProvider({ children }: { children: ReactNode }) {
     updateQuestList(list, (quests) => quests.filter((quest) => quest.id !== questId));
     if (list === "daily") {
       const actionDate = new Date();
-      setCompletionHistory((current) => removeQuestFromHistoryAtDate(current, questId, actionDate));
+      const actionDateKey = getLocalDateKey(actionDate);
+      setCompletionHistory((current) => removeQuestFromHistoryAtDate(
+        ensureCompletionSnapshotForDate(current, questLists.daily, actionDateKey),
+        questId,
+        actionDate,
+      ));
     }
   }
 
@@ -563,7 +612,7 @@ export function QuestProvider({ children }: { children: ReactNode }) {
 
   return (
     <QuestStoreContext.Provider
-      value={{ questLists, categoryLists, totalXp, completedTodayCounts, completedOverallCounts, discoveredPlantIds, currentStreak: streaks.currentStreak, longestStreak: streaks.longestStreak, streakWeek, dailyCompletedQuestIds, dailyScheduledQuestIds, recoverableDailyQuestIds, hasRestored, addQuest, updateQuest, addCategory, toggleQuest, deleteQuest, recoverOrphanedDailyQuest }}
+      value={{ questLists, categoryLists, totalXp, completedTodayCounts, completedOverallCounts, completionHistoryView, todayKey, discoveredPlantIds, currentStreak: streaks.currentStreak, longestStreak: streaks.longestStreak, streakWeek, dailyCompletedQuestIds, dailyScheduledQuestIds, recoverableDailyQuestIds, hasRestored, addQuest, updateQuest, addCategory, toggleQuest, deleteQuest, recoverOrphanedDailyQuest }}
     >
       {children}
     </QuestStoreContext.Provider>

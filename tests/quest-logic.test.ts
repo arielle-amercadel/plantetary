@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
   createSnapshot,
+  ensureCompletionSnapshotForDate,
   findCategoryMatch,
+  formatLocalDateLabel,
   formatWeekdaySchedule,
   getDailyQuestScheduleLabel,
   getCustomCategoryError,
@@ -116,6 +118,43 @@ describe("completion snapshots and streaks", () => {
       scheduledQuestIds: ["daily", "monday"],
       completedQuestIds: [],
     });
+  });
+
+  it("uses the local calendar date and weekday near midnight", () => {
+    const lateSaturday = new Date(2026, 9, 17, 23, 30);
+    const dailySaturday = makeQuest({
+      repeatSchedule: "Selected days",
+      selectedDays: ["Sat"],
+    });
+
+    expect(getLocalDateKey(lateSaturday)).toBe("2026-10-17");
+    expect(isQuestScheduledOnDate(dailySaturday, lateSaturday)).toBe(true);
+    expect(formatLocalDateLabel(lateSaturday, "en-US")).toBe("Saturday, October 17");
+    if (lateSaturday.toISOString().slice(0, 10) !== getLocalDateKey(lateSaturday)) {
+      expect(getLocalDateKey(lateSaturday)).toBe("2026-10-17");
+    }
+  });
+
+  it("creates one snapshot on local-date rollover without replacing existing history or XP", () => {
+    const quests = [makeQuest({ id: "every-day" })];
+    const history: CompletionHistory = {
+      "2026-10-17": {
+        scheduledQuestIds: ["every-day"],
+        completedQuestIds: ["every-day"],
+        xpAwardedByQuestId: { "every-day": 10 },
+      },
+    };
+
+    const afterRollover = ensureCompletionSnapshotForDate(history, quests, "2026-10-18");
+    const repeatedUpdate = ensureCompletionSnapshotForDate(afterRollover, quests, "2026-10-18");
+
+    expect(afterRollover["2026-10-18"]).toEqual({
+      scheduledQuestIds: ["every-day"],
+      completedQuestIds: [],
+    });
+    expect(afterRollover["2026-10-17"]).toEqual(history["2026-10-17"]);
+    expect(repeatedUpdate).toBe(afterRollover);
+    expect(repeatedUpdate["2026-10-17"].xpAwardedByQuestId).toEqual({ "every-day": 10 });
   });
 
   it("returns zero streaks for empty history", () => {

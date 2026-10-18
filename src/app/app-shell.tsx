@@ -4,6 +4,7 @@ import Image from "next/image";
 import Link from "next/link";
 import type { ReactNode } from "react";
 import { getLevelProgress, useQuestStore } from "./quest-store";
+import { dateFromKey, formatLocalDateLabel } from "./quest-logic";
 
 export function FigmaIcon({
   src,
@@ -28,9 +29,9 @@ export default function AppShell({
   page,
 }: {
   children: ReactNode;
-  page: "home" | "create" | "journal";
+  page: "home" | "create" | "journal" | "history";
 }) {
-  const { totalXp } = useQuestStore();
+  const { totalXp, todayKey } = useQuestStore();
   const { level, xpIntoLevel, xpForNextLevel, xpProgressPercent } = getLevelProgress(totalXp);
 
   return (
@@ -56,6 +57,10 @@ export default function AppShell({
           <Link className={`nav-link${page === "journal" ? " is-active" : ""}`} href="/plant-journal">
             <FigmaIcon src="/icon-book-sidebar.svg" />
             <span>Plant Journal</span>
+          </Link>
+          <Link className={`nav-link${page === "history" ? " is-active" : ""}`} href="/completion-history">
+            <FigmaIcon src="/icon-scroll-text.svg" />
+            <span>Completion History</span>
           </Link>
         </nav>
 
@@ -109,11 +114,11 @@ export default function AppShell({
             <FigmaIcon src="/icon-sprout.svg" size={17} />
             <span>Your cozy corner</span>
             <span className="breadcrumb-divider">/</span>
-            <strong>{page === "home" ? "Home" : page === "journal" ? "Plant Journal" : "Create Quest"}</strong>
+            <strong>{page === "home" ? "Home" : page === "journal" ? "Plant Journal" : page === "history" ? "Completion History" : "Create Quest"}</strong>
           </div>
           <div className="date-label">
             <FigmaIcon src="/icon-sun.svg" size={17} />
-            <span>Saturday, October 17</span>
+            <span>{todayKey ? formatLocalDateLabel(dateFromKey(todayKey)) : ""}</span>
           </div>
         </header>
         {children}

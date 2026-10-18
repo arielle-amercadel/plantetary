@@ -1,7 +1,13 @@
 import type {
+  CompletionDetailsByType,
   CompletionHistory,
+  CompletionHistoryItem,
+  CompletionHistorySection,
+  CompletionQuestDetails,
+  CompletionQuestType,
   CompletionSnapshot,
   Difficulty,
+  EarlierCompletionHistory,
   Quest,
   QuestListKey,
   QuestLists,
@@ -19,6 +25,14 @@ export function getLocalDateKey(date: Date): string {
   const month = String(date.getMonth() + 1).padStart(2, "0");
   const day = String(date.getDate()).padStart(2, "0");
   return `${year}-${month}-${day}`;
+}
+
+export function formatLocalDateLabel(date: Date, locale?: string): string {
+  return date.toLocaleDateString(locale, {
+    weekday: "long",
+    month: "long",
+    day: "numeric",
+  });
 }
 
 export function dateFromKey(key: string): Date {
@@ -80,6 +94,18 @@ export function createSnapshot(quests: Quest[], date: Date): CompletionSnapshot 
   return {
     scheduledQuestIds: quests.filter((quest) => isQuestScheduledOnDate(quest, date)).map((quest) => quest.id),
     completedQuestIds: [],
+  };
+}
+
+export function ensureCompletionSnapshotForDate(
+  history: CompletionHistory,
+  dailyQuests: Quest[],
+  dateKey: string,
+): CompletionHistory {
+  if (history[dateKey]) return history;
+  return {
+    ...history,
+    [dateKey]: createSnapshot(dailyQuests, dateFromKey(dateKey)),
   };
 }
 
@@ -358,6 +384,249 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value && typeof value === "object" && !Array.isArray(value));
 }
 
+function isCompletionQuestDetails(value: unknown, questType: CompletionQuestType): value is CompletionQuestDetails {
+  return isRecord(value) &&
+    typeof value.title === "string" &&
+    typeof value.category === "string" &&
+    (value.difficulty === "Easy" || value.difficulty === "Medium" || value.difficulty === "Hard") &&
+    value.questType === questType;
+}
+
+function normalizeCompletionDetailsByType(value: unknown): CompletionDetailsByType | undefined {
+  if (!isRecord(value)) return undefined;
+  let changed = Object.keys(value).some((key) => key !== "daily" && key !== "personal");
+  const result: CompletionDetailsByType = {};
+
+  for (const questType of ["daily", "personal"] as const) {
+    const details = value[questType];
+    if (details === undefined) continue;
+    if (!isRecord(details)) {
+      changed = true;
+      continue;
+    }
+    const validEntries = Object.entries(details).filter(([questId, questDetails]) =>
+      questId.length > 0 && isCompletionQuestDetails(questDetails, questType),
+    );
+    if (validEntries.length !== Object.keys(details).length) changed = true;
+    if (validEntries.length > 0) {
+      result[questType] = validEntries.length === Object.keys(details).length
+        ? details as Record<string, CompletionQuestDetails>
+        : Object.fromEntries(validEntries) as Record<string, CompletionQuestDetails>;
+    }
+  }
+
+  if (!changed && Object.keys(result).length === Object.keys(value).length) {
+    return value as CompletionDetailsByType;
+  }
+  return Object.keys(result).length > 0 ? result : undefined;
+}
+
+export function normalizeCompletionHistoryDetails(history: CompletionHistory): CompletionHistory {
+  let changed = false;
+  const normalizedHistory: CompletionHistory = {};
+  for (const [dateKey, snapshot] of Object.entries(history)) {
+    const completionDetails = normalizeCompletionDetailsByType(snapshot.completionDetails);
+    if (completionDetails !== snapshot.completionDetails) {
+      changed = true;
+      normalizedHistory[dateKey] = { ...snapshot, completionDetails };
+    } else {
+      normalizedHistory[dateKey] = snapshot;
+    }
+  }
+  return changed ? normalizedHistory : history;
+}
+
+export function recordCompletionDetails(
+  history: CompletionHistory,
+  dateKey: string,
+  questType: CompletionQuestType,
+  quest: Quest,
+): CompletionHistory {
+  if (!quest.id || !isCompletionDateKey(dateKey)) return history;
+  const snapshot = history[dateKey] ?? { scheduledQuestIds: [], completedQuestIds: [] };
+  const nextDetails: CompletionQuestDetails = {
+    title: quest.title,
+    category: quest.category,
+    difficulty: quest.difficulty,
+    questType,
+  };
+  const currentDetails = snapshot.completionDetails?.[questType] ?? {};
+  const existing = currentDetails[quest.id];
+  if (existing && existing.title === nextDetails.title && existing.category === nextDetails.category &&
+    existing.difficulty === nextDetails.difficulty && existing.questType === nextDetails.questType) return history;
+
+  return {
+    ...history,
+    [dateKey]: {
+      ...snapshot,
+      completionDetails: {
+        ...snapshot.completionDetails,
+        [questType]: { ...currentDetails, [quest.id]: nextDetails },
+      },
+    },
+  };
+}
+
+export function removeCompletionDetails(
+  history: CompletionHistory,
+  questType: CompletionQuestType,
+  questId: string,
+  dateKey?: string,
+): CompletionHistory {
+  const dates = dateKey ? [dateKey] : Object.keys(history);
+  let nextHistory = history;
+  for (const key of dates) {
+    const snapshot = nextHistory[key];
+    const currentDetails = snapshot?.completionDetails?.[questType];
+    if (!snapshot || !currentDetails || !Object.hasOwn(currentDetails, questId)) continue;
+
+    const remainingDetails = { ...currentDetails };
+    delete remainingDetails[questId];
+    const completionDetails = { ...snapshot.completionDetails };
+    if (Object.keys(remainingDetails).length > 0) completionDetails[questType] = remainingDetails;
+    else delete completionDetails[questType];
+    const nextSnapshot = { ...snapshot };
+    if (Object.keys(completionDetails).length > 0) nextSnapshot.completionDetails = completionDetails;
+    else delete nextSnapshot.completionDetails;
+    if (nextHistory === history) nextHistory = { ...history };
+    nextHistory[key] = nextSnapshot;
+  }
+  return nextHistory;
+}
+
+export function getCompletionHistoryView(
+  completionHistory: CompletionHistory | undefined,
+  personalCompletedOnByQuestId: Record<string, string> | undefined,
+  personalXpByQuestId: Record<string, number> | undefined,
+  currentPersonalQuests: Quest[] | undefined,
+  deletedLegacyPersonalCompletionCount = 0,
+  currentDailyQuests: Quest[] | undefined = undefined,
+): { sections: CompletionHistorySection[]; earlier: EarlierCompletionHistory } {
+  const sectionsByDate = new Map<string, CompletionHistorySection>();
+  const getSection = (dateKey: string) => {
+    let section = sectionsByDate.get(dateKey);
+    if (!section) {
+      section = { dateKey, daily: [], personal: [], completionCount: 0 };
+      sectionsByDate.set(dateKey, section);
+    }
+    return section;
+  };
+
+  if (isRecord(completionHistory)) {
+    for (const [dateKey, rawSnapshot] of Object.entries(completionHistory)) {
+      if (!isCompletionDateKey(dateKey) || !isRecord(rawSnapshot)) continue;
+      const snapshot = rawSnapshot as unknown as CompletionSnapshot;
+      if (!Array.isArray(snapshot.scheduledQuestIds) || !Array.isArray(snapshot.completedQuestIds)) continue;
+      const scheduled = new Set(snapshot.scheduledQuestIds.filter((id) => typeof id === "string"));
+      const completed = new Set(snapshot.completedQuestIds.filter((id) => typeof id === "string"));
+      const activeDailyIds = [...new Set([...completed].filter((id) => scheduled.has(id)))];
+      if (activeDailyIds.length === 0) continue;
+      const section = getSection(dateKey);
+      for (const questId of activeDailyIds) {
+        const savedDetails = snapshot.completionDetails?.daily?.[questId];
+        const currentQuest = currentDailyQuests?.find((quest) => quest.id === questId);
+        const hasSavedDetails = isCompletionQuestDetails(savedDetails, "daily");
+        const confirmedReadingCompletion = dateKey === "2026-10-17" && questId === "reading";
+        const details = hasSavedDetails
+          ? savedDetails
+          : currentQuest && !confirmedReadingCompletion
+            ? {
+              title: currentQuest.title,
+              category: currentQuest.category,
+              difficulty: currentQuest.difficulty,
+              questType: "daily" as const,
+            }
+            : undefined;
+        const xp = snapshot.xpAwardedByQuestId?.[questId];
+        section.daily.push({
+          questId,
+          questType: "daily",
+          ...(details ? { details } : {}),
+          ...(!hasSavedDetails && currentQuest && !confirmedReadingCompletion ? { detailsSource: "current" as const } : {}),
+          ...(confirmedReadingCompletion ? { displayTitle: "reading" } : {}),
+          ...(typeof xp === "number" && Number.isFinite(xp) && xp > 0 ? { xp } : {}),
+        });
+      }
+      section.completionCount += activeDailyIds.length;
+    }
+  }
+
+  const validPersonalDates = isRecord(personalCompletedOnByQuestId)
+    ? Object.entries(personalCompletedOnByQuestId).filter(([questId, dateKey]) =>
+      questId.length > 0 && isCompletionDateKey(dateKey),
+    )
+    : [];
+  for (const [questId, dateKey] of validPersonalDates) {
+    const section = getSection(dateKey);
+    const details = completionHistory?.[dateKey]?.completionDetails?.personal?.[questId];
+    const xp = personalXpByQuestId?.[questId];
+    section.personal.push({
+      questId,
+      questType: "personal",
+      ...(isCompletionQuestDetails(details, "personal") ? { details } : {}),
+      ...(typeof xp === "number" && Number.isFinite(xp) && xp > 0 ? { xp } : {}),
+    });
+    section.completionCount += 1;
+  }
+
+  const datedPersonalIds = new Set(validPersonalDates.map(([questId]) => questId));
+  const legacyItems: CompletionHistoryItem[] = [];
+  const seenLegacyIds = new Set<string>();
+  if (Array.isArray(currentPersonalQuests)) {
+    for (const quest of currentPersonalQuests) {
+      if (!quest?.completed || !quest.id || datedPersonalIds.has(quest.id) || seenLegacyIds.has(quest.id)) continue;
+      seenLegacyIds.add(quest.id);
+      const xp = personalXpByQuestId?.[quest.id];
+      legacyItems.push({
+        questId: quest.id,
+        questType: "personal",
+        ...(typeof xp === "number" && Number.isFinite(xp) && xp > 0 ? { xp } : {}),
+      });
+    }
+  }
+  const unidentifiableCount = Number.isSafeInteger(deletedLegacyPersonalCompletionCount) &&
+    deletedLegacyPersonalCompletionCount >= 0 ? deletedLegacyPersonalCompletionCount : 0;
+
+  return {
+    sections: [...sectionsByDate.values()]
+      .filter((section) => section.completionCount > 0)
+      .sort((a, b) => b.dateKey.localeCompare(a.dateKey)),
+    earlier: {
+      items: legacyItems,
+      unidentifiableCount,
+      completionCount: legacyItems.length + unidentifiableCount,
+    },
+  };
+}
+
+export function getCompletionHistoryCardText(item: CompletionHistoryItem): { title: string; description: string } {
+  const cleanText = (value: string | undefined) =>
+    value?.replace(/^\s{0,3}#{1,6}(?:[\t ]+|$)/, "").trim() ?? "";
+  const title = cleanText(item.details?.title);
+  const category = cleanText(item.details?.category);
+  const difficulty = item.details?.difficulty;
+  const availableDetails = [category, difficulty].filter(Boolean);
+  const missingTitleNote = item.details && !title ? "Original quest title was not saved for this completion." : "";
+
+  if (item.detailsSource === "current") {
+    return {
+      title: title || `${item.questType === "daily" ? "Daily" : "Personal"} Quest`,
+      description: [
+        "Current quest details — historical details unavailable",
+        ...availableDetails,
+      ].join(" · "),
+    };
+  }
+
+  return {
+    title: title || item.displayTitle || `${item.questType === "daily" ? "Daily" : "Personal"} Quest`,
+    description: !item.details
+      ? "Original quest details were not saved for this older completion."
+      : [availableDetails.join(" · "), missingTitleNote].filter(Boolean).join(" · ") ||
+        "Saved quest category and difficulty are unavailable.",
+  };
+}
+
 export function getCompletedTodayCounts(
   completionHistory: CompletionHistory | undefined,
   personalCompletedOnByQuestId: Record<string, string> | undefined,
@@ -513,6 +782,25 @@ export function toggleDailyQuestCompletion(
   return wasCompleted
     ? reverseDailyXpAward(nextHistory, dateKey, questId)
     : recordDailyXpAward(nextHistory, dateKey, questId, difficulty);
+}
+
+export function toggleDailyQuestCompletionWithDetails(
+  completionHistory: CompletionHistory,
+  dateKey: string,
+  quest: Quest,
+): CompletionHistory {
+  const snapshot = completionHistory[dateKey];
+  if (!snapshot || !snapshot.scheduledQuestIds.includes(quest.id)) return completionHistory;
+  const wasCompleted = snapshot.completedQuestIds.includes(quest.id);
+  const toggledHistory = toggleDailyQuestCompletion(
+    completionHistory,
+    dateKey,
+    quest.id,
+    quest.difficulty,
+  );
+  return wasCompleted
+    ? removeCompletionDetails(toggledHistory, "daily", quest.id, dateKey)
+    : recordCompletionDetails(toggledHistory, dateKey, "daily", quest);
 }
 
 export function recordPersonalXpAward(

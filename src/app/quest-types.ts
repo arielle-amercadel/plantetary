@@ -18,6 +18,14 @@ export type Quest = {
 
 export type QuestLists = Record<QuestListKey, Quest[]>;
 export type CategoryLists = Record<QuestListKey, string[]>;
+export type CompletionQuestType = QuestListKey;
+export type CompletionQuestDetails = {
+  title: string;
+  category: string;
+  difficulty: Difficulty;
+  questType: CompletionQuestType;
+};
+export type CompletionDetailsByType = Partial<Record<CompletionQuestType, Record<string, CompletionQuestDetails>>>;
 export type StoredQuestData = {
   questLists: QuestLists;
   categoryLists: CategoryLists;
@@ -34,6 +42,27 @@ export type CompletionSnapshot = {
   scheduledQuestIds: string[];
   completedQuestIds: string[];
   xpAwardedByQuestId?: Record<string, number>;
+  completionDetails?: CompletionDetailsByType;
 };
 export type CompletionHistory = Record<string, CompletionSnapshot>;
 export type StreakDay = { date: string; label: string; status: "complete" | "incomplete" | "unscheduled" };
+
+export type CompletionHistoryItem = {
+  questId: string;
+  questType: CompletionQuestType;
+  details?: CompletionQuestDetails;
+  detailsSource?: "current";
+  displayTitle?: string;
+  xp?: number;
+};
+export type CompletionHistorySection = {
+  dateKey: string;
+  daily: CompletionHistoryItem[];
+  personal: CompletionHistoryItem[];
+  completionCount: number;
+};
+export type EarlierCompletionHistory = {
+  items: CompletionHistoryItem[];
+  unidentifiableCount: number;
+  completionCount: number;
+};

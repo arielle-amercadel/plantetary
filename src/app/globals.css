@@ -2414,3 +2414,229 @@ button {
     min-height: 190px;
   }
 }
+
+.completion-history-content {
+  width: calc(100% - 80px);
+  max-width: 1128px;
+  margin: 0 auto;
+  padding: 30px 0 48px;
+}
+
+.completion-history-header h1 {
+  margin: 0;
+  color: var(--foreground);
+  font-family: var(--font-silkscreen), monospace;
+  font-size: 24px;
+  font-weight: 400;
+  line-height: 1.5;
+}
+
+.completion-history-header p,
+.completion-history-earlier > p {
+  margin: 5px 0 0;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.completion-history-notice {
+  margin: 20px 0 16px;
+  padding: 11px 14px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--muted);
+  background: var(--surface-muted);
+  font-size: 11px;
+  line-height: 1.6;
+}
+
+.completion-history-dates {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.completion-history-date,
+.completion-history-earlier,
+.completion-history-empty {
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+}
+
+.completion-history-date > summary {
+  display: flex;
+  min-height: 54px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+  padding: 12px 16px;
+  color: var(--foreground);
+  cursor: pointer;
+  font-weight: 600;
+  list-style: none;
+}
+
+.completion-history-date > summary > span:first-child {
+  min-width: 0;
+}
+
+.completion-history-date > summary::-webkit-details-marker {
+  display: none;
+}
+
+.completion-history-date > summary::after {
+  color: var(--leaf-dark);
+  content: "⌄";
+}
+
+.completion-history-date[open] > summary::after {
+  content: "⌃";
+}
+
+.completion-history-date > summary:focus-visible {
+  outline: 2px solid var(--leaf-dark);
+  outline-offset: -3px;
+}
+
+.completion-history-count,
+.completion-history-earlier header > span {
+  flex: 0 0 auto;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 400;
+}
+
+.completion-history-date-content {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  padding: 0 16px 16px;
+}
+
+.completion-history-group h2,
+.completion-history-earlier h2,
+.completion-history-empty h2 {
+  margin: 0 0 8px;
+  color: var(--foreground);
+  font-family: var(--font-silkscreen), monospace;
+  font-size: 13px;
+  font-weight: 400;
+}
+
+.completion-history-list {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.completion-history-card {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 11px 13px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: #fffdf8;
+}
+
+.completion-history-card-main {
+  min-width: 0;
+}
+
+.completion-history-card h3 {
+  margin: 0;
+  color: var(--foreground);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.completion-history-card p {
+  margin: 3px 0 0;
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1.5;
+}
+
+.completion-history-xp {
+  flex: 0 0 auto;
+  color: var(--leaf-dark);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.completion-history-earlier {
+  margin: 0 0 12px;
+  padding: 15px 16px;
+}
+
+.completion-history-earlier header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.completion-history-earlier h2 {
+  margin: 0;
+}
+
+.completion-history-earlier .completion-history-list {
+  margin-top: 12px;
+}
+
+.completion-history-earlier .completion-history-legacy-count {
+  margin-top: 10px;
+}
+
+.completion-history-empty {
+  padding: 24px;
+  text-align: center;
+}
+
+.completion-history-empty h2 {
+  margin-bottom: 5px;
+}
+
+.completion-history-empty p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+@media (max-width: 760px) {
+  .completion-history-content {
+    width: calc(100% - 32px);
+    padding: 22px 0 36px;
+  }
+
+  .completion-history-header h1 {
+    font-size: 20px;
+  }
+}
+
+@media (max-width: 480px) {
+  .completion-history-date > summary {
+    align-items: flex-start;
+    flex-wrap: wrap;
+    row-gap: 8px;
+    padding: 12px;
+  }
+
+  .completion-history-count {
+    margin-left: auto;
+  }
+
+  .completion-history-date-content {
+    padding: 0 12px 12px;
+  }
+
+  .completion-history-card {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 6px;
+  }
+}
