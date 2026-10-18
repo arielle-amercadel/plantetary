@@ -36,7 +36,7 @@ export default function QuestPanel({
 }: QuestPanelProps) {
   const list = id === "daily-quests" ? "daily" : "personal";
   const defaultCategory = list === "daily" ? "Wellness" : "Personal";
-  const { categoryLists, addCategory } = useQuestStore();
+  const { categoryLists, addCategory, dailyScheduledQuestIds } = useQuestStore();
   const [newTitle, setNewTitle] = useState("");
   const [newDifficulty, setNewDifficulty] = useState<Difficulty>("Easy");
   const [categorySelection, setCategorySelection] = useState(defaultCategory);
@@ -137,6 +137,7 @@ export default function QuestPanel({
             <button
               className={`quest-check${quest.completed ? " is-checked" : ""}`}
               type="button"
+              disabled={list === "daily" && !dailyScheduledQuestIds.includes(quest.id)}
               aria-label={`${quest.completed ? "Mark incomplete" : "Complete"}: ${quest.title}`}
               aria-pressed={quest.completed}
               onClick={() => onToggleQuest(quest.id)}

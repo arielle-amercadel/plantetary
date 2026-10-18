@@ -22,6 +22,7 @@ import {
   getLocalDateKey,
   getSnapshotStatus,
   getStreakValues,
+  isDailyQuestScheduledForToggle,
   migrateStoredData,
   recordPersonalXpAward,
   removeQuestFromHistoryAtDate,
@@ -377,15 +378,15 @@ export function QuestProvider({ children }: { children: ReactNode }) {
       const actionDateKey = getLocalDateKey(new Date());
       const quest = questLists.daily.find((item) => item.id === questId);
       const actionSnapshot = completionHistory[actionDateKey];
-      if (quest && actionSnapshot?.scheduledQuestIds.includes(questId)) {
-        setCompletionHistory((current) =>
-          toggleDailyQuestCompletion(current, actionDateKey, questId, quest.difficulty),
-        );
-        updateQuestList(list, (quests) => quests.map((item) =>
-          item.id === questId ? { ...item, completed: !item.completed } : item,
-        ));
-        return;
-      }
+      if (!quest || !isDailyQuestScheduledForToggle(quest, actionSnapshot)) return;
+
+      setCompletionHistory((current) =>
+        toggleDailyQuestCompletion(current, actionDateKey, questId, quest.difficulty),
+      );
+      updateQuestList(list, (quests) => quests.map((item) =>
+        item.id === questId ? { ...item, completed: !item.completed } : item,
+      ));
+      return;
     }
 
     if (list === "personal") {
