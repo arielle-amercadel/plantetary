@@ -12,7 +12,7 @@ import { getNextPlantProgress, plantCatalog } from "./plant-journal-logic";
 export default function Home() {
   const [isAddingDailyQuest, setIsAddingDailyQuest] = useState(false);
   const [isAddingPersonalQuest, setIsAddingPersonalQuest] = useState(false);
-  const { questLists, totalXp, discoveredPlantIds, currentStreak, dailyCompletedQuestIds, dailyScheduledQuestIds, recoverableDailyQuestIds, hasRestored, addQuest, toggleQuest, deleteQuest, recoverOrphanedDailyQuest } = useQuestStore();
+  const { questLists, totalXp, completedTodayCounts, completedOverallCounts, discoveredPlantIds, currentStreak, dailyCompletedQuestIds, dailyScheduledQuestIds, recoverableDailyQuestIds, hasRestored, addQuest, toggleQuest, deleteQuest, recoverOrphanedDailyQuest } = useQuestStore();
   const { level, xpIntoLevel, xpForNextLevel, xpProgressPercent } = getLevelProgress(totalXp);
   const discoveredPlants = plantCatalog.filter((plant) => discoveredPlantIds.includes(plant.id));
   const nextDiscovery = hasRestored ? getNextPlantProgress(totalXp, discoveredPlantIds) : undefined;
@@ -71,14 +71,14 @@ export default function Home() {
               </div>
             </div>
             <div className="stat-card">
-              <strong className="stat-value">3 / 7</strong>
+              <strong className="stat-value">{completedTodayCounts.total}</strong>
               <span className="stat-title">Completed today</span>
-              <span className="stat-note">2 daily · 1 personal</span>
+              <span className="stat-note">{completedTodayCounts.daily} daily · {completedTodayCounts.personal} personal</span>
             </div>
             <div className="stat-card">
-              <strong className="stat-value">48</strong>
+              <strong className="stat-value">{completedOverallCounts.total}</strong>
               <span className="stat-title">Quests completed</span>
-              <span className="stat-note">36 daily · 12 personal</span>
+              <span className="stat-note">{completedOverallCounts.daily} daily · {completedOverallCounts.personal} personal</span>
             </div>
             <div className="stat-card">
               <strong className="stat-value">{currentStreak} days</strong>

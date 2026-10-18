@@ -318,6 +318,133 @@ export function getXpLedgerTotal(
   return dailyXp + sumXpRecord(personalXpByQuestId) + (isValidXpAmount(legacyXpBonus) ? legacyXpBonus : 0);
 }
 
+type CompletionCounts = { daily: number; personal: number; total: number };
+
+export function isCompletionDateKey(value: unknown): value is string {
+  if (typeof value !== "string") return false;
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+  if (!match) return false;
+  const [, yearText, monthText, dayText] = match;
+  const year = Number(yearText);
+  const month = Number(monthText);
+  const day = Number(dayText);
+  if (year < 1 || month < 1 || month > 12) return false;
+  const leapYear = year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0);
+  const daysInMonth = [31, leapYear ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+  return day >= 1 && day <= daysInMonth[month - 1];
+}
+
+function countSnapshotCompletions(snapshot: CompletionSnapshot | undefined): number {
+  if (
+    !snapshot ||
+    !Array.isArray(snapshot.scheduledQuestIds) ||
+    !Array.isArray(snapshot.completedQuestIds)
+  ) return 0;
+  const scheduledIds = new Set(snapshot.scheduledQuestIds.filter((id) => typeof id === "string"));
+  return new Set(snapshot.completedQuestIds.filter((id) => typeof id === "string" && scheduledIds.has(id))).size;
+}
+
+function countDailyCompletions(history: CompletionHistory | undefined): number {
+  if (!history || typeof history !== "object" || Array.isArray(history)) return 0;
+  return Object.entries(history).reduce(
+    (total, [dateKey, snapshot]) => total + (isCompletionDateKey(dateKey)
+      ? countSnapshotCompletions(snapshot)
+      : 0),
+    0,
+  );
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value && typeof value === "object" && !Array.isArray(value));
+}
+
+export function getCompletedTodayCounts(
+  completionHistory: CompletionHistory | undefined,
+  personalCompletedOnByQuestId: Record<string, string> | undefined,
+  todayKey: string,
+): CompletionCounts {
+  const daily = isRecord(completionHistory) && isRecord(completionHistory[todayKey])
+    ? countSnapshotCompletions(completionHistory[todayKey] as CompletionSnapshot)
+    : 0;
+  const personal = isRecord(personalCompletedOnByQuestId)
+    ? Object.entries(personalCompletedOnByQuestId).filter(
+      ([questId, dateKey]) => questId.length > 0 && isCompletionDateKey(dateKey) && dateKey === todayKey,
+    ).length
+    : 0;
+  return { daily, personal, total: daily + personal };
+}
+
+export function getCompletedOverallCounts(
+  completionHistory: CompletionHistory | undefined,
+  personalCompletedOnByQuestId: Record<string, string> | undefined,
+  currentPersonalQuests: Quest[] | undefined,
+  deletedLegacyPersonalCompletionCount = 0,
+): CompletionCounts {
+  const daily = countDailyCompletions(completionHistory);
+  const recordedPersonalCount = isRecord(personalCompletedOnByQuestId)
+    ? Object.entries(personalCompletedOnByQuestId).filter(
+      ([questId, dateKey]) => questId.length > 0 && isCompletionDateKey(dateKey),
+    ).length
+    : 0;
+  const recordedQuestIds = isRecord(personalCompletedOnByQuestId)
+    ? new Set(Object.entries(personalCompletedOnByQuestId)
+      .filter(([questId, dateKey]) => questId.length > 0 && isCompletionDateKey(dateKey))
+      .map(([questId]) => questId))
+    : new Set<string>();
+  const legacyCurrentIds = new Set<string>();
+  if (Array.isArray(currentPersonalQuests)) {
+    for (const quest of currentPersonalQuests) {
+      if (
+        quest &&
+        typeof quest.id === "string" &&
+        quest.completed === true &&
+        !recordedQuestIds.has(quest.id)
+      ) legacyCurrentIds.add(quest.id);
+    }
+  }
+  const deletedLegacyCount = Number.isSafeInteger(deletedLegacyPersonalCompletionCount) &&
+    deletedLegacyPersonalCompletionCount >= 0
+    ? deletedLegacyPersonalCompletionCount
+    : 0;
+  const personal = recordedPersonalCount + legacyCurrentIds.size + deletedLegacyCount;
+  return { daily, personal, total: daily + personal };
+}
+
+export function recordPersonalCompletionDate(
+  personalCompletedOnByQuestId: Record<string, string> | undefined,
+  questId: string,
+  dateKey: string,
+): Record<string, string> {
+  const current = personalCompletedOnByQuestId ?? {};
+  if (!questId || !isCompletionDateKey(dateKey) || current[questId] === dateKey) return current;
+  return { ...current, [questId]: dateKey };
+}
+
+export function clearPersonalCompletionDate(
+  personalCompletedOnByQuestId: Record<string, string> | undefined,
+  questId: string,
+): Record<string, string> | undefined {
+  if (!personalCompletedOnByQuestId || !Object.hasOwn(personalCompletedOnByQuestId, questId)) {
+    return personalCompletedOnByQuestId;
+  }
+  const remainingDates = { ...personalCompletedOnByQuestId };
+  delete remainingDates[questId];
+  return Object.keys(remainingDates).length > 0 ? remainingDates : undefined;
+}
+
+export function preserveDeletedLegacyPersonalCompletionCount(
+  currentCount: number | undefined,
+  quest: Quest | undefined,
+  personalCompletedOnByQuestId: Record<string, string> | undefined,
+): number | undefined {
+  if (
+    !quest?.completed ||
+    (personalCompletedOnByQuestId && isCompletionDateKey(personalCompletedOnByQuestId[quest.id]))
+  ) return currentCount;
+  const count = Number.isSafeInteger(currentCount) && (currentCount ?? 0) >= 0 ? currentCount ?? 0 : 0;
+  return count + 1;
+}
+
 export function recordDailyXpAward(
   completionHistory: CompletionHistory,
   dateKey: string,

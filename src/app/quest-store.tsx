@@ -20,12 +20,18 @@ import {
   findCategoryMatch,
   getXpLedgerTotal,
   getLocalDateKey,
+  isCompletionDateKey,
+  getCompletedOverallCounts,
+  getCompletedTodayCounts,
   getRecoverableOrphanedDailyQuestIds,
   getSnapshotStatus,
   getStreakValues,
   hasQuestScheduleChanged,
   isDailyQuestScheduledForToggle,
   migrateStoredData,
+  clearPersonalCompletionDate,
+  preserveDeletedLegacyPersonalCompletionCount,
+  recordPersonalCompletionDate,
   recordPersonalXpAward,
   removeQuestFromHistoryAtDate,
   recoverOrphanedDailyQuestFromHistory,
@@ -67,6 +73,18 @@ function isCompletionHistory(value: unknown): value is CompletionHistory {
     Array.isArray((snapshot as CompletionSnapshot).completedQuestIds) &&
     (snapshot as CompletionSnapshot).completedQuestIds.every((id) => typeof id === "string"),
   );
+}
+
+function normalizePersonalCompletionDates(value: unknown): Record<string, string> | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  const entries = Object.entries(value);
+  const validEntries = entries.filter(([questId, dateKey]) => questId.length > 0 && isCompletionDateKey(dateKey));
+  if (validEntries.length === entries.length) return value as Record<string, string>;
+  return validEntries.length > 0 ? Object.fromEntries(validEntries) : undefined;
+}
+
+function isValidDeletedLegacyPersonalCompletionCount(value: unknown): value is number {
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
 }
 
 const questStorageKey = "plantetary-quest-data";
@@ -201,6 +219,8 @@ type QuestStoreValue = {
   questLists: QuestLists;
   categoryLists: CategoryLists;
   totalXp: number;
+  completedTodayCounts: { daily: number; personal: number; total: number };
+  completedOverallCounts: { daily: number; personal: number; total: number };
   discoveredPlantIds: string[];
   currentStreak: number;
   longestStreak: number;
@@ -232,6 +252,12 @@ export function QuestProvider({ children }: { children: ReactNode }) {
   const [personalXpByQuestId, setPersonalXpByQuestId] = useState<Record<string, number> | undefined>(
     initialStoredQuestData.personalXpByQuestId,
   );
+  const [personalCompletedOnByQuestId, setPersonalCompletedOnByQuestId] = useState<Record<string, string> | undefined>(
+    initialStoredQuestData.personalCompletedOnByQuestId,
+  );
+  const [deletedLegacyPersonalCompletionCount, setDeletedLegacyPersonalCompletionCount] = useState<number | undefined>(
+    initialStoredQuestData.deletedLegacyPersonalCompletionCount,
+  );
   const [legacyXpBonus, setLegacyXpBonus] = useState(initialStoredQuestData.legacyXpBonus ?? 0);
   const [schemaVersion, setSchemaVersion] = useState(initialStoredQuestData.schemaVersion ?? 3);
   const [storedDiscoveredPlantIds, setDiscoveredPlantIds] = useState<string[]>(
@@ -259,9 +285,24 @@ export function QuestProvider({ children }: { children: ReactNode }) {
           if (isStoredQuestData(parsedData)) {
             const validHistory = parsedData.completionHistory === undefined ||
               isCompletionHistory(parsedData.completionHistory);
-            const validatedData: StoredQuestData = validHistory
+            const validPersonalCompletionDates = normalizePersonalCompletionDates(
+              parsedData.personalCompletedOnByQuestId,
+            );
+            const validDeletedLegacyCount = parsedData.deletedLegacyPersonalCompletionCount === undefined ||
+              isValidDeletedLegacyPersonalCompletionCount(parsedData.deletedLegacyPersonalCompletionCount)
+              ? parsedData.deletedLegacyPersonalCompletionCount
+              : undefined;
+            const optionalFieldsUnchanged =
+              validPersonalCompletionDates === parsedData.personalCompletedOnByQuestId &&
+              validDeletedLegacyCount === parsedData.deletedLegacyPersonalCompletionCount;
+            const validatedData: StoredQuestData = validHistory && optionalFieldsUnchanged
               ? parsedData
-              : { ...parsedData, completionHistory: undefined };
+              : {
+                ...parsedData,
+                completionHistory: validHistory ? parsedData.completionHistory : undefined,
+                personalCompletedOnByQuestId: validPersonalCompletionDates,
+                deletedLegacyPersonalCompletionCount: validDeletedLegacyCount,
+              };
             const migratedData = migratePlantDiscoveries(migrateStoredData(validatedData));
             if (
               (migratedData !== validatedData || validatedData !== parsedData) &&
@@ -295,6 +336,8 @@ export function QuestProvider({ children }: { children: ReactNode }) {
       setCategoryLists(restoredData.categoryLists);
       setCompletionHistory(completionHistory);
       setPersonalXpByQuestId(restoredData.personalXpByQuestId);
+      setPersonalCompletedOnByQuestId(restoredData.personalCompletedOnByQuestId);
+      setDeletedLegacyPersonalCompletionCount(restoredData.deletedLegacyPersonalCompletionCount);
       setLegacyXpBonus(restoredData.legacyXpBonus ?? 0);
       setDiscoveredPlantIds(restoredData.discoveredPlantIds ?? []);
       setSchemaVersion(restoredData.schemaVersion ?? 3);
@@ -335,6 +378,8 @@ export function QuestProvider({ children }: { children: ReactNode }) {
           categoryLists,
           completionHistory,
           personalXpByQuestId,
+          personalCompletedOnByQuestId,
+          deletedLegacyPersonalCompletionCount,
           legacyXpBonus,
           discoveredPlantIds: mergeDiscoveredPlantIds(discoveredPlantIds, totalXp),
         }),
@@ -342,7 +387,7 @@ export function QuestProvider({ children }: { children: ReactNode }) {
     } catch {
       return;
     }
-  }, [hasRestored, canPersistStorage, questLists, categoryLists, completionHistory, personalXpByQuestId, legacyXpBonus, discoveredPlantIds, schemaVersion, todayKey, totalXp]);
+  }, [hasRestored, canPersistStorage, questLists, categoryLists, completionHistory, personalXpByQuestId, personalCompletedOnByQuestId, deletedLegacyPersonalCompletionCount, legacyXpBonus, discoveredPlantIds, schemaVersion, todayKey, totalXp]);
 
   const historyForDisplay = completionHistory;
   const streaks = todayKey
@@ -365,6 +410,17 @@ export function QuestProvider({ children }: { children: ReactNode }) {
   const dailyScheduledQuestIds = todayKey
     ? completionHistory[todayKey]?.scheduledQuestIds ?? []
     : [];
+  const completedTodayCounts = getCompletedTodayCounts(
+    completionHistory,
+    personalCompletedOnByQuestId,
+    todayKey,
+  );
+  const completedOverallCounts = getCompletedOverallCounts(
+    completionHistory,
+    personalCompletedOnByQuestId,
+    questLists.personal,
+    deletedLegacyPersonalCompletionCount,
+  );
   const recoverableDailyQuestIds = todayKey
     ? getRecoverableOrphanedDailyQuestIds(completionHistory[todayKey], questLists.daily)
     : [];
@@ -450,9 +506,13 @@ export function QuestProvider({ children }: { children: ReactNode }) {
     if (list === "personal") {
       const quest = questLists.personal.find((item) => item.id === questId);
       if (quest) {
+        const actionDateKey = getLocalDateKey(new Date());
         const nextPersonalXpForDiscovery = quest.completed
           ? reversePersonalXpAward(personalXpByQuestId, questId)
           : recordPersonalXpAward(personalXpByQuestId, questId, quest.difficulty);
+        setPersonalCompletedOnByQuestId((current) => quest.completed
+          ? clearPersonalCompletionDate(current, questId)
+          : recordPersonalCompletionDate(current, questId, actionDateKey));
         setPersonalXpByQuestId((current) => quest.completed
           ? reversePersonalXpAward(current, questId)
           : recordPersonalXpAward(current, questId, quest.difficulty));
@@ -471,6 +531,18 @@ export function QuestProvider({ children }: { children: ReactNode }) {
   }
 
   function deleteQuest(list: QuestListKey, questId: string) {
+    if (list === "personal") {
+      const quest = questLists.personal.find((item) => item.id === questId);
+      if (quest) {
+        setDeletedLegacyPersonalCompletionCount((current) =>
+          preserveDeletedLegacyPersonalCompletionCount(
+            current,
+            quest,
+            personalCompletedOnByQuestId,
+          ),
+        );
+      }
+    }
     updateQuestList(list, (quests) => quests.filter((quest) => quest.id !== questId));
     if (list === "daily") {
       const actionDate = new Date();
@@ -491,7 +563,7 @@ export function QuestProvider({ children }: { children: ReactNode }) {
 
   return (
     <QuestStoreContext.Provider
-      value={{ questLists, categoryLists, totalXp, discoveredPlantIds, currentStreak: streaks.currentStreak, longestStreak: streaks.longestStreak, streakWeek, dailyCompletedQuestIds, dailyScheduledQuestIds, recoverableDailyQuestIds, hasRestored, addQuest, updateQuest, addCategory, toggleQuest, deleteQuest, recoverOrphanedDailyQuest }}
+      value={{ questLists, categoryLists, totalXp, completedTodayCounts, completedOverallCounts, discoveredPlantIds, currentStreak: streaks.currentStreak, longestStreak: streaks.longestStreak, streakWeek, dailyCompletedQuestIds, dailyScheduledQuestIds, recoverableDailyQuestIds, hasRestored, addQuest, updateQuest, addCategory, toggleQuest, deleteQuest, recoverOrphanedDailyQuest }}
     >
       {children}
     </QuestStoreContext.Provider>

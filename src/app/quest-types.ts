@@ -25,6 +25,8 @@ export type StoredQuestData = {
   schemaVersion?: number;
   legacyXpBonus?: number;
   personalXpByQuestId?: Record<string, number>;
+  personalCompletedOnByQuestId?: Record<string, string>;
+  deletedLegacyPersonalCompletionCount?: number;
   discoveredPlantIds?: string[];
 };
 
