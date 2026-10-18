@@ -7,12 +7,15 @@ import { useState } from "react";
 import AppShell, { FigmaIcon } from "./app-shell";
 import QuestPanel from "./quest-panel";
 import { getLevelProgress, useQuestStore } from "./quest-store";
+import { getNextPlantProgress, plantCatalog } from "./plant-journal-logic";
 
 export default function Home() {
   const [isAddingDailyQuest, setIsAddingDailyQuest] = useState(false);
   const [isAddingPersonalQuest, setIsAddingPersonalQuest] = useState(false);
-  const { questLists, totalXp, currentStreak, dailyCompletedQuestIds, dailyScheduledQuestIds, recoverableDailyQuestIds, addQuest, toggleQuest, deleteQuest, recoverOrphanedDailyQuest } = useQuestStore();
+  const { questLists, totalXp, discoveredPlantIds, currentStreak, dailyCompletedQuestIds, dailyScheduledQuestIds, recoverableDailyQuestIds, hasRestored, addQuest, toggleQuest, deleteQuest, recoverOrphanedDailyQuest } = useQuestStore();
   const { level, xpIntoLevel, xpForNextLevel, xpProgressPercent } = getLevelProgress(totalXp);
+  const discoveredPlants = plantCatalog.filter((plant) => discoveredPlantIds.includes(plant.id));
+  const nextDiscovery = hasRestored ? getNextPlantProgress(totalXp, discoveredPlantIds) : undefined;
 
   return (
     <AppShell page="home">
@@ -154,50 +157,60 @@ export default function Home() {
                   <h2>Your little collection</h2>
                   <FigmaIcon src="/icon-sprout.svg" size={18} />
                 </div>
-                <p className="collection-count">4 of 8 plants discovered</p>
+                <p className="collection-count">
+                  {hasRestored ? `${discoveredPlants.length} of ${plantCatalog.length} plants discovered` : "Loading collection…"}
+                </p>
                 <div className="plant-previews">
-                  <div className="plant-preview">
-                    <Image src="/plant-fern.png" alt="Fern" width={70} height={70} unoptimized className="pixel-art" />
-                    <span>Fern</span>
-                  </div>
-                  <div className="plant-preview">
-                    <Image src="/plant-daisy.png" alt="Daisy" width={70} height={70} unoptimized className="pixel-art" />
-                    <span>Daisy</span>
-                  </div>
-                  <div className="plant-preview">
-                    <Image src="/plant-cactus.png" alt="Cactus" width={70} height={70} unoptimized className="pixel-art" />
-                    <span>Cactus</span>
-                  </div>
+                  {hasRestored && discoveredPlants.slice(0, 3).map((plant) => (
+                    <div className="plant-preview" key={plant.id}>
+                      {plant.imageSrc
+                        ? <Image src={plant.imageSrc} alt={plant.name} width={70} height={70} unoptimized className="pixel-art" />
+                        : <FigmaIcon src="/icon-sprout.svg" size={48} />}
+                      <span>{plant.name}</span>
+                    </div>
+                  ))}
                 </div>
-                <a className="journal-button" href="#plant-collection">
+                <Link className="journal-button" href="/plant-journal">
                   <FigmaIcon src="/icon-book.svg" size={16} />
                   <span>Open Plant Journal</span>
-                </a>
+                </Link>
               </section>
 
               <section className="next-reward">
                 <h2>
                   <FigmaIcon src="/icon-sparkles.svg" size={16} />
-                  <span>So close to a new leaf</span>
+                  <span>{!hasRestored ? "Growing your garden" : nextDiscovery ? "So close to a new leaf" : "Your collection is complete"}</span>
                 </h2>
-                <div className="reward-details">
-                  <Image src="/plant-lavender.png" alt="Undiscovered lavender plant" width={72} height={72} unoptimized className="pixel-art" />
-                  <div>
-                    <strong>Lavender</strong>
-                    <p>Complete 50 quests to discover this plant.</p>
+                {!hasRestored ? (
+                  <div className="reward-details"><p>Your saved discoveries are loading.</p></div>
+                ) : nextDiscovery ? (
+                  <>
+                    <div className="reward-details">
+                      {nextDiscovery.plant.imageSrc
+                        ? <Image src={nextDiscovery.plant.imageSrc} alt={`Undiscovered ${nextDiscovery.plant.name}`} width={72} height={72} unoptimized className="pixel-art locked-plant-preview" />
+                        : <FigmaIcon src="/icon-sprout.svg" size={56} />}
+                      <div>
+                        <strong>{nextDiscovery.plant.name}</strong>
+                        <p>Discover at {nextDiscovery.plant.xpThreshold} XP.</p>
+                      </div>
+                    </div>
+                    <div
+                      className="reward-track"
+                      role="progressbar"
+                      aria-label={`XP progress toward ${nextDiscovery.plant.name}`}
+                      aria-valuemin={0}
+                      aria-valuemax={Math.max(1, nextDiscovery.plant.xpThreshold)}
+                      aria-valuenow={Math.max(0, Math.min(totalXp, nextDiscovery.plant.xpThreshold))}
+                    >
+                      <span style={{ width: `${nextDiscovery.progressPercent}%` }} />
+                    </div>
+                    <p className="reward-caption">{totalXp} / {nextDiscovery.plant.xpThreshold} XP · {nextDiscovery.xpRemaining} to go</p>
+                  </>
+                ) : (
+                  <div className="reward-details">
+                    <p>All {plantCatalog.length} plants have been discovered.</p>
                   </div>
-                </div>
-                <div
-                  className="reward-track"
-                  role="progressbar"
-                  aria-label="Quests until Lavender"
-                  aria-valuemin={0}
-                  aria-valuemax={50}
-                  aria-valuenow={48}
-                >
-                  <span />
-                </div>
-                <p className="reward-caption">48 / 50 quests · Just 2 more!</p>
+                )}
               </section>
 
               <aside className="gentle-reminder">

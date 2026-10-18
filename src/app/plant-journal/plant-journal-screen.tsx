@@ -1,0 +1,243 @@
+"use client";
+
+import Image from "next/image";
+import { useState } from "react";
+import { FigmaIcon } from "../app-shell";
+import { getLevelProgress, useQuestStore } from "../quest-store";
+import {
+  getNextPlantProgress,
+  getPlantFilterResults,
+  getPlantJournalSpread,
+  getPlantThresholdProgress,
+  plantCatalog,
+  type Plant,
+  type PlantFilter,
+} from "../plant-journal-logic";
+
+function PlantCard({ plant, collected, totalXp }: { plant: Plant; collected: boolean; totalXp: number }) {
+  const progress = getPlantThresholdProgress(plant, totalXp);
+
+  return (
+    <article className={`journal-plant-card${collected ? " is-collected" : " is-locked"}`}>
+      <div className="journal-plant-art">
+        {plant.imageSrc ? (
+          <Image
+            src={plant.imageSrc}
+            alt={collected ? plant.name : ""}
+            aria-hidden={!collected}
+            width={88}
+            height={88}
+            unoptimized
+            className={`pixel-art journal-plant-image${collected ? "" : " is-silhouette"}`}
+          />
+        ) : (
+          <div className="journal-plant-silhouette" aria-hidden="true">
+            <FigmaIcon src="/icon-sprout.svg" size={72} />
+          </div>
+        )}
+        <span className="journal-plant-status" aria-label={collected ? "Discovered" : "Locked"}>
+          {collected ? <FigmaIcon src="/icon-check.svg" size={13} /> : <span className="journal-lock-icon" aria-hidden="true" />}
+        </span>
+      </div>
+      <h3>{plant.name}</h3>
+      {collected ? (
+        <p className="journal-plant-detail">Discovered</p>
+      ) : (
+        <>
+          <p className="journal-plant-detail">Discover at {plant.xpThreshold} XP</p>
+          <div
+            className="journal-plant-progress"
+            role="progressbar"
+            aria-label={`XP progress toward ${plant.name}`}
+            aria-valuemin={0}
+            aria-valuemax={Math.max(1, plant.xpThreshold)}
+            aria-valuenow={Math.max(0, Math.min(totalXp, plant.xpThreshold))}
+          >
+            <span style={{ width: `${progress.progressPercent}%` }} />
+          </div>
+          <span className="journal-plant-progress-label">{progress.xpRemaining} XP to go</span>
+        </>
+      )}
+    </article>
+  );
+}
+
+function BookPage({
+  title,
+  description,
+  plants,
+  discoveredPlantIds,
+  pageKind,
+  totalXp,
+  pageNumber,
+}: {
+  title: string;
+  description: string;
+  plants: Plant[];
+  discoveredPlantIds: string[];
+  pageKind: PlantFilter;
+  totalXp: number;
+  pageNumber: number;
+}) {
+  const gridSlots = [...plants, ...Array.from({ length: Math.max(0, 4 - plants.length) }, () => null)];
+  const discoveredSet = new Set(discoveredPlantIds);
+  const collectedPage = pageKind === "collected" || (pageKind === "all" && pageNumber % 2 === 1);
+
+  return (
+    <section className="journal-book-page">
+      <header className="journal-page-heading">
+        <div className="journal-page-title">
+          <h2>{title}</h2>
+          <FigmaIcon src={collectedPage ? "/icon-sparkles.svg" : "/icon-book.svg"} size={18} />
+        </div>
+        <p>{description}</p>
+      </header>
+      <div className="journal-plant-grid">
+        {gridSlots.map((plant, index) =>
+          plant ? (
+            <PlantCard key={plant.id} plant={plant} collected={discoveredSet.has(plant.id)} totalXp={totalXp} />
+          ) : (
+            <div
+              className="journal-plant-pocket"
+              key={`empty-pocket-${pageNumber}-${index}`}
+              aria-hidden="true"
+            />
+          ),
+        )}
+      </div>
+      <footer className="journal-page-footer">
+        <span>{collectedPage ? "Every discovery is part of your story." : "Keep growing at your own pace."}</span>
+        <span>Page {pageNumber}</span>
+      </footer>
+    </section>
+  );
+}
+
+export default function PlantJournalScreen() {
+  const [filter, setFilter] = useState<PlantFilter>("all");
+  const [spreadIndex, setSpreadIndex] = useState(0);
+  const { totalXp, discoveredPlantIds, hasRestored } = useQuestStore();
+  const { level, xpIntoLevel, xpForNextLevel } = getLevelProgress(totalXp);
+  const nextDiscovery = getNextPlantProgress(totalXp, discoveredPlantIds);
+  const visiblePlants = getPlantFilterResults(discoveredPlantIds, filter);
+  const discoveredSet = new Set(discoveredPlantIds);
+  const collectionCount = plantCatalog.filter((plant) => discoveredSet.has(plant.id)).length;
+  const spread = getPlantJournalSpread(discoveredPlantIds, filter, spreadIndex);
+  const { leftPlants, rightPlants, currentSpread, spreadCount } = spread;
+
+  if (!hasRestored) {
+    return <main className="journal-content"><p className="journal-loading">Opening your journal…</p></main>;
+  }
+
+  return (
+    <main className="journal-content">
+      <header className="journal-header">
+        <div className="journal-introduction">
+          <h1>Plant Journal</h1>
+          <p>A little record of the plants you’ve discovered along the way.</p>
+        </div>
+        <div className="journal-collection-count" aria-label={`${collectionCount} of ${plantCatalog.length} plants discovered`}>
+          <FigmaIcon src="/icon-sprout.svg" size={20} />
+          <span className="journal-status-chip">{collectionCount} of {plantCatalog.length} discovered</span>
+        </div>
+      </header>
+
+      <section className="journal-progress-summary" aria-label="Plant collection progress">
+        <div className="journal-summary-item">
+          <FigmaIcon src="/icon-sprout.svg" size={24} />
+          <div>
+            <strong>Level {level}</strong>
+            <span>{xpIntoLevel} / {xpForNextLevel} XP this level</span>
+          </div>
+        </div>
+        <span className="journal-summary-divider" aria-hidden="true" />
+        <div className="journal-summary-item">
+          <FigmaIcon src="/icon-check.svg" size={22} />
+          <div>
+            <strong>{collectionCount} of {plantCatalog.length} plants</strong>
+            <span>{totalXp} XP in your ledger</span>
+          </div>
+        </div>
+        <span className="journal-summary-divider" aria-hidden="true" />
+        <div className="journal-summary-item journal-next-discovery">
+          <FigmaIcon src="/icon-sparkles.svg" size={22} />
+          <div>
+            <strong>{nextDiscovery ? nextDiscovery.plant.name : "All plants discovered"}</strong>
+            <span>{nextDiscovery ? `${nextDiscovery.xpRemaining} XP until discovery` : "Your collection is complete"}</span>
+          </div>
+        </div>
+      </section>
+
+      <section className="journal-tabs" aria-label="Filter plant collection">
+        <div className="journal-filters" role="group" aria-label="Plant filters">
+          {(["all", "collected", "locked"] as const).map((item) => (
+            <button
+              className={`journal-filter${filter === item ? " is-active" : ""}`}
+              key={item}
+              type="button"
+              aria-pressed={filter === item}
+              onClick={() => {
+                setFilter(item);
+                setSpreadIndex(0);
+              }}
+            >
+              {item === "all" ? "All" : item === "collected" ? "Collected" : "Locked"}
+            </button>
+          ))}
+        </div>
+        <span className="journal-filter-count">Showing {visiblePlants.length} plants</span>
+      </section>
+
+      <section className="journal-book" aria-label="Open botanical journal">
+        <div className="journal-book-spread">
+          <BookPage
+            title={filter === "all" ? "Your Growing Collection" : filter === "collected" ? "Collected Plants" : "Undiscovered Plants"}
+            description={filter === "locked" ? "More lovely things are waiting to grow." : "The little leaves you’ve gathered."}
+            plants={leftPlants}
+            discoveredPlantIds={discoveredPlantIds}
+            pageKind={filter}
+            totalXp={totalXp}
+            pageNumber={currentSpread * 2 + 1}
+          />
+          <div className="journal-book-binding" aria-hidden="true"><span /></div>
+          <BookPage
+            title={filter === "all" ? "Your Collection Continues" : filter === "collected" ? "Collected Plants" : "Undiscovered Plants"}
+            description={filter === "collected" ? "The little leaves you’ve gathered." : "More lovely things are waiting to grow."}
+            plants={rightPlants}
+            discoveredPlantIds={discoveredPlantIds}
+            pageKind={filter === "all" ? "all" : filter}
+            totalXp={totalXp}
+            pageNumber={currentSpread * 2 + 2}
+          />
+        </div>
+        {spreadCount > 1 && (
+          <nav className="journal-book-navigation" aria-label="Journal spread navigation">
+            {currentSpread > 0 && (
+              <button
+                type="button"
+                aria-label="Previous spread"
+                onClick={() => setSpreadIndex(currentSpread - 1)}
+              >
+                <span aria-hidden="true">←</span>
+              </button>
+            )}
+            {currentSpread < spreadCount - 1 && (
+              <button
+                type="button"
+                aria-label="Next spread"
+                onClick={() => setSpreadIndex(currentSpread + 1)}
+              >
+                <span aria-hidden="true">→</span>
+              </button>
+            )}
+          </nav>
+        )}
+      </section>
+
+      <p className="journal-note">
+        <FigmaIcon src="/icon-heart.svg" size={14} />
+        <span>Every small step helps your garden grow.</span>
+      </p>
+    </main>
+  );
+}

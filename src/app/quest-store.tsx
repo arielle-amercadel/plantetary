@@ -36,6 +36,7 @@ import {
   weekdayNames,
   weekdays,
 } from "./quest-logic";
+import { mergeDiscoveredPlantIds, migratePlantDiscoveries } from "./plant-journal-logic";
 
 export type {
   Difficulty,
@@ -150,10 +151,10 @@ const initialQuestLists: QuestLists = {
   ],
 };
 
-const initialStoredQuestData = migrateStoredData({
+const initialStoredQuestData = migratePlantDiscoveries(migrateStoredData({
   questLists: initialQuestLists,
   categoryLists: initialCategoryLists,
-});
+}));
 
 function isQuest(value: unknown): value is Quest {
   if (typeof value !== "object" || value === null) return false;
@@ -200,6 +201,7 @@ type QuestStoreValue = {
   questLists: QuestLists;
   categoryLists: CategoryLists;
   totalXp: number;
+  discoveredPlantIds: string[];
   currentStreak: number;
   longestStreak: number;
   streakWeek: StreakDay[];
@@ -231,7 +233,10 @@ export function QuestProvider({ children }: { children: ReactNode }) {
     initialStoredQuestData.personalXpByQuestId,
   );
   const [legacyXpBonus, setLegacyXpBonus] = useState(initialStoredQuestData.legacyXpBonus ?? 0);
-  const [schemaVersion, setSchemaVersion] = useState(initialStoredQuestData.schemaVersion ?? 2);
+  const [schemaVersion, setSchemaVersion] = useState(initialStoredQuestData.schemaVersion ?? 3);
+  const [storedDiscoveredPlantIds, setDiscoveredPlantIds] = useState<string[]>(
+    initialStoredQuestData.discoveredPlantIds ?? [],
+  );
   const [todayKey, setTodayKey] = useState("");
   const [hasRestored, setHasRestored] = useState(false);
   const [canPersistStorage, setCanPersistStorage] = useState(true);
@@ -257,7 +262,7 @@ export function QuestProvider({ children }: { children: ReactNode }) {
             const validatedData: StoredQuestData = validHistory
               ? parsedData
               : { ...parsedData, completionHistory: undefined };
-            const migratedData = migrateStoredData(validatedData);
+            const migratedData = migratePlantDiscoveries(migrateStoredData(validatedData));
             if (
               (migratedData !== validatedData || validatedData !== parsedData) &&
               !preserveRawValueIfAbsent(validBackupStorageKey, rawData)
@@ -291,7 +296,8 @@ export function QuestProvider({ children }: { children: ReactNode }) {
       setCompletionHistory(completionHistory);
       setPersonalXpByQuestId(restoredData.personalXpByQuestId);
       setLegacyXpBonus(restoredData.legacyXpBonus ?? 0);
-      setSchemaVersion(restoredData.schemaVersion ?? 2);
+      setDiscoveredPlantIds(restoredData.discoveredPlantIds ?? []);
+      setSchemaVersion(restoredData.schemaVersion ?? 3);
       setTodayKey(restoredToday);
       setCanPersistStorage(canPersist);
       setHasRestored(true);
@@ -314,6 +320,9 @@ export function QuestProvider({ children }: { children: ReactNode }) {
     };
   }, [questLists.daily]);
 
+  const totalXp = getXpLedgerTotal(completionHistory, personalXpByQuestId, legacyXpBonus);
+  const discoveredPlantIds = mergeDiscoveredPlantIds(storedDiscoveredPlantIds, totalXp);
+
   useEffect(() => {
     if (!hasRestored || !canPersistStorage || typeof window === "undefined") return;
 
@@ -327,14 +336,14 @@ export function QuestProvider({ children }: { children: ReactNode }) {
           completionHistory,
           personalXpByQuestId,
           legacyXpBonus,
+          discoveredPlantIds: mergeDiscoveredPlantIds(discoveredPlantIds, totalXp),
         }),
       );
     } catch {
       return;
     }
-  }, [hasRestored, canPersistStorage, questLists, categoryLists, completionHistory, personalXpByQuestId, legacyXpBonus, schemaVersion, todayKey]);
+  }, [hasRestored, canPersistStorage, questLists, categoryLists, completionHistory, personalXpByQuestId, legacyXpBonus, discoveredPlantIds, schemaVersion, todayKey, totalXp]);
 
-  const totalXp = getXpLedgerTotal(completionHistory, personalXpByQuestId, legacyXpBonus);
   const historyForDisplay = completionHistory;
   const streaks = todayKey
     ? getStreakValues(historyForDisplay, todayKey)
@@ -419,8 +428,18 @@ export function QuestProvider({ children }: { children: ReactNode }) {
       if (!quest) return;
       if (!isDailyQuestScheduledForToggle(quest, actionSnapshot, actionDate)) return;
 
+      const nextHistoryForDiscovery = toggleDailyQuestCompletion(
+        completionHistory,
+        actionDateKey,
+        questId,
+        quest.difficulty,
+      );
       setCompletionHistory((current) =>
         toggleDailyQuestCompletion(current, actionDateKey, questId, quest.difficulty),
+      );
+      const nextTotalXp = getXpLedgerTotal(nextHistoryForDiscovery, personalXpByQuestId, legacyXpBonus);
+      setDiscoveredPlantIds((current) =>
+        mergeDiscoveredPlantIds(mergeDiscoveredPlantIds(current, totalXp), nextTotalXp),
       );
       updateQuestList(list, (quests) => quests.map((item) =>
         item.id === questId ? { ...item, completed: !item.completed } : item,
@@ -431,9 +450,16 @@ export function QuestProvider({ children }: { children: ReactNode }) {
     if (list === "personal") {
       const quest = questLists.personal.find((item) => item.id === questId);
       if (quest) {
+        const nextPersonalXpForDiscovery = quest.completed
+          ? reversePersonalXpAward(personalXpByQuestId, questId)
+          : recordPersonalXpAward(personalXpByQuestId, questId, quest.difficulty);
         setPersonalXpByQuestId((current) => quest.completed
           ? reversePersonalXpAward(current, questId)
           : recordPersonalXpAward(current, questId, quest.difficulty));
+        const nextTotalXp = getXpLedgerTotal(completionHistory, nextPersonalXpForDiscovery, legacyXpBonus);
+        setDiscoveredPlantIds((current) =>
+          mergeDiscoveredPlantIds(mergeDiscoveredPlantIds(current, totalXp), nextTotalXp),
+        );
       }
     }
 
@@ -465,7 +491,7 @@ export function QuestProvider({ children }: { children: ReactNode }) {
 
   return (
     <QuestStoreContext.Provider
-      value={{ questLists, categoryLists, totalXp, ...streaks, streakWeek, dailyCompletedQuestIds, dailyScheduledQuestIds, recoverableDailyQuestIds, hasRestored, addQuest, updateQuest, addCategory, toggleQuest, deleteQuest, recoverOrphanedDailyQuest }}
+      value={{ questLists, categoryLists, totalXp, discoveredPlantIds, currentStreak: streaks.currentStreak, longestStreak: streaks.longestStreak, streakWeek, dailyCompletedQuestIds, dailyScheduledQuestIds, recoverableDailyQuestIds, hasRestored, addQuest, updateQuest, addCategory, toggleQuest, deleteQuest, recoverOrphanedDailyQuest }}
     >
       {children}
     </QuestStoreContext.Provider>

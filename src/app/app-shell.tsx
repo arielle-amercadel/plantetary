@@ -28,7 +28,7 @@ export default function AppShell({
   page,
 }: {
   children: ReactNode;
-  page: "home" | "create";
+  page: "home" | "create" | "journal";
 }) {
   const { totalXp } = useQuestStore();
   const { level, xpIntoLevel, xpForNextLevel, xpProgressPercent } = getLevelProgress(totalXp);
@@ -53,7 +53,7 @@ export default function AppShell({
             <FigmaIcon src="/icon-square-plus.svg" />
             <span>Add quest</span>
           </Link>
-          <Link className="nav-link" href="/#plant-collection">
+          <Link className={`nav-link${page === "journal" ? " is-active" : ""}`} href="/plant-journal">
             <FigmaIcon src="/icon-book-sidebar.svg" />
             <span>Plant Journal</span>
           </Link>
@@ -109,7 +109,7 @@ export default function AppShell({
             <FigmaIcon src="/icon-sprout.svg" size={17} />
             <span>Your cozy corner</span>
             <span className="breadcrumb-divider">/</span>
-            <strong>{page === "home" ? "Home" : "Create Quest"}</strong>
+            <strong>{page === "home" ? "Home" : page === "journal" ? "Plant Journal" : "Create Quest"}</strong>
           </div>
           <div className="date-label">
             <FigmaIcon src="/icon-sun.svg" size={17} />
