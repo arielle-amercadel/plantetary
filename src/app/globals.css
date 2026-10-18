@@ -486,6 +486,51 @@ button {
   font-size: 10px;
 }
 
+.streak-recovery {
+  margin-top: 10px;
+  padding: 10px 14px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.streak-recovery p {
+  margin: 0;
+}
+
+.streak-recovery ul {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 18px;
+  margin: 8px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.streak-recovery li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 10px;
+}
+
+.streak-recovery code {
+  color: var(--foreground);
+  font-size: 11px;
+}
+
+.streak-recovery button {
+  padding: 0;
+  border: 0;
+  color: var(--leaf-dark);
+  background: transparent;
+  font-size: 11px;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
 .dashboard-columns {
   display: grid;
   grid-template-columns: minmax(0, 804fr) minmax(0, 300fr);

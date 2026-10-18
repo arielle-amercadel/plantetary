@@ -4,6 +4,7 @@ import Image from "next/image";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import CategoryPicker, { CUSTOM_CATEGORY_VALUE } from "./category-picker";
+import { getDailyQuestScheduleLabel, isQuestScheduledOnDate } from "./quest-logic";
 import { getCustomCategoryError, getQuestXp, useQuestStore, type Difficulty, type Quest } from "./quest-store";
 
 type QuestPanelProps = {
@@ -139,7 +140,10 @@ export default function QuestPanel({
             <button
               className={`quest-check${quest.completed ? " is-checked" : ""}`}
               type="button"
-              disabled={list === "daily" && !dailyScheduledQuestIds.includes(quest.id)}
+              disabled={list === "daily" && (
+                !dailyScheduledQuestIds.includes(quest.id) ||
+                !isQuestScheduledOnDate(quest, new Date())
+              )}
               aria-label={`${quest.completed ? "Mark incomplete" : "Complete"}: ${quest.title}`}
               aria-pressed={quest.completed}
               onClick={() => onToggleQuest(quest.id)}
@@ -150,7 +154,7 @@ export default function QuestPanel({
             </button>
             <div className="quest-copy">
               <strong>{quest.title}</strong>
-              <span>{quest.category} <span aria-hidden="true">·</span> {quest.schedule}</span>
+              <span>{quest.category} <span aria-hidden="true">·</span> {list === "daily" ? getDailyQuestScheduleLabel(quest) : quest.schedule}</span>
               {quest.notes && <span className="quest-notes">{quest.notes}</span>}
             </div>
             <span className="quest-status">

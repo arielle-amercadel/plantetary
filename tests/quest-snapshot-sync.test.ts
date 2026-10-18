@@ -4,8 +4,10 @@ import {
   addQuestToHistoryAtDate,
   getSnapshotStatus,
   getStreakValues,
+  getRecoverableOrphanedDailyQuestIds,
   removeQuestFromHistory,
   removeQuestFromHistoryAtDate,
+  recoverOrphanedDailyQuestFromHistory,
   rescheduleQuestInHistory,
 } from "../src/app/quest-logic";
 import type { CompletionHistory, CompletionSnapshot, Quest } from "../src/app/quest-types";
@@ -117,10 +119,29 @@ describe("daily completion snapshot synchronization", () => {
     });
   });
 
-  it("leaves the history unchanged when the deleted quest was completed today", () => {
-    const history = historyWithToday(snapshot(["a"], ["a"]));
+  it("preserves completed quest history, XP, and prior snapshots when deleted today", () => {
+    const priorDaySnapshot = {
+      ...snapshot(["prior"], ["prior"]),
+      xpAwardedByQuestId: { prior: 20 },
+    };
+    const todaySnapshot = {
+      ...snapshot(["a", "b"], ["a", "b"]),
+      xpAwardedByQuestId: { a: 10, b: 5 },
+    };
+    const history = {
+      ...historyWithToday(todaySnapshot),
+      "2026-10-18": priorDaySnapshot,
+    };
 
-    expect(removeQuestFromHistory(history, "a", todayKey)).toBe(history);
+    const next = removeQuestFromHistory(history, "a", todayKey);
+
+    expect(next).toBe(history);
+    expect(next[todayKey].scheduledQuestIds).toEqual(["a", "b"]);
+    expect(next[todayKey].completedQuestIds).toEqual(["a", "b"]);
+    expect(next[todayKey].xpAwardedByQuestId).toEqual({ a: 10, b: 5 });
+    expect(next[todayKey]).toEqual(todaySnapshot);
+    expect(next["2026-10-18"]).toBe(priorDaySnapshot);
+    expect(next["2026-10-18"]).toEqual(priorDaySnapshot);
   });
 
   it("leaves the history unchanged when the deleted ID is not scheduled today", () => {
@@ -142,6 +163,36 @@ describe("daily completion snapshot synchronization", () => {
     expect(next[todayKey]).toEqual(snapshot(["existing", "new"]));
   });
 
+  it("adds a quest rescheduled into today once and preserves the full snapshot", () => {
+    const saturdayKey = "2026-10-17";
+    const priorSnapshot = snapshot(["prior"], ["prior"]);
+    const todaySnapshot = {
+      ...snapshot(["existing"], ["existing"]),
+      xpAwardedByQuestId: { existing: 10 },
+      note: "preserve this field",
+    };
+    const history: CompletionHistory = {
+      "2026-10-16": priorSnapshot,
+      [saturdayKey]: todaySnapshot,
+    };
+    const saturdayQuest = makeQuest({
+      id: "water",
+      schedule: "Sat",
+      repeatSchedule: "Selected days",
+      selectedDays: ["Sat"],
+    });
+
+    const next = rescheduleQuestInHistory(history, saturdayQuest, saturdayKey);
+    const addedAgain = rescheduleQuestInHistory(next, saturdayQuest, saturdayKey);
+
+    expect(next[saturdayKey]).toEqual({
+      ...todaySnapshot,
+      scheduledQuestIds: ["existing", "water"],
+    });
+    expect(addedAgain).toBe(next);
+    expect(next["2026-10-16"]).toBe(priorSnapshot);
+  });
+
   it("removes an incomplete quest rescheduled out of today", () => {
     const history = historyWithToday(snapshot(["a", "b"]));
     const next = rescheduleQuestInHistory(
@@ -153,14 +204,56 @@ describe("daily completion snapshot synchronization", () => {
     expect(next[todayKey]).toEqual(snapshot(["a"]));
   });
 
+  it("removes an incomplete quest no longer scheduled today and preserves snapshot fields", () => {
+    const saturdayKey = "2026-10-17";
+    const priorSnapshot = snapshot(["prior"], ["prior"]);
+    const todaySnapshot = {
+      ...snapshot(["water", "other"], ["other"]),
+      xpAwardedByQuestId: { water: 10, other: 5 },
+      note: "preserve this field",
+    };
+    const history: CompletionHistory = {
+      "2026-10-16": priorSnapshot,
+      [saturdayKey]: todaySnapshot,
+    };
+    const water = makeQuest({
+      id: "water",
+      schedule: "Mon, Wed, Tue",
+      repeatSchedule: "Selected days",
+      selectedDays: ["Mon", "Wed", "Tue"],
+    });
+
+    const next = rescheduleQuestInHistory(history, water, saturdayKey);
+
+    expect(next[saturdayKey]).toEqual({
+      ...todaySnapshot,
+      scheduledQuestIds: ["other"],
+    });
+    expect(next[saturdayKey].completedQuestIds).toEqual(["other"]);
+    expect(next[saturdayKey].xpAwardedByQuestId).toEqual({ water: 10, other: 5 });
+    expect(next["2026-10-16"]).toBe(priorSnapshot);
+  });
+
   it("keeps a completed quest rescheduled out of today", () => {
-    const history = historyWithToday(snapshot(["a"], ["a"]));
+    const todaySnapshot = {
+      ...snapshot(["a"], ["a"]),
+      xpAwardedByQuestId: { a: 10 },
+      note: "preserve this field",
+    };
+    const history = historyWithToday(todaySnapshot);
 
     expect(rescheduleQuestInHistory(
       history,
       makeQuest({ id: "a", selectedDays: ["Tue"] }),
       todayKey,
     )).toBe(history);
+    expect(history[todayKey]).toEqual(todaySnapshot);
+  });
+
+  it("does not reschedule when the current schedule still applies to today", () => {
+    const history = historyWithToday(snapshot(["quest"]));
+
+    expect(rescheduleQuestInHistory(history, makeQuest(), todayKey)).toBe(history);
   });
 
   it("leaves an already scheduled quest unchanged during rescheduling", () => {
@@ -223,5 +316,60 @@ describe("daily completion snapshot synchronization", () => {
     expect(next).toBe(history);
     expect(getSnapshotStatus(next[todayKey])).toBe(statusBefore);
     expect(getStreakValues(next, todayKey)).toEqual(streakBefore);
+  });
+
+  it("offers only scheduled, incomplete IDs absent from the current Daily Quest list", () => {
+    const todaySnapshot = {
+      ...snapshot(["orphan", "completed-orphan", "current"], ["completed-orphan"]),
+      xpAwardedByQuestId: { "completed-orphan": 10 },
+    };
+
+    expect(getRecoverableOrphanedDailyQuestIds(todaySnapshot, [makeQuest({ id: "current" })]))
+      .toEqual(["orphan"]);
+  });
+
+  it("requires confirmation and recovers only the current day's incomplete orphan", () => {
+    const priorDaySnapshot = {
+      ...snapshot(["prior-orphan"], []),
+      xpAwardedByQuestId: { prior: 5 },
+      note: "keep this field",
+    };
+    const todaySnapshot = {
+      ...snapshot(["orphan", "completed-orphan", "current"], ["completed-orphan"]),
+      xpAwardedByQuestId: { orphan: 7, "completed-orphan": 10 },
+      note: "also keep this field",
+    };
+    const history: CompletionHistory = {
+      "2026-10-18": priorDaySnapshot,
+      [todayKey]: todaySnapshot,
+    };
+    const dailyQuests = [makeQuest({ id: "current" })];
+
+    expect(recoverOrphanedDailyQuestFromHistory(history, "orphan", dailyQuests, todayKey, false))
+      .toBe(history);
+
+    const recovered = recoverOrphanedDailyQuestFromHistory(history, "orphan", dailyQuests, todayKey, true);
+
+    expect(recovered[todayKey]).toEqual({
+      ...todaySnapshot,
+      scheduledQuestIds: ["completed-orphan", "current"],
+    });
+    expect(recovered[todayKey].completedQuestIds).toEqual(["completed-orphan"]);
+    expect(recovered[todayKey].xpAwardedByQuestId).toEqual({ orphan: 7, "completed-orphan": 10 });
+    expect(recovered["2026-10-18"]).toBe(priorDaySnapshot);
+  });
+
+  it("rejects stale or invalid recovery candidates without changing history", () => {
+    const history = historyWithToday(snapshot(["orphan", "completed-orphan"], ["completed-orphan"]));
+    const currentQuest = makeQuest({ id: "orphan" });
+
+    expect(recoverOrphanedDailyQuestFromHistory(history, "orphan", [currentQuest], todayKey, true))
+      .toBe(history);
+    expect(recoverOrphanedDailyQuestFromHistory(history, "completed-orphan", [], todayKey, true))
+      .toBe(history);
+    expect(recoverOrphanedDailyQuestFromHistory(history, "not-scheduled", [], todayKey, true))
+      .toBe(history);
+    expect(recoverOrphanedDailyQuestFromHistory(history, "orphan", [], "2026-10-20", true))
+      .toBe(history);
   });
 });

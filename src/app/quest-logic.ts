@@ -50,6 +50,21 @@ export function scheduledDaysForQuest(quest: Quest): Weekday[] {
   return [];
 }
 
+export function formatWeekdaySchedule(days: Weekday[]): string {
+  return weekdays.filter((day) => days.includes(day)).join(", ");
+}
+
+export function getDailyQuestScheduleLabel(quest: Quest): string {
+  if (quest.repeatSchedule === "Every day" || quest.schedule.trim().toLowerCase() === "every day") {
+    return quest.schedule;
+  }
+
+  const scheduledDays = scheduledDaysForQuest(quest);
+  if (scheduledDays.length > 0) return formatWeekdaySchedule(scheduledDays);
+
+  return quest.schedule;
+}
+
 export function isQuestScheduledOnDate(quest: Quest, date: Date): boolean {
   return scheduledDaysForQuest(quest).includes(weekdayLabels[date.getDay()]);
 }
@@ -71,8 +86,13 @@ export function createSnapshot(quests: Quest[], date: Date): CompletionSnapshot 
 export function isDailyQuestScheduledForToggle(
   quest: Quest | undefined,
   snapshot: CompletionSnapshot | undefined,
+  date: Date,
 ): boolean {
-  return Boolean(quest && snapshot?.scheduledQuestIds.includes(quest.id));
+  return Boolean(
+    quest &&
+      snapshot?.scheduledQuestIds.includes(quest.id) &&
+      isQuestScheduledOnDate(quest, date),
+  );
 }
 
 export function updateQuestInLists(
@@ -90,6 +110,19 @@ export function updateQuestInLists(
       ? { ...quest, ...updates, id: quest.id, completed: quest.completed }
       : quest),
   };
+}
+
+export function hasQuestScheduleChanged(previous: Quest, updated: Quest): boolean {
+  const previousDays = previous.selectedDays;
+  const updatedDays = updated.selectedDays;
+  const selectedDaysChanged = previousDays === undefined || updatedDays === undefined
+    ? previousDays !== updatedDays
+    : previousDays.length !== updatedDays.length ||
+      previousDays.some((day, index) => day !== updatedDays[index]);
+
+  return previous.schedule !== updated.schedule ||
+    previous.repeatSchedule !== updated.repeatSchedule ||
+    selectedDaysChanged;
 }
 
 export function addQuestToHistory(
@@ -148,6 +181,31 @@ export function removeQuestFromHistoryAtDate(
   return removeQuestFromHistory(history, questId, getLocalDateKey(actionDate));
 }
 
+export function getRecoverableOrphanedDailyQuestIds(
+  snapshot: CompletionSnapshot | undefined,
+  dailyQuests: Quest[],
+): string[] {
+  if (!snapshot) return [];
+  const currentQuestIds = new Set(dailyQuests.map((quest) => quest.id));
+  return snapshot.scheduledQuestIds.filter((questId) =>
+    !snapshot.completedQuestIds.includes(questId) && !currentQuestIds.has(questId),
+  );
+}
+
+export function recoverOrphanedDailyQuestFromHistory(
+  history: CompletionHistory,
+  questId: string,
+  dailyQuests: Quest[],
+  todayKey: string,
+  confirmed: boolean,
+): CompletionHistory {
+  if (
+    !confirmed ||
+    !getRecoverableOrphanedDailyQuestIds(history[todayKey], dailyQuests).includes(questId)
+  ) return history;
+  return removeQuestFromHistory(history, questId, todayKey);
+}
+
 export function rescheduleQuestInHistory(
   history: CompletionHistory,
   quest: Quest,
@@ -161,8 +219,8 @@ export function rescheduleQuestInHistory(
     return {
       ...history,
       [todayKey]: {
+        ...snapshot,
         scheduledQuestIds: [...snapshot.scheduledQuestIds, quest.id],
-        completedQuestIds: snapshot.completedQuestIds,
       },
     };
   }
@@ -174,8 +232,8 @@ export function rescheduleQuestInHistory(
   return {
     ...history,
     [todayKey]: {
+      ...snapshot,
       scheduledQuestIds: snapshot.scheduledQuestIds.filter((id) => id !== quest.id),
-      completedQuestIds: snapshot.completedQuestIds,
     },
   };
 }

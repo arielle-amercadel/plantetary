@@ -9,6 +9,8 @@ import {
 import type { CompletionHistory, Quest } from "../src/app/quest-types";
 
 const dateKey = "2026-10-19";
+const monday = new Date(2026, 9, 19);
+const saturday = new Date(2026, 9, 24);
 
 function quest(overrides: Partial<Quest> = {}): Quest {
   return {
@@ -34,7 +36,7 @@ describe("quest completion toggles", () => {
     let nextQuest = dailyQuest;
     let nextHistory = history;
 
-    if (isDailyQuestScheduledForToggle(dailyQuest, history[dateKey])) {
+    if (isDailyQuestScheduledForToggle(dailyQuest, history[dateKey], monday)) {
       nextQuest = { ...dailyQuest, completed: !dailyQuest.completed };
       nextHistory = toggleDailyQuestCompletion(history, dateKey, dailyQuest.id, dailyQuest.difficulty);
     }
@@ -51,16 +53,45 @@ describe("quest completion toggles", () => {
     const history: CompletionHistory = {
       [dateKey]: { scheduledQuestIds: [dailyQuest.id], completedQuestIds: [] },
     };
-    const nextQuest = isDailyQuestScheduledForToggle(dailyQuest, history[dateKey])
+    const nextQuest = isDailyQuestScheduledForToggle(dailyQuest, history[dateKey], monday)
       ? { ...dailyQuest, completed: !dailyQuest.completed }
       : dailyQuest;
-    const nextHistory = isDailyQuestScheduledForToggle(dailyQuest, history[dateKey])
+    const nextHistory = isDailyQuestScheduledForToggle(dailyQuest, history[dateKey], monday)
       ? toggleDailyQuestCompletion(history, dateKey, dailyQuest.id, dailyQuest.difficulty)
       : history;
 
     expect(nextQuest.completed).toBe(true);
     expect(nextHistory[dateKey].completedQuestIds).toEqual([dailyQuest.id]);
     expect(getXpLedgerTotal(nextHistory)).toBe(10);
+  });
+
+  it("blocks an unscheduled quest even when a stale snapshot contains its ID", () => {
+    const dailyQuest = quest({
+      schedule: "Mon, Wed, Tue",
+      repeatSchedule: "Selected days",
+      selectedDays: ["Mon", "Wed", "Tue"],
+    });
+    const history: CompletionHistory = {
+      "2026-10-24": { scheduledQuestIds: [dailyQuest.id], completedQuestIds: [] },
+    };
+    let nextQuest = dailyQuest;
+    let nextHistory = history;
+
+    if (isDailyQuestScheduledForToggle(dailyQuest, history["2026-10-24"], saturday)) {
+      nextQuest = { ...dailyQuest, completed: !dailyQuest.completed };
+      nextHistory = toggleDailyQuestCompletion(
+        history,
+        "2026-10-24",
+        dailyQuest.id,
+        dailyQuest.difficulty,
+      );
+    }
+
+    expect(nextQuest.completed).toBe(false);
+    expect(nextHistory).toBe(history);
+    expect(history["2026-10-24"].scheduledQuestIds).toEqual([dailyQuest.id]);
+    expect(history["2026-10-24"].completedQuestIds).toEqual([]);
+    expect(getXpLedgerTotal(nextHistory)).toBe(0);
   });
 
   it("still toggles personal quests and awards or reverses their XP", () => {

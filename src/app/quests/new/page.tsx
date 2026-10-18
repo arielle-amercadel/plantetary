@@ -7,7 +7,7 @@ import { Suspense, useState } from "react";
 import AppShell, { FigmaIcon } from "../../app-shell";
 import CategoryPicker, { CUSTOM_CATEGORY_VALUE } from "../../category-picker";
 import { getCustomCategoryError, getQuestXp, useQuestStore } from "../../quest-store";
-import { scheduledDaysForQuest } from "../../quest-logic";
+import { formatWeekdaySchedule, scheduledDaysForQuest } from "../../quest-logic";
 import type {
   Difficulty,
   Quest,
@@ -125,7 +125,7 @@ function CreateQuestForm({
     ? repeatSchedule === "Every day"
       ? "Every day"
       : repeatSchedule === "Selected days"
-        ? selectedDays.length > 0 ? selectedDays.join(", ") : "Choose days"
+        ? selectedDays.length > 0 ? formatWeekdaySchedule(selectedDays) : "Choose days"
         : "Choose a repeat schedule"
     : dueDate
       ? formatDueDate(dueDate)

@@ -20,12 +20,16 @@ import {
   findCategoryMatch,
   getXpLedgerTotal,
   getLocalDateKey,
+  getRecoverableOrphanedDailyQuestIds,
   getSnapshotStatus,
   getStreakValues,
+  hasQuestScheduleChanged,
   isDailyQuestScheduledForToggle,
   migrateStoredData,
   recordPersonalXpAward,
   removeQuestFromHistoryAtDate,
+  recoverOrphanedDailyQuestFromHistory,
+  rescheduleQuestInHistory,
   reversePersonalXpAward,
   toggleDailyQuestCompletion,
   updateQuestInLists,
@@ -201,6 +205,7 @@ type QuestStoreValue = {
   streakWeek: StreakDay[];
   dailyCompletedQuestIds: string[];
   dailyScheduledQuestIds: string[];
+  recoverableDailyQuestIds: string[];
   hasRestored: boolean;
   addQuest: (list: QuestListKey, quest: Quest) => void;
   updateQuest: (
@@ -211,6 +216,7 @@ type QuestStoreValue = {
   addCategory: (list: QuestListKey, name: string) => boolean;
   toggleQuest: (list: QuestListKey, questId: string) => void;
   deleteQuest: (list: QuestListKey, questId: string) => void;
+  recoverOrphanedDailyQuest: (questId: string) => void;
 };
 
 const QuestStoreContext = createContext<QuestStoreValue | null>(null);
@@ -350,6 +356,9 @@ export function QuestProvider({ children }: { children: ReactNode }) {
   const dailyScheduledQuestIds = todayKey
     ? completionHistory[todayKey]?.scheduledQuestIds ?? []
     : [];
+  const recoverableDailyQuestIds = todayKey
+    ? getRecoverableOrphanedDailyQuestIds(completionHistory[todayKey], questLists.daily)
+    : [];
 
   function updateQuestList(
     list: QuestListKey,
@@ -374,8 +383,19 @@ export function QuestProvider({ children }: { children: ReactNode }) {
     questId: string,
     updates: Partial<Omit<Quest, "id" | "completed">>,
   ): boolean {
-    if (!questLists[list].some((quest) => quest.id === questId)) return false;
+    const existingQuest = questLists[list].find((quest) => quest.id === questId);
+    if (!existingQuest) return false;
+    const updatedQuest = {
+      ...existingQuest,
+      ...updates,
+      id: existingQuest.id,
+      completed: existingQuest.completed,
+    };
     setQuestLists((current) => updateQuestInLists(current, list, questId, updates));
+    if (list === "daily" && hasQuestScheduleChanged(existingQuest, updatedQuest)) {
+      const actionDateKey = getLocalDateKey(new Date());
+      setCompletionHistory((current) => rescheduleQuestInHistory(current, updatedQuest, actionDateKey));
+    }
     return true;
   }
 
@@ -392,10 +412,12 @@ export function QuestProvider({ children }: { children: ReactNode }) {
 
   function toggleQuest(list: QuestListKey, questId: string) {
     if (list === "daily") {
-      const actionDateKey = getLocalDateKey(new Date());
+      const actionDate = new Date();
+      const actionDateKey = getLocalDateKey(actionDate);
       const quest = questLists.daily.find((item) => item.id === questId);
       const actionSnapshot = completionHistory[actionDateKey];
-      if (!quest || !isDailyQuestScheduledForToggle(quest, actionSnapshot)) return;
+      if (!quest) return;
+      if (!isDailyQuestScheduledForToggle(quest, actionSnapshot, actionDate)) return;
 
       setCompletionHistory((current) =>
         toggleDailyQuestCompletion(current, actionDateKey, questId, quest.difficulty),
@@ -430,9 +452,20 @@ export function QuestProvider({ children }: { children: ReactNode }) {
     }
   }
 
+  function recoverOrphanedDailyQuest(questId: string) {
+    const actionDateKey = getLocalDateKey(new Date());
+    setCompletionHistory((current) => recoverOrphanedDailyQuestFromHistory(
+      current,
+      questId,
+      questLists.daily,
+      actionDateKey,
+      true,
+    ));
+  }
+
   return (
     <QuestStoreContext.Provider
-      value={{ questLists, categoryLists, totalXp, ...streaks, streakWeek, dailyCompletedQuestIds, dailyScheduledQuestIds, hasRestored, addQuest, updateQuest, addCategory, toggleQuest, deleteQuest }}
+      value={{ questLists, categoryLists, totalXp, ...streaks, streakWeek, dailyCompletedQuestIds, dailyScheduledQuestIds, recoverableDailyQuestIds, hasRestored, addQuest, updateQuest, addCategory, toggleQuest, deleteQuest, recoverOrphanedDailyQuest }}
     >
       {children}
     </QuestStoreContext.Provider>

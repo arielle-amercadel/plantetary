@@ -11,7 +11,7 @@ import { getLevelProgress, useQuestStore } from "./quest-store";
 export default function Home() {
   const [isAddingDailyQuest, setIsAddingDailyQuest] = useState(false);
   const [isAddingPersonalQuest, setIsAddingPersonalQuest] = useState(false);
-  const { questLists, totalXp, currentStreak, dailyCompletedQuestIds, dailyScheduledQuestIds, addQuest, toggleQuest, deleteQuest } = useQuestStore();
+  const { questLists, totalXp, currentStreak, dailyCompletedQuestIds, dailyScheduledQuestIds, recoverableDailyQuestIds, addQuest, toggleQuest, deleteQuest, recoverOrphanedDailyQuest } = useQuestStore();
   const { level, xpIntoLevel, xpForNextLevel, xpProgressPercent } = getLevelProgress(totalXp);
 
   return (
@@ -83,6 +83,32 @@ export default function Home() {
               <span className="stat-note">Little steps add up</span>
             </div>
           </section>
+
+          {recoverableDailyQuestIds.length > 0 && (
+            <section className="streak-recovery" aria-labelledby="streak-recovery-heading">
+              <p id="streak-recovery-heading">
+                Unfinished scheduled quest IDs are missing from your Daily Quests. Confirm only if you deleted one today; removing it changes today’s obligations and may affect today’s streak.
+              </p>
+              <ul>
+                {recoverableDailyQuestIds.map((questId) => (
+                  <li key={questId}>
+                    <code>{questId}</code>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const confirmed = window.confirm(
+                          `Remove ${questId} from today's scheduled obligations? This may affect today's streak. This only changes today's snapshot.`,
+                        );
+                        if (confirmed) recoverOrphanedDailyQuest(questId);
+                      }}
+                    >
+                      Review recovery
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            </section>
+          )}
 
           <div className="dashboard-columns">
             <div className="quest-column">

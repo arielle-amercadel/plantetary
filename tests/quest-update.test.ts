@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { getXpLedgerTotal, updateQuestInLists } from "../src/app/quest-logic";
+import { getXpLedgerTotal, hasQuestScheduleChanged, updateQuestInLists } from "../src/app/quest-logic";
 import type { CompletionHistory, Quest, QuestLists } from "../src/app/quest-types";
 
 function makeQuest(overrides: Partial<Quest> = {}): Quest {
@@ -79,6 +79,22 @@ describe("updating an existing quest", () => {
       selectedDays: ["Tue", "Thu"],
       schedule: "Tue, Thu",
     });
+  });
+
+  it("detects schedule edits without treating title or difficulty edits as schedule changes", () => {
+    const current = makeQuest();
+
+    expect(hasQuestScheduleChanged(current, {
+      ...current,
+      title: "Updated title",
+      difficulty: "Hard",
+    })).toBe(false);
+    expect(hasQuestScheduleChanged(current, {
+      ...current,
+      repeatSchedule: "Selected days",
+      selectedDays: ["Tue", "Thu"],
+      schedule: "Tue, Thu",
+    })).toBe(true);
   });
 
   it("updates a Personal due date and its display label together", () => {

@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import {
   createSnapshot,
   findCategoryMatch,
+  formatWeekdaySchedule,
+  getDailyQuestScheduleLabel,
   getCustomCategoryError,
   getLevelProgress,
   getLocalDateKey,
@@ -73,6 +75,26 @@ describe("local dates and quest schedules", () => {
     expect(isQuestScheduledOnDate(makeQuest({ schedule: "Mon, Wed" }), monday)).toBe(true);
     expect(isQuestScheduledOnDate(makeQuest({ schedule: "Mon, Wed" }), tuesday)).toBe(false);
     expect(isQuestScheduledOnDate(makeQuest({ schedule: "Due today" }), monday)).toBe(false);
+  });
+
+  it("formats selected weekdays in Monday-to-Sunday order without changing the selection", () => {
+    const clickedOrder: Quest["selectedDays"] = ["Wed", "Mon", "Tue"];
+    const quest = makeQuest({
+      schedule: "Wed, Mon, Tue",
+      repeatSchedule: "Selected days",
+      selectedDays: clickedOrder,
+    });
+
+    expect(formatWeekdaySchedule(clickedOrder)).toBe("Mon, Tue, Wed");
+    expect(getDailyQuestScheduleLabel(quest)).toBe("Mon, Tue, Wed");
+    expect(quest.selectedDays).toEqual(["Wed", "Mon", "Tue"]);
+  });
+
+  it("formats legacy weekday labels chronologically and preserves non-weekday labels", () => {
+    expect(getDailyQuestScheduleLabel(makeQuest({ schedule: "Wed, Mon, Tue" })))
+      .toBe("Mon, Tue, Wed");
+    expect(getDailyQuestScheduleLabel(makeQuest({ schedule: "Every day" }))).toBe("Every day");
+    expect(getDailyQuestScheduleLabel(makeQuest({ schedule: "Due Oct 17" }))).toBe("Due Oct 17");
   });
 });
 
