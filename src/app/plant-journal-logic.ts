@@ -19,6 +19,14 @@ export const plantCatalog: Plant[] = [
   { id: "monstera", name: "Monstera", xpThreshold: 225, imageSrc: "/plant-monstera.png" },
   { id: "moonflower", name: "Moonflower", xpThreshold: 325, imageSrc: "/plant-moonflower.png" },
   { id: "golden-bonsai", name: "Golden Bonsai", xpThreshold: 450, imageSrc: "/plant-golden-bonsai.png" },
+  { id: "tulip", name: "Tulip", xpThreshold: 550, imageSrc: "/plant-tulip.png" },
+  { id: "aloe-vera", name: "Aloe Vera", xpThreshold: 675, imageSrc: "/plant-aloe-vera.png" },
+  { id: "hydrangea", name: "Hydrangea", xpThreshold: 800, imageSrc: "/plant-hydrangea.png" },
+  { id: "string-of-pearls", name: "String of Pearls", xpThreshold: 950, imageSrc: "/plant-string-of-pearls.png" },
+  { id: "orchid", name: "Orchid", xpThreshold: 1125, imageSrc: "/plant-orchid.png" },
+  { id: "venus-flytrap", name: "Venus Flytrap", xpThreshold: 1325, imageSrc: "/plant-venus-flytrap.png" },
+  { id: "anthurium", name: "Anthurium", xpThreshold: 1550, imageSrc: "/plant-anthurium.png" },
+  { id: "calathea", name: "Calathea", xpThreshold: 1800, imageSrc: "/plant-calathea.png" },
 ];
 
 export function getQualifiedPlantIds(totalXp: number): string[] {
@@ -152,8 +160,13 @@ export function migratePlantDiscoveries(data: StoredQuestData): StoredQuestData 
     : [];
 
   if (currentVersion < 5) {
-    // Before gift tracking, XP milestones were immediately collected. Preserve those discoveries.
-    for (const plantId of getQualifiedPlantIds(totalXp)) savedDiscoveries.add(plantId);
+    // Before gift tracking, the original milestones (through 450 XP) were immediately
+    // collected. Preserve those discoveries; expansion plants still arrive as gifts.
+    for (const plant of plantCatalog) {
+      if (plant.id !== "fern" && plant.xpThreshold <= 450 && totalXp >= plant.xpThreshold) {
+        savedDiscoveries.add(plant.id);
+      }
+    }
     if (starterPlantGiftPending) {
       savedDiscoveries.delete("fern");
       pendingIds = [...new Set([...pendingIds, "fern"] )];
