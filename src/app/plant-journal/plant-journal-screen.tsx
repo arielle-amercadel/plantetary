@@ -151,8 +151,8 @@ export default function PlantJournalScreen() {
               <Image
                 src={revealedPlant.imageSrc}
                 alt={revealedPlant.name}
-                width={72}
-                height={72}
+                width={56}
+                height={56}
                 unoptimized
                 className="pixel-art journal-gift-fern"
               />
@@ -168,7 +168,7 @@ export default function PlantJournalScreen() {
 
       {nextGift && (
         <section className="journal-starter-gift" aria-live="polite">
-            <svg className="journal-gift-art" width={128} height={128} viewBox="0 0 32 32" role="img" aria-label="Wrapped pixel-art gift" shapeRendering="crispEdges">
+            <svg className="journal-gift-art" width={56} height={56} viewBox="0 0 32 32" role="img" aria-label="Wrapped pixel-art gift" shapeRendering="crispEdges">
               <rect x="5" y="11" width="22" height="17" fill="#b86b5a" />
               <rect x="4" y="9" width="24" height="4" fill="#d08b70" />
               <rect x="14" y="9" width="4" height="19" fill="#f2cf78" />
