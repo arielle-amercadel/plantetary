@@ -14,11 +14,11 @@ export const plantCatalog: Plant[] = [
   { id: "fern", name: "Fern", xpThreshold: 0, imageSrc: "/plant-fern.png" },
   { id: "daisy", name: "Daisy", xpThreshold: 25, imageSrc: "/plant-daisy.png" },
   { id: "cactus", name: "Cactus", xpThreshold: 60, imageSrc: "/plant-cactus.png" },
-  { id: "sunflower", name: "Sunflower", xpThreshold: 100 },
+  { id: "sunflower", name: "Sunflower", xpThreshold: 100, imageSrc: "/plant-sunflower.png" },
   { id: "lavender", name: "Lavender", xpThreshold: 150, imageSrc: "/plant-lavender.png" },
-  { id: "monstera", name: "Monstera", xpThreshold: 225 },
-  { id: "moonflower", name: "Moonflower", xpThreshold: 325 },
-  { id: "golden-bonsai", name: "Golden Bonsai", xpThreshold: 450 },
+  { id: "monstera", name: "Monstera", xpThreshold: 225, imageSrc: "/plant-monstera.png" },
+  { id: "moonflower", name: "Moonflower", xpThreshold: 325, imageSrc: "/plant-moonflower.png" },
+  { id: "golden-bonsai", name: "Golden Bonsai", xpThreshold: 450, imageSrc: "/plant-golden-bonsai.png" },
 ];
 
 export function getQualifiedPlantIds(totalXp: number): string[] {

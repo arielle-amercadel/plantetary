@@ -44,7 +44,11 @@ describe("Plant Journal catalog and discovery logic", () => {
         ["Fern", "/plant-fern.png"],
         ["Daisy", "/plant-daisy.png"],
         ["Cactus", "/plant-cactus.png"],
+        ["Sunflower", "/plant-sunflower.png"],
         ["Lavender", "/plant-lavender.png"],
+        ["Monstera", "/plant-monstera.png"],
+        ["Moonflower", "/plant-moonflower.png"],
+        ["Golden Bonsai", "/plant-golden-bonsai.png"],
       ]);
   });
 
