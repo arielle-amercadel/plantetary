@@ -2066,16 +2066,16 @@ button {
 
 .journal-starter-gift {
   display: flex;
-  width: min(100%, 560px);
+  width: 100%;
   min-height: 0;
   flex-direction: row;
   align-items: center;
   gap: 16px;
-  margin: 0 auto;
+  margin: 0;
   padding: 14px 18px;
   border: 1px solid #d8cbbf;
   border-radius: 6px;
-  background: var(--surface);
+  background: var(--surface-muted);
   text-align: left;
 }
 
@@ -2105,6 +2105,7 @@ button {
   font-weight: 400;
   line-height: 1.5;
   text-wrap: balance;
+  white-space: nowrap;
 }
 
 .journal-gift-copy span {
@@ -2630,6 +2631,10 @@ button {
 
   .journal-gift-copy {
     flex: 0 1 auto;
+  }
+
+  .journal-gift-copy strong {
+    white-space: normal;
   }
 
   .journal-tabs {
