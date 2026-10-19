@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import type { CompletionHistory, StoredQuestData } from "../src/app/quest-types";
 import {
@@ -28,6 +30,59 @@ function storedData(overrides: Partial<StoredQuestData> = {}): StoredQuestData {
 }
 
 describe("Plant Journal catalog and discovery logic", () => {
+  it("has sixteen unique IDs and distinct transparent 70px PNG assets", () => {
+    expect(plantCatalog).toHaveLength(16);
+    expect(new Set(plantCatalog.map(({ id }) => id)).size).toBe(16);
+    expect(new Set(plantCatalog.map(({ imageSrc }) => imageSrc)).size).toBe(16);
+    const assets = plantCatalog.map(({ id, imageSrc }) => {
+      expect(imageSrc).toBe(`/plant-${id}.png`);
+      const png = readFileSync(resolve("public", imageSrc!.slice(1)));
+      expect(png.subarray(0, 8).toString("hex")).toBe("89504e470d0a1a0a");
+      expect(png.readUInt32BE(16)).toBe(70);
+      expect(png.readUInt32BE(20)).toBe(70);
+      // PNG truecolor + alpha, or indexed transparency.
+      expect(png[25] === 6 || png.includes(Buffer.from("tRNS"))).toBe(true);
+      return png.toString("base64");
+    });
+    expect(new Set(assets).size).toBe(16);
+  });
+
+  it.each(plantCatalog.slice(8))("uses the existing gift lifecycle for $name", (plant) => {
+    const collected = plantCatalog.filter(({ xpThreshold }) => xpThreshold < plant.xpThreshold).map(({ id }) => id);
+    expect(mergePendingPlantGiftIds([], plant.xpThreshold - 1, collected)).toEqual([]);
+    expect(getPlantFilterResults(collected, "locked").map(({ id }) => id)).toContain(plant.id);
+    const pending = mergePendingPlantGiftIds([], plant.xpThreshold, collected);
+    expect(pending).toEqual([plant.id]);
+    expect(getPlantFilterResults(collected, "all", pending).map(({ id }) => id)).not.toContain(plant.id);
+    expect(mergePendingPlantGiftIds(pending, 0, collected)).toEqual(pending);
+    const unwrapped = unwrapPlantGift(collected, pending, plant.id);
+    expect(unwrapped.discoveredPlantIds).toEqual([...collected, plant.id]);
+    expect(unwrapped.pendingPlantGiftIds).toEqual([]);
+    expect(getPlantFilterResults(unwrapped.discoveredPlantIds, "collected").map(({ id }) => id)).toContain(plant.id);
+    expect(unwrapPlantGift(unwrapped.discoveredPlantIds, [], plant.id)).toEqual(unwrapped);
+  });
+
+  it.each([4, 5])("preserves version %i saves and queues new milestones from saved XP", (schemaVersion) => {
+    const originalIds = plantCatalog.slice(0, 8).map(({ id }) => id);
+    const saved = storedData({
+      schemaVersion,
+      discoveredPlantIds: [...originalIds, "future-plant"],
+      pendingPlantGiftIds: [],
+      starterPlantGiftPending: false,
+      legacyXpBonus: 1800,
+    });
+    const snapshot = JSON.stringify(saved);
+    const restored = migratePlantDiscoveries(saved);
+    expect(restored.discoveredPlantIds).toEqual(saved.discoveredPlantIds);
+    expect(restored.pendingPlantGiftIds).toEqual(plantCatalog.slice(8).map(({ id }) => id));
+    expect(restored.completionHistory).toBe(saved.completionHistory);
+    expect(restored.personalXpByQuestId).toBe(saved.personalXpByQuestId);
+    expect(restored.questLists).toBe(saved.questLists);
+    expect(restored.legacyXpBonus).toBe(1800);
+    expect(JSON.stringify(saved)).toBe(snapshot);
+    expect(migratePlantDiscoveries(restored)).toBe(restored);
+  });
+
   it("keeps the approved IDs, order, thresholds, and known asset mappings", () => {
     expect(plantCatalog.map(({ id, xpThreshold }) => [id, xpThreshold])).toEqual([
       ["fern", 0],
@@ -38,6 +93,14 @@ describe("Plant Journal catalog and discovery logic", () => {
       ["monstera", 225],
       ["moonflower", 325],
       ["golden-bonsai", 450],
+      ["tulip", 550],
+      ["aloe-vera", 675],
+      ["hydrangea", 800],
+      ["string-of-pearls", 950],
+      ["orchid", 1125],
+      ["venus-flytrap", 1325],
+      ["anthurium", 1550],
+      ["calathea", 1800],
     ]);
     expect(plantCatalog.filter((plant) => plant.imageSrc).map((plant) => [plant.name, plant.imageSrc]))
       .toEqual([
@@ -49,6 +112,14 @@ describe("Plant Journal catalog and discovery logic", () => {
         ["Monstera", "/plant-monstera.png"],
         ["Moonflower", "/plant-moonflower.png"],
         ["Golden Bonsai", "/plant-golden-bonsai.png"],
+        ["Tulip", "/plant-tulip.png"],
+        ["Aloe Vera", "/plant-aloe-vera.png"],
+        ["Hydrangea", "/plant-hydrangea.png"],
+        ["String of Pearls", "/plant-string-of-pearls.png"],
+        ["Orchid", "/plant-orchid.png"],
+        ["Venus Flytrap", "/plant-venus-flytrap.png"],
+        ["Anthurium", "/plant-anthurium.png"],
+        ["Calathea", "/plant-calathea.png"],
       ]);
   });
 
@@ -56,7 +127,7 @@ describe("Plant Journal catalog and discovery logic", () => {
     expect(getQualifiedPlantIds(0)).toEqual([]);
     expect(getQualifiedPlantIds(24)).toEqual([]);
     expect(getQualifiedPlantIds(25)).toEqual(["daisy"]);
-    expect(getQualifiedPlantIds(450)).toEqual(plantCatalog.filter((plant) => plant.id !== "fern").map((plant) => plant.id));
+    expect(getQualifiedPlantIds(1800)).toEqual(plantCatalog.filter((plant) => plant.id !== "fern").map((plant) => plant.id));
     for (const plant of plantCatalog.filter((item) => item.id !== "fern")) {
       expect(getQualifiedPlantIds(plant.xpThreshold)).toContain(plant.id);
       expect(getQualifiedPlantIds(plant.xpThreshold - 1)).not.toContain(plant.id);
@@ -197,11 +268,11 @@ describe("Plant Journal catalog and discovery logic", () => {
 describe("Plant Journal filters and next discovery", () => {
   it("filters the catalog into all, collected, and locked plants", () => {
     const discovered = ["fern", "cactus"];
-    expect(getPlantFilterResults(discovered, "all")).toHaveLength(8);
+    expect(getPlantFilterResults(discovered, "all")).toHaveLength(16);
     expect(getPlantFilterResults(discovered, "collected").map((plant) => plant.id))
       .toEqual(["fern", "cactus"]);
     expect(getPlantFilterResults(discovered, "locked").map((plant) => plant.id))
-      .toEqual(["daisy", "sunflower", "lavender", "monstera", "moonflower", "golden-bonsai"]);
+      .toEqual(plantCatalog.filter(({ id }) => !discovered.includes(id)).map(({ id }) => id));
   });
 
   it("reports the next undiscovered threshold and XP progress", () => {
@@ -218,7 +289,7 @@ describe("Plant Journal filters and next discovery", () => {
     expect(getNextPlantProgress(450, plantCatalog.map((plant) => plant.id))).toBeUndefined();
   });
 
-  it("keeps the full All catalog on the first of two spreads in catalog order", () => {
+  it("keeps all sixteen plants across two spreads in catalog order", () => {
     const spread = getPlantJournalSpread([], "all", 0);
     expect(getPlantJournalSpreadCount([], "all")).toBe(2);
     expect(spread.leftPlants.map((plant) => plant.id)).toEqual([
@@ -228,12 +299,15 @@ describe("Plant Journal filters and next discovery", () => {
       "lavender", "monstera", "moonflower", "golden-bonsai",
     ]);
     expect(getPlantJournalSpread([], "all", 1)).toMatchObject({
-      leftPlants: [],
-      rightPlants: [],
+      leftPlants: plantCatalog.slice(8, 12),
+      rightPlants: plantCatalog.slice(12, 16),
       currentSpread: 1,
       spreadCount: 2,
     });
     expect(getPlantJournalSpread([], "all", 2).currentSpread).toBe(1);
+    const second = getPlantJournalSpread([], "all", 1);
+    expect([...spread.leftPlants, ...spread.rightPlants, ...second.leftPlants, ...second.rightPlants])
+      .toEqual(plantCatalog);
   });
 
   it("paginates collected plants by spread without duplicates", () => {
@@ -256,7 +330,7 @@ describe("Plant Journal filters and next discovery", () => {
     expect(first.leftPlants.map((plant) => plant.id)).toEqual([
       "cactus", "sunflower", "lavender", "monstera",
     ]);
-    expect(first.rightPlants.map((plant) => plant.id)).toEqual(["moonflower", "golden-bonsai"]);
+    expect(first.rightPlants.map((plant) => plant.id)).toEqual(["moonflower", "golden-bonsai", "tulip", "aloe-vera"]);
 
     expect(getPlantJournalSpreadCount(["fern", "daisy", "sunflower", "lavender"], "locked")).toBe(2);
     const allLocked = getPlantJournalSpread([], "locked", 0);
