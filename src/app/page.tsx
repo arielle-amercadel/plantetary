@@ -3,25 +3,48 @@
 
 import Image from "next/image";
 import Link from "next/link";
-import { useState } from "react";
+import { useEffect, useState, type CSSProperties } from "react";
 import AppShell, { FigmaIcon } from "./app-shell";
 import QuestPanel from "./quest-panel";
 import { getHomeQuestListsForDisplay } from "./quest-logic";
 import { getLevelProgress, useQuestStore } from "./quest-store";
 import { getNextPlantProgress, plantCatalog } from "./plant-journal-logic";
+import {
+  defaultProfilePreferences,
+  getGardenBannerTitle,
+  getWelcomeGreeting,
+  loadProfilePreferences,
+  profilePreferencesUpdatedEvent,
+} from "./settings-logic";
 
 export default function Home() {
   const [isAddingDailyQuest, setIsAddingDailyQuest] = useState(false);
   const [isAddingPersonalQuest, setIsAddingPersonalQuest] = useState(false);
+  const [displayName, setDisplayName] = useState(defaultProfilePreferences.displayName);
   const { questLists, todayKey, totalXp, completedTodayCounts, completedOverallCounts, discoveredPlantIds, currentStreak, dailyCompletedQuestIds, dailyScheduledQuestIds, recoverableDailyQuestIds, hasRestored, addQuest, toggleQuest, deleteQuest, recoverOrphanedDailyQuest } = useQuestStore();
   const { level, xpIntoLevel, xpForNextLevel, xpProgressPercent } = getLevelProgress(totalXp);
   const homeQuestLists = getHomeQuestListsForDisplay(questLists, todayKey);
   const discoveredPlants = plantCatalog.filter((plant) => discoveredPlantIds.includes(plant.id));
   const nextDiscovery = hasRestored ? getNextPlantProgress(totalXp, discoveredPlantIds) : undefined;
+  const gardenTitle = getGardenBannerTitle(displayName);
+
+  useEffect(() => {
+    const restoreProfile = () => {
+      setDisplayName(loadProfilePreferences(window.localStorage).displayName);
+    };
+    const restoreTimer = window.setTimeout(restoreProfile, 0);
+    window.addEventListener("storage", restoreProfile);
+    window.addEventListener(profilePreferencesUpdatedEvent, restoreProfile);
+    return () => {
+      window.clearTimeout(restoreTimer);
+      window.removeEventListener("storage", restoreProfile);
+      window.removeEventListener(profilePreferencesUpdatedEvent, restoreProfile);
+    };
+  }, []);
 
   return (
     <AppShell page="home">
-        <div className="garden-banner" aria-label="Mira’s pixel-art garden">
+        <div className="garden-banner" role="img" aria-label={gardenTitle}>
           <Image
             src="/plantetary-garden.png"
             alt=""
@@ -31,13 +54,21 @@ export default function Home() {
             unoptimized
             className="garden-banner-image"
           />
+          <span className="garden-banner-title-mask" aria-hidden="true" />
+          <span
+            className="garden-banner-title"
+            aria-hidden="true"
+            style={{ "--garden-title-length": gardenTitle.length } as CSSProperties}
+          >
+            {gardenTitle}
+          </span>
         </div>
 
         <main className="dashboard-content">
           <section className="welcome-row" aria-labelledby="welcome-heading">
             <div>
               <h1 id="welcome-heading">A little progress, a little magic.</h1>
-              <p>Welcome back, Mira. Let’s make room for the things that matter.</p>
+              <p>{getWelcomeGreeting(displayName)} Let’s make room for the things that matter.</p>
             </div>
             <Link
               className="primary-button"

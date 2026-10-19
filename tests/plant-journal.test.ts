@@ -8,8 +8,11 @@ import {
   getPlantThresholdProgress,
   getQualifiedPlantIds,
   mergeDiscoveredPlantIds,
+  mergePendingPlantGiftIds,
   migratePlantDiscoveries,
   plantCatalog,
+  unwrapStarterFern,
+  unwrapPlantGift,
 } from "../src/app/plant-journal-logic";
 
 function storedData(overrides: Partial<StoredQuestData> = {}): StoredQuestData {
@@ -46,16 +49,59 @@ describe("Plant Journal catalog and discovery logic", () => {
   });
 
   it("qualifies plants exactly at their XP thresholds", () => {
-    expect(getQualifiedPlantIds(0)).toEqual(["fern"]);
-    expect(getQualifiedPlantIds(24)).toEqual(["fern"]);
-    expect(getQualifiedPlantIds(25)).toEqual(["fern", "daisy"]);
-    expect(getQualifiedPlantIds(450)).toEqual(plantCatalog.map((plant) => plant.id));
+    expect(getQualifiedPlantIds(0)).toEqual([]);
+    expect(getQualifiedPlantIds(24)).toEqual([]);
+    expect(getQualifiedPlantIds(25)).toEqual(["daisy"]);
+    expect(getQualifiedPlantIds(450)).toEqual(plantCatalog.filter((plant) => plant.id !== "fern").map((plant) => plant.id));
+    for (const plant of plantCatalog.filter((item) => item.id !== "fern")) {
+      expect(getQualifiedPlantIds(plant.xpThreshold)).toContain(plant.id);
+      expect(getQualifiedPlantIds(plant.xpThreshold - 1)).not.toContain(plant.id);
+    }
   });
 
-  it("keeps discoveries permanent when XP decreases", () => {
-    const discovered = mergeDiscoveredPlantIds([], 150);
-    expect(discovered).toEqual(["fern", "daisy", "cactus", "sunflower", "lavender"]);
-    expect(mergeDiscoveredPlantIds(discovered, 0)).toBe(discovered);
+  it("creates milestone gifts without collecting them and preserves them when XP decreases", () => {
+    const discovered: string[] = ["fern"];
+    const pending = mergePendingPlantGiftIds([], 25, discovered);
+    expect(pending).toEqual(["daisy"]);
+    expect(discovered).toEqual(["fern"]);
+    expect(mergePendingPlantGiftIds(pending, 0, discovered)).toEqual(pending);
+  });
+
+  it("keeps Fern out of XP discoveries and lets the starter gift add Fern only once", () => {
+    const withoutFern = mergeDiscoveredPlantIds([]);
+    const unwrapped = unwrapStarterFern(withoutFern);
+
+    expect(withoutFern).not.toContain("fern");
+    expect(unwrapped).toEqual(["fern"]);
+    expect(unwrapStarterFern(unwrapped)).toBe(unwrapped);
+    expect(getNextPlantProgress(0, withoutFern)?.plant.id).toBe("daisy");
+  });
+
+  it("hides every pending gift plant from collection filters until unwrapped", () => {
+    expect(getPlantFilterResults([], "all", ["fern", "daisy"]).map((plant) => plant.id)).not.toContain("fern");
+    expect(getPlantFilterResults([], "all", ["fern", "daisy"]).map((plant) => plant.id)).not.toContain("daisy");
+    expect(getPlantFilterResults([], "locked", ["fern", "daisy"]).map((plant) => plant.id)).not.toContain("daisy");
+    expect(getPlantFilterResults([], "collected", ["fern", "daisy"])).toEqual([]);
+    expect(getPlantFilterResults(["fern"], "collected").map((plant) => plant.id)).toEqual(["fern"]);
+  });
+
+  it("unwraps each earned plant independently and does not award it twice", () => {
+    const afterDaisy = unwrapPlantGift(["fern"], ["daisy", "cactus"], "daisy");
+    expect(afterDaisy).toEqual({ discoveredPlantIds: ["fern", "daisy"], pendingPlantGiftIds: ["cactus"] });
+    expect(unwrapPlantGift(afterDaisy.discoveredPlantIds, afterDaisy.pendingPlantGiftIds, "daisy"))
+      .toEqual(afterDaisy);
+    expect(unwrapPlantGift(afterDaisy.discoveredPlantIds, afterDaisy.pendingPlantGiftIds, "cactus"))
+      .toEqual({ discoveredPlantIds: ["fern", "daisy", "cactus"], pendingPlantGiftIds: [] });
+  });
+
+  it("queues every qualifying milestone and reports the remaining next milestone", () => {
+    const waiting = mergePendingPlantGiftIds([], 150, ["fern"]);
+    expect(waiting).toEqual([
+      "daisy", "cactus", "sunflower", "lavender",
+    ]);
+    expect(waiting.length).toBe(4);
+    expect(mergePendingPlantGiftIds(["daisy"], 25, ["fern"])).toEqual(["daisy"]);
+    expect(getNextPlantProgress(25, ["fern"], ["daisy"])?.plant.id).toBe("cactus");
   });
 
   it("initializes existing users from their saved XP ledger", () => {
@@ -70,7 +116,8 @@ describe("Plant Journal catalog and discovery logic", () => {
     const migrated = migratePlantDiscoveries(data);
 
     expect(migrated.discoveredPlantIds).toEqual(["fern", "daisy", "cactus", "sunflower", "lavender"]);
-    expect(migrated.schemaVersion).toBe(3);
+    expect(migrated.starterPlantGiftPending).toBe(false);
+    expect(migrated.schemaVersion).toBe(5);
     expect(migrated.completionHistory).toBe(history);
     expect(migrated.personalXpByQuestId).toBe(data.personalXpByQuestId);
     expect(migratePlantDiscoveries(migrated)).toBe(migrated);
@@ -84,7 +131,7 @@ describe("Plant Journal catalog and discovery logic", () => {
     });
     const migrated = migratePlantDiscoveries(data);
 
-    expect(migrated.schemaVersion).toBe(4);
+    expect(migrated.schemaVersion).toBe(5);
     expect(migrated.discoveredPlantIds).toEqual(["fern", "daisy", "cactus"]);
     expect(migrated.questLists).toBe(data.questLists);
     expect(migrated.categoryLists).toBe(data.categoryLists);
@@ -97,6 +144,49 @@ describe("Plant Journal catalog and discovery logic", () => {
     expect(saved.discoveredPlantIds).toContain("daisy");
     expect(saved.discoveredPlantIds).toContain("future-plant");
     expect(saved.discoveredPlantIds).toContain("fern");
+  });
+
+  it("keeps an explicitly pending Fern gift unopened through migration", () => {
+    const data = storedData({
+      schemaVersion: 3,
+      discoveredPlantIds: [],
+      starterPlantGiftPending: true,
+    });
+    const migrated = migratePlantDiscoveries(data);
+
+    expect(migrated.starterPlantGiftPending).toBe(true);
+    expect(migrated.discoveredPlantIds).not.toContain("fern");
+    expect(migrated.pendingPlantGiftIds).toEqual(["fern"]);
+    expect(migratePlantDiscoveries(migrated)).toBe(migrated);
+  });
+
+  it("persists an unwrapped Fern across serialization and discovery migration", () => {
+    const unwrapped = storedData({
+      schemaVersion: 4,
+      discoveredPlantIds: unwrapStarterFern([]),
+      starterPlantGiftPending: false,
+    });
+    const restored = JSON.parse(JSON.stringify(unwrapped)) as StoredQuestData;
+    const migrated = migratePlantDiscoveries(restored);
+
+    expect(migrated.starterPlantGiftPending).toBe(false);
+    expect(migrated.discoveredPlantIds).toContain("fern");
+    expect(migratePlantDiscoveries(migrated)).toBe(migrated);
+  });
+
+  it("restores pending gifts independently from collected plants and saved XP", () => {
+    const saved = storedData({
+      schemaVersion: 5,
+      discoveredPlantIds: ["fern"],
+      pendingPlantGiftIds: ["daisy"],
+      starterPlantGiftPending: false,
+      completionHistory: {},
+    });
+    const restored = migratePlantDiscoveries(JSON.parse(JSON.stringify(saved)) as StoredQuestData);
+    expect(restored.discoveredPlantIds).toEqual(["fern"]);
+    expect(restored.pendingPlantGiftIds).toEqual(["daisy"]);
+    expect(restored.starterPlantGiftPending).toBe(false);
+    expect(migratePlantDiscoveries(restored)).toBe(restored);
   });
 });
 

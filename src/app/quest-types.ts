@@ -36,6 +36,8 @@ export type StoredQuestData = {
   personalCompletedOnByQuestId?: Record<string, string>;
   deletedLegacyPersonalCompletionCount?: number;
   discoveredPlantIds?: string[];
+  pendingPlantGiftIds?: string[];
+  starterPlantGiftPending?: boolean;
 };
 
 export type CompletionSnapshot = {

@@ -47,7 +47,12 @@ import {
   weekdayNames,
   weekdays,
 } from "./quest-logic";
-import { mergeDiscoveredPlantIds, migratePlantDiscoveries } from "./plant-journal-logic";
+import {
+  mergeDiscoveredPlantIds,
+  mergePendingPlantGiftIds,
+  migratePlantDiscoveries,
+  unwrapPlantGift as unwrapPlantGiftState,
+} from "./plant-journal-logic";
 
 export type {
   Difficulty,
@@ -111,7 +116,7 @@ const initialCategoryLists: CategoryLists = {
   personal: ["Study", "Projects", "Chores", "Personal"],
 };
 
-const initialQuestLists: QuestLists = {
+export const initialQuestLists: QuestLists = {
   daily: [
     {
       id: "water",
@@ -119,7 +124,7 @@ const initialQuestLists: QuestLists = {
       category: "Wellness",
       schedule: "Every day",
       difficulty: "Easy",
-      completed: true,
+      completed: false,
     },
     {
       id: "skincare",
@@ -127,7 +132,7 @@ const initialQuestLists: QuestLists = {
       category: "Self-care",
       schedule: "Every day",
       difficulty: "Easy",
-      completed: true,
+      completed: false,
     },
     {
       id: "reading",
@@ -169,7 +174,7 @@ const initialQuestLists: QuestLists = {
       category: "Chores",
       schedule: "No due date",
       difficulty: "Easy",
-      completed: true,
+      completed: false,
     },
   ],
 };
@@ -177,6 +182,7 @@ const initialQuestLists: QuestLists = {
 const initialStoredQuestData = migratePlantDiscoveries(migrateStoredData({
   questLists: initialQuestLists,
   categoryLists: initialCategoryLists,
+  starterPlantGiftPending: true,
 }));
 
 function isQuest(value: unknown): value is Quest {
@@ -229,6 +235,8 @@ type QuestStoreValue = {
   completionHistoryView: ReturnType<typeof getCompletionHistoryView>;
   todayKey: string;
   discoveredPlantIds: string[];
+  pendingPlantGiftIds: string[];
+  starterPlantGiftPending: boolean;
   currentStreak: number;
   longestStreak: number;
   streakWeek: StreakDay[];
@@ -246,6 +254,8 @@ type QuestStoreValue = {
   toggleQuest: (list: QuestListKey, questId: string) => void;
   deleteQuest: (list: QuestListKey, questId: string) => void;
   recoverOrphanedDailyQuest: (questId: string) => void;
+  unwrapPlantGift: (plantId: string) => void;
+  getDataForExport: () => StoredQuestData;
 };
 
 const QuestStoreContext = createContext<QuestStoreValue | null>(null);
@@ -269,6 +279,9 @@ export function QuestProvider({ children }: { children: ReactNode }) {
   const [schemaVersion, setSchemaVersion] = useState(initialStoredQuestData.schemaVersion ?? 3);
   const [storedDiscoveredPlantIds, setDiscoveredPlantIds] = useState<string[]>(
     initialStoredQuestData.discoveredPlantIds ?? [],
+  );
+  const [storedPendingPlantGiftIds, setPendingPlantGiftIds] = useState<string[]>(
+    initialStoredQuestData.pendingPlantGiftIds ?? [],
   );
   const [todayKey, setTodayKey] = useState("");
   const [hasRestored, setHasRestored] = useState(false);
@@ -350,6 +363,7 @@ export function QuestProvider({ children }: { children: ReactNode }) {
       setDeletedLegacyPersonalCompletionCount(restoredData.deletedLegacyPersonalCompletionCount);
       setLegacyXpBonus(restoredData.legacyXpBonus ?? 0);
       setDiscoveredPlantIds(restoredData.discoveredPlantIds ?? []);
+      setPendingPlantGiftIds(restoredData.pendingPlantGiftIds ?? []);
       setSchemaVersion(restoredData.schemaVersion ?? 3);
       setTodayKey(restoredToday);
       setCanPersistStorage(canPersist);
@@ -379,7 +393,13 @@ export function QuestProvider({ children }: { children: ReactNode }) {
   }, [questLists.daily]);
 
   const totalXp = getXpLedgerTotal(completionHistory, personalXpByQuestId, legacyXpBonus);
-  const discoveredPlantIds = mergeDiscoveredPlantIds(storedDiscoveredPlantIds, totalXp);
+  const discoveredPlantIds = mergeDiscoveredPlantIds(storedDiscoveredPlantIds);
+  const pendingPlantGiftIds = mergePendingPlantGiftIds(
+    storedPendingPlantGiftIds,
+    totalXp,
+    discoveredPlantIds,
+  );
+  const starterPlantGiftPending = pendingPlantGiftIds.includes("fern");
 
   useEffect(() => {
     if (!hasRestored || !canPersistStorage || typeof window === "undefined") return;
@@ -396,13 +416,15 @@ export function QuestProvider({ children }: { children: ReactNode }) {
           personalCompletedOnByQuestId,
           deletedLegacyPersonalCompletionCount,
           legacyXpBonus,
-          discoveredPlantIds: mergeDiscoveredPlantIds(discoveredPlantIds, totalXp),
+          discoveredPlantIds,
+          pendingPlantGiftIds,
+          starterPlantGiftPending,
         }),
       );
     } catch {
       return;
     }
-  }, [hasRestored, canPersistStorage, questLists, categoryLists, completionHistory, personalXpByQuestId, personalCompletedOnByQuestId, deletedLegacyPersonalCompletionCount, legacyXpBonus, discoveredPlantIds, schemaVersion, todayKey, totalXp]);
+  }, [hasRestored, canPersistStorage, questLists, categoryLists, completionHistory, personalXpByQuestId, personalCompletedOnByQuestId, deletedLegacyPersonalCompletionCount, legacyXpBonus, discoveredPlantIds, pendingPlantGiftIds, starterPlantGiftPending, schemaVersion, todayKey, totalXp]);
 
   const historyForDisplay = completionHistory;
   const streaks = todayKey
@@ -531,8 +553,8 @@ export function QuestProvider({ children }: { children: ReactNode }) {
         ),
       );
       const nextTotalXp = getXpLedgerTotal(nextHistoryForDiscovery, personalXpByQuestId, legacyXpBonus);
-      setDiscoveredPlantIds((current) =>
-        mergeDiscoveredPlantIds(mergeDiscoveredPlantIds(current, totalXp), nextTotalXp),
+      setPendingPlantGiftIds((current) =>
+        mergePendingPlantGiftIds(current, nextTotalXp, discoveredPlantIds),
       );
       updateQuestList(list, (quests) => quests.map((item) =>
         item.id === questId ? { ...item, completed: !item.completed } : item,
@@ -561,8 +583,8 @@ export function QuestProvider({ children }: { children: ReactNode }) {
           ? reversePersonalXpAward(current, questId)
           : recordPersonalXpAward(current, questId, quest.difficulty));
         const nextTotalXp = getXpLedgerTotal(completionHistory, nextPersonalXpForDiscovery, legacyXpBonus);
-        setDiscoveredPlantIds((current) =>
-          mergeDiscoveredPlantIds(mergeDiscoveredPlantIds(current, totalXp), nextTotalXp),
+        setPendingPlantGiftIds((current) =>
+          mergePendingPlantGiftIds(current, nextTotalXp, discoveredPlantIds),
         );
       }
     }
@@ -610,9 +632,32 @@ export function QuestProvider({ children }: { children: ReactNode }) {
     ));
   }
 
+  function unwrapPlantGift(plantId: string) {
+    if (!pendingPlantGiftIds.includes(plantId)) return;
+    const result = unwrapPlantGiftState(discoveredPlantIds, pendingPlantGiftIds, plantId);
+    setDiscoveredPlantIds(result.discoveredPlantIds);
+    setPendingPlantGiftIds(result.pendingPlantGiftIds);
+  }
+
+  function getDataForExport(): StoredQuestData {
+    return {
+      schemaVersion,
+      questLists,
+      categoryLists,
+      completionHistory,
+      personalXpByQuestId,
+      personalCompletedOnByQuestId,
+      deletedLegacyPersonalCompletionCount,
+      legacyXpBonus,
+      discoveredPlantIds,
+      pendingPlantGiftIds,
+      starterPlantGiftPending,
+    };
+  }
+
   return (
     <QuestStoreContext.Provider
-      value={{ questLists, categoryLists, totalXp, completedTodayCounts, completedOverallCounts, completionHistoryView, todayKey, discoveredPlantIds, currentStreak: streaks.currentStreak, longestStreak: streaks.longestStreak, streakWeek, dailyCompletedQuestIds, dailyScheduledQuestIds, recoverableDailyQuestIds, hasRestored, addQuest, updateQuest, addCategory, toggleQuest, deleteQuest, recoverOrphanedDailyQuest }}
+      value={{ questLists, categoryLists, totalXp, completedTodayCounts, completedOverallCounts, completionHistoryView, todayKey, discoveredPlantIds, pendingPlantGiftIds, starterPlantGiftPending, currentStreak: streaks.currentStreak, longestStreak: streaks.longestStreak, streakWeek, dailyCompletedQuestIds, dailyScheduledQuestIds, recoverableDailyQuestIds, hasRestored, addQuest, updateQuest, addCategory, toggleQuest, deleteQuest, recoverOrphanedDailyQuest, unwrapPlantGift, getDataForExport }}
     >
       {children}
     </QuestStoreContext.Provider>

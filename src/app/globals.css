@@ -127,6 +127,21 @@ button {
   background: #728365;
 }
 
+.journal-nav-badge {
+  display: grid;
+  width: 18px;
+  height: 18px;
+  margin-left: auto;
+  border: 1px solid #f0d08a;
+  border-radius: 50%;
+  place-items: center;
+  color: #354c3e;
+  background: #f0d08a;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1;
+}
+
 .player-summary {
   display: flex;
   flex: 0 0 auto;
@@ -274,8 +289,6 @@ button {
 
 @media (min-width: 1051px) {
   .plantetary-app {
-    display: grid;
-    grid-template-columns: 232px minmax(0, 1fr);
     height: 100vh;
     height: 100dvh;
     min-height: 0;
@@ -285,10 +298,8 @@ button {
   .sidebar {
     position: fixed;
     inset: 0 auto 0 0;
-    height: 100vh;
-    height: 100dvh;
-    max-height: 100vh;
-    max-height: 100dvh;
+    height: auto;
+    max-height: none;
     min-height: 0;
     overflow-x: hidden;
     overflow-y: auto;
@@ -296,9 +307,9 @@ button {
   }
 
   .workspace {
-    grid-column: 2;
-    height: 100vh;
-    height: 100dvh;
+    position: fixed;
+    inset: 0 0 0 232px;
+    height: auto;
     overflow-y: auto;
     overscroll-behavior-y: contain;
   }
@@ -337,6 +348,7 @@ button {
 }
 
 .garden-banner {
+  container-type: inline-size;
   position: relative;
   height: 120px;
   overflow: hidden;
@@ -350,6 +362,42 @@ button {
   object-fit: cover;
   object-position: center;
   image-rendering: pixelated;
+}
+
+.garden-banner-title-mask {
+  position: absolute;
+  z-index: 1;
+  top: clamp(0px, calc(60px - 3.31cqw), 20px);
+  left: 50%;
+  display: block;
+  width: max-content;
+  min-width: clamp(142px, 11.75cqw, 240px);
+  max-width: calc(100% - 16px);
+  height: max(9px, 0.745cqw);
+  padding: 0 4px;
+  box-sizing: border-box;
+  transform: translateX(-50%);
+  background: #d6e8c8;
+}
+
+.garden-banner-title {
+  position: absolute;
+  z-index: 2;
+  top: 2px;
+  left: 50%;
+  display: block;
+  width: max-content;
+  max-width: calc(100% - 16px);
+  padding: 0;
+  transform: translateX(-50%);
+  background: transparent;
+  color: #586a50;
+  font-family: var(--font-silkscreen), monospace;
+  font-size: min(30px, calc(100cqw / var(--garden-title-length)));
+  line-height: 1.1;
+  text-align: center;
+  text-transform: uppercase;
+  white-space: nowrap;
 }
 
 .dashboard-content {
@@ -1676,8 +1724,17 @@ button {
   .sidebar-brand p,
   .player-summary,
   .sidebar-spacer,
-  .encouragement,
+  .encouragement {
+    display: none;
+  }
+
   .player-account {
+    flex: 0 0 auto;
+    margin-left: 8px;
+  }
+
+  .player-avatar,
+  .account-copy {
     display: none;
   }
 
@@ -1753,6 +1810,14 @@ button {
 
   .garden-banner {
     height: 100px;
+  }
+
+  .garden-banner-title-mask {
+    top: 17px;
+  }
+
+  .garden-banner-title {
+    font-size: min(clamp(24px, 4cqw, 28px), calc(100cqw / var(--garden-title-length)));
   }
 
   .dashboard-content {
@@ -1997,6 +2062,83 @@ button {
   font-size: 11px;
   font-weight: 600;
   white-space: nowrap;
+}
+
+.journal-starter-gift {
+  display: flex;
+  width: min(100%, 560px);
+  min-height: 0;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  margin: 0 auto;
+  padding: 22px 26px 24px;
+  border: 1px solid #d8cbbf;
+  border-radius: 6px;
+  background: var(--surface);
+  text-align: center;
+}
+
+.journal-gift-art,
+.journal-gift-fern {
+  display: block;
+  width: clamp(100px, 12vw, 132px);
+  height: auto;
+  flex: 0 0 auto;
+  object-fit: contain;
+  image-rendering: pixelated;
+}
+
+.journal-gift-copy {
+  display: flex;
+  width: 100%;
+  min-width: 0;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.journal-gift-copy strong {
+  color: var(--foreground);
+  font-family: var(--font-silkscreen), monospace;
+  font-size: 16px;
+  font-weight: 400;
+  line-height: 1.5;
+  text-wrap: balance;
+}
+
+.journal-gift-copy span {
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.journal-gift-button {
+  display: inline-flex;
+  min-width: 132px;
+  min-height: 42px;
+  align-items: center;
+  justify-content: center;
+  margin-top: 2px;
+  padding: 9px 18px;
+  border: 1px solid var(--leaf);
+  border-radius: 4px;
+  color: #fffdf6;
+  background: var(--leaf);
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.4;
+  transition: background-color 120ms ease, transform 120ms ease;
+}
+
+.journal-gift-button:hover {
+  background: #52694c;
+  transform: translateY(-1px);
+}
+
+.journal-gift-button:focus-visible {
+  outline: 2px solid #c05a4a;
+  outline-offset: 2px;
 }
 
 .journal-progress-summary {
@@ -2421,6 +2563,20 @@ button {
     gap: 12px;
   }
 
+  .journal-starter-gift {
+    gap: 10px;
+    padding: 18px 16px 20px;
+  }
+
+  .journal-gift-art,
+  .journal-gift-fern {
+    width: clamp(100px, 30vw, 124px);
+  }
+
+  .journal-gift-copy strong {
+    font-size: 14px;
+  }
+
   .journal-introduction h1 {
     font-size: 22px;
   }
@@ -2663,7 +2819,208 @@ button {
   font-size: 12px;
 }
 
+.settings-content {
+  width: calc(100% - 80px);
+  max-width: 900px;
+  margin: 0 auto;
+  padding: 30px 0 48px;
+}
+
+.settings-heading {
+  margin-bottom: 22px;
+}
+
+.settings-heading h1 {
+  margin: 0;
+  color: var(--foreground);
+  font-family: var(--font-silkscreen), monospace;
+  font-size: 22px;
+  font-weight: 400;
+  text-transform: uppercase;
+}
+
+.settings-heading p {
+  margin: 6px 0 0;
+  color: var(--muted);
+}
+
+.settings-section {
+  margin-top: 16px;
+  padding: 22px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+}
+
+.settings-section h2 {
+  margin: 0 0 6px;
+  color: var(--foreground);
+  font-size: 16px;
+}
+
+.settings-description {
+  margin: 0 0 16px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.settings-form-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-top: 14px;
+}
+
+.settings-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+  color: var(--foreground);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.settings-field input[type="text"],
+.settings-field input[type="time"] {
+  min-height: 40px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--foreground);
+  background: #fffdf8;
+}
+
+.settings-toggle,
+.settings-check-option {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  color: var(--foreground);
+  font-size: 13px;
+}
+
+.settings-choice-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 18px;
+  margin-top: 14px;
+}
+
+.settings-avatar-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 8px;
+}
+
+.settings-avatar-option {
+  display: inline-flex;
+  min-width: 82px;
+  min-height: 66px;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  padding: 7px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--muted);
+  background: #fffdf8;
+  cursor: pointer;
+}
+
+.settings-avatar-option.is-selected {
+  border-color: var(--leaf);
+  color: var(--foreground);
+  background: #edf1e5;
+}
+
+.settings-avatar-option:focus-within {
+  outline: 2px solid #c05a4a;
+  outline-offset: 2px;
+}
+
+.settings-avatar-option input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+}
+
+.settings-avatar-symbol {
+  display: grid;
+  width: 30px;
+  height: 30px;
+  place-items: center;
+}
+
+.settings-avatar-label {
+  font-size: 10px;
+}
+
+.settings-action-button,
+.settings-reset-button {
+  min-height: 38px;
+  padding: 8px 13px;
+  border: 1px solid #526d48;
+  border-radius: 4px;
+  color: #fffdf6;
+  background: #728365;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.settings-reset-button {
+  border-color: #b26c58;
+  color: #774435;
+  background: #f7e9dc;
+}
+
+.settings-message {
+  min-height: 18px;
+  margin: 12px 0 0;
+  color: var(--leaf-dark);
+  font-size: 12px;
+}
+
+.settings-message.is-error {
+  color: #985342;
+}
+
+.settings-section fieldset {
+  margin: 14px 0 0;
+  padding: 0;
+  border: 0;
+}
+
+.settings-section fieldset:disabled {
+  opacity: 0.65;
+}
+
 @media (max-width: 760px) {
+  .settings-content {
+    width: calc(100% - 32px);
+    padding: 22px 0 36px;
+  }
+
+  .settings-section {
+    padding: 17px;
+  }
+
+  .settings-form-row {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .settings-action-button,
+  .settings-reset-button {
+    align-self: flex-start;
+  }
+
   .completion-history-content {
     width: calc(100% - 32px);
     padding: 22px 0 36px;

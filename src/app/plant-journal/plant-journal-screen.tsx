@@ -116,14 +116,17 @@ function BookPage({
 export default function PlantJournalScreen() {
   const [filter, setFilter] = useState<PlantFilter>("all");
   const [spreadIndex, setSpreadIndex] = useState(0);
-  const { totalXp, discoveredPlantIds, hasRestored } = useQuestStore();
+  const [revealedPlantId, setRevealedPlantId] = useState<string | null>(null);
+  const { totalXp, discoveredPlantIds, pendingPlantGiftIds, unwrapPlantGift, hasRestored } = useQuestStore();
   const { level, xpIntoLevel, xpForNextLevel } = getLevelProgress(totalXp);
-  const nextDiscovery = getNextPlantProgress(totalXp, discoveredPlantIds);
-  const visiblePlants = getPlantFilterResults(discoveredPlantIds, filter);
+  const nextDiscovery = getNextPlantProgress(totalXp, discoveredPlantIds, pendingPlantGiftIds);
+  const visiblePlants = getPlantFilterResults(discoveredPlantIds, filter, pendingPlantGiftIds);
   const discoveredSet = new Set(discoveredPlantIds);
   const collectionCount = plantCatalog.filter((plant) => discoveredSet.has(plant.id)).length;
-  const spread = getPlantJournalSpread(discoveredPlantIds, filter, spreadIndex);
+  const spread = getPlantJournalSpread(discoveredPlantIds, filter, spreadIndex, pendingPlantGiftIds);
   const { leftPlants, rightPlants, currentSpread, spreadCount } = spread;
+  const nextGift = plantCatalog.find((plant) => pendingPlantGiftIds.includes(plant.id));
+  const revealedPlant = plantCatalog.find((plant) => plant.id === revealedPlantId);
 
   if (!hasRestored) {
     return <main className="journal-content"><p className="journal-loading">Opening your journal…</p></main>;
@@ -141,6 +144,59 @@ export default function PlantJournalScreen() {
           <span className="journal-status-chip">{collectionCount} of {plantCatalog.length} discovered</span>
         </div>
       </header>
+
+      {revealedPlant && (
+        <section className="journal-starter-gift is-unwrapped" aria-live="polite">
+          {revealedPlant.imageSrc ? (
+              <Image
+                src={revealedPlant.imageSrc}
+                alt={revealedPlant.name}
+                width={72}
+                height={72}
+                unoptimized
+                className="pixel-art journal-gift-fern"
+              />
+          ) : (
+            <div className="journal-gift-fern" aria-hidden="true"><FigmaIcon src="/icon-sprout.svg" size={40} /></div>
+          )}
+          <div className="journal-gift-copy">
+            <strong>{revealedPlant.name} has joined your collection!</strong>
+            <span>Your garden has a new friend.</span>
+          </div>
+        </section>
+      )}
+
+      {nextGift && (
+        <section className="journal-starter-gift" aria-live="polite">
+            <svg className="journal-gift-art" width={128} height={128} viewBox="0 0 32 32" role="img" aria-label="Wrapped pixel-art gift" shapeRendering="crispEdges">
+              <rect x="5" y="11" width="22" height="17" fill="#b86b5a" />
+              <rect x="4" y="9" width="24" height="4" fill="#d08b70" />
+              <rect x="14" y="9" width="4" height="19" fill="#f2cf78" />
+              <rect x="4" y="16" width="24" height="3" fill="#f2cf78" />
+              <rect x="10" y="4" width="4" height="4" fill="#f2cf78" />
+              <rect x="8" y="2" width="4" height="4" fill="#f2cf78" />
+              <rect x="18" y="4" width="4" height="4" fill="#f2cf78" />
+              <rect x="20" y="2" width="4" height="4" fill="#f2cf78" />
+              <rect x="7" y="13" width="2" height="2" fill="#92533f" />
+              <rect x="23" y="13" width="2" height="2" fill="#92533f" />
+              <rect x="7" y="25" width="18" height="2" fill="#92533f" />
+            </svg>
+          <div className="journal-gift-copy">
+            <strong>A little mystery gift is waiting</strong>
+            <span>A new plant is tucked inside.</span>
+          </div>
+          <button
+            className="journal-gift-button"
+            type="button"
+            onClick={() => {
+              unwrapPlantGift(nextGift.id);
+              setRevealedPlantId(nextGift.id);
+            }}
+          >
+            Unwrap gift
+          </button>
+        </section>
+      )}
 
       <section className="journal-progress-summary" aria-label="Plant collection progress">
         <div className="journal-summary-item">

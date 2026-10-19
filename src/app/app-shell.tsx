@@ -2,9 +2,15 @@
 
 import Image from "next/image";
 import Link from "next/link";
-import type { ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
+import ProfileAvatarArtwork from "./profile-avatar-artwork";
 import { getLevelProgress, useQuestStore } from "./quest-store";
 import { dateFromKey, formatLocalDateLabel } from "./quest-logic";
+import {
+  defaultProfilePreferences,
+  loadProfilePreferences,
+  profilePreferencesUpdatedEvent,
+} from "./settings-logic";
 
 export function FigmaIcon({
   src,
@@ -29,10 +35,28 @@ export default function AppShell({
   page,
 }: {
   children: ReactNode;
-  page: "home" | "create" | "journal" | "history" | "all-quests";
+  page: "home" | "create" | "journal" | "history" | "all-quests" | "settings";
 }) {
-  const { totalXp, todayKey } = useQuestStore();
+  const { totalXp, todayKey, pendingPlantGiftIds, hasRestored } = useQuestStore();
   const { level, xpIntoLevel, xpForNextLevel, xpProgressPercent } = getLevelProgress(totalXp);
+  const [profile, setProfile] = useState(defaultProfilePreferences);
+
+  useEffect(() => {
+    const restoreProfile = () => {
+      try {
+        setProfile(loadProfilePreferences(window.localStorage));
+      } catch {
+        setProfile(defaultProfilePreferences);
+      }
+    };
+    restoreProfile();
+    window.addEventListener("storage", restoreProfile);
+    window.addEventListener(profilePreferencesUpdatedEvent, restoreProfile);
+    return () => {
+      window.removeEventListener("storage", restoreProfile);
+      window.removeEventListener(profilePreferencesUpdatedEvent, restoreProfile);
+    };
+  }, []);
 
   return (
     <div className="plantetary-app">
@@ -58,9 +82,16 @@ export default function AppShell({
             <FigmaIcon src="/icon-square-plus.svg" />
             <span>Add quest</span>
           </Link>
-          <Link className={`nav-link${page === "journal" ? " is-active" : ""}`} href="/plant-journal">
+          <Link
+            className={`nav-link${page === "journal" ? " is-active" : ""}`}
+            href="/plant-journal"
+            aria-label={hasRestored && pendingPlantGiftIds.length > 0
+              ? `Plant Journal, ${pendingPlantGiftIds.length} ${pendingPlantGiftIds.length === 1 ? "gift" : "gifts"} waiting`
+              : undefined}
+          >
             <FigmaIcon src="/icon-book-sidebar.svg" />
             <span>Plant Journal</span>
+            {hasRestored && pendingPlantGiftIds.length > 0 && <span className="journal-nav-badge" aria-hidden="true">{pendingPlantGiftIds.length}</span>}
           </Link>
           <Link className={`nav-link${page === "history" ? " is-active" : ""}`} href="/completion-history">
             <FigmaIcon src="/icon-scroll-text.svg" />
@@ -69,7 +100,7 @@ export default function AppShell({
         </nav>
 
         <section className="player-summary" aria-label="Player progress">
-          <h2>Mira’s adventure</h2>
+          <h2>{profile.displayName}’s adventure</h2>
           <p>Level {level} · Budding botanist</p>
           <div
             className="sidebar-xp-track"
@@ -101,14 +132,24 @@ export default function AppShell({
         </aside>
 
         <div className="player-account">
-          <div className="player-avatar" aria-hidden="true">M</div>
+          <div className="player-avatar" aria-hidden="true">
+            {profile.avatar !== null
+              ? <ProfileAvatarArtwork avatar={profile.avatar} />
+              : profile.displayName.charAt(0).toUpperCase()}
+          </div>
           <div className="account-copy">
-            <strong>Mira</strong>
+            <strong>{profile.displayName}</strong>
             <span>Your cozy corner</span>
           </div>
-          <button className="icon-button account-settings" type="button" aria-label="Settings">
+          <Link
+            className="icon-button account-settings"
+            href="/settings"
+            aria-label="Settings"
+            aria-current={page === "settings" ? "page" : undefined}
+            title="Settings"
+          >
             <FigmaIcon src="/icon-settings.svg" />
-          </button>
+          </Link>
         </div>
       </aside>
 
@@ -118,7 +159,7 @@ export default function AppShell({
             <FigmaIcon src="/icon-sprout.svg" size={17} />
             <span>Your cozy corner</span>
             <span className="breadcrumb-divider">/</span>
-            <strong>{page === "home" ? "Home" : page === "all-quests" ? "All Quests" : page === "journal" ? "Plant Journal" : page === "history" ? "Completion History" : "Create Quest"}</strong>
+            <strong>{page === "home" ? "Home" : page === "all-quests" ? "All Quests" : page === "journal" ? "Plant Journal" : page === "history" ? "Completion History" : page === "settings" ? "Settings" : "Create Quest"}</strong>
           </div>
           <div className="date-label">
             <FigmaIcon src="/icon-sun.svg" size={17} />

@@ -23,30 +23,58 @@ export const plantCatalog: Plant[] = [
 
 export function getQualifiedPlantIds(totalXp: number): string[] {
   return plantCatalog
-    .filter((plant) => totalXp >= plant.xpThreshold)
+    .filter((plant) => plant.id !== "fern" && totalXp >= plant.xpThreshold)
     .map((plant) => plant.id);
 }
 
-export function mergeDiscoveredPlantIds(
-  discoveredPlantIds: string[] | undefined,
+export function unwrapStarterFern(discoveredPlantIds: string[]): string[] {
+  return discoveredPlantIds.includes("fern") ? discoveredPlantIds : [...discoveredPlantIds, "fern"];
+}
+
+export function mergeDiscoveredPlantIds(discoveredPlantIds: string[] | undefined): string[] {
+  return discoveredPlantIds ?? [];
+}
+
+export function mergePendingPlantGiftIds(
+  pendingPlantGiftIds: string[] | undefined,
   totalXp: number,
+  discoveredPlantIds: string[],
 ): string[] {
-  const discovered = new Set(discoveredPlantIds ?? []);
-  for (const plantId of getQualifiedPlantIds(totalXp)) discovered.add(plantId);
-  const ids = [...discovered];
-  return discoveredPlantIds && ids.length === discoveredPlantIds.length &&
-    ids.every((id, index) => id === discoveredPlantIds[index])
-    ? discoveredPlantIds
-    : ids;
+  const discovered = new Set(discoveredPlantIds);
+  const pending = new Set(pendingPlantGiftIds ?? []);
+  for (const plantId of getQualifiedPlantIds(totalXp)) {
+    if (!discovered.has(plantId)) pending.add(plantId);
+  }
+  for (const plantId of discovered) pending.delete(plantId);
+  return plantCatalog.map(({ id }) => id).filter((id) => pending.has(id));
+}
+
+export function unwrapPlantGift(
+  discoveredPlantIds: string[],
+  pendingPlantGiftIds: string[],
+  plantId: string,
+): { discoveredPlantIds: string[]; pendingPlantGiftIds: string[] } {
+  if (!pendingPlantGiftIds.includes(plantId)) {
+    return { discoveredPlantIds, pendingPlantGiftIds };
+  }
+  return {
+    discoveredPlantIds: discoveredPlantIds.includes(plantId)
+      ? discoveredPlantIds
+      : [...discoveredPlantIds, plantId],
+    pendingPlantGiftIds: pendingPlantGiftIds.filter((id) => id !== plantId),
+  };
 }
 
 export function getPlantFilterResults(
   discoveredPlantIds: string[],
   filter: PlantFilter,
+  pendingPlantGiftIds: string[] = [],
 ): Plant[] {
-  if (filter === "all") return plantCatalog;
+  const pending = new Set(pendingPlantGiftIds);
+  const catalog = plantCatalog.filter((plant) => !pending.has(plant.id));
+  if (filter === "all") return catalog;
   const discovered = new Set(discoveredPlantIds);
-  return plantCatalog.filter((plant) =>
+  return catalog.filter((plant) =>
     filter === "collected" ? discovered.has(plant.id) : !discovered.has(plant.id),
   );
 }
@@ -54,8 +82,9 @@ export function getPlantFilterResults(
 export function getPlantJournalSpreadCount(
   discoveredPlantIds: string[],
   filter: PlantFilter,
+  pendingPlantGiftIds: string[] = [],
 ): number {
-  const plantCount = getPlantFilterResults(discoveredPlantIds, filter).length;
+  const plantCount = getPlantFilterResults(discoveredPlantIds, filter, pendingPlantGiftIds).length;
   const spreadsNeeded = Math.ceil(plantCount / 8);
 
   return Math.max(2, spreadsNeeded);
@@ -65,9 +94,10 @@ export function getPlantJournalSpread(
   discoveredPlantIds: string[],
   filter: PlantFilter,
   spreadIndex: number,
+  pendingPlantGiftIds: string[] = [],
 ) {
-  const plants = getPlantFilterResults(discoveredPlantIds, filter);
-  const spreadCount = getPlantJournalSpreadCount(discoveredPlantIds, filter);
+  const plants = getPlantFilterResults(discoveredPlantIds, filter, pendingPlantGiftIds);
+  const spreadCount = getPlantJournalSpreadCount(discoveredPlantIds, filter, pendingPlantGiftIds);
   const currentSpread = Math.max(0, Math.min(spreadIndex, spreadCount - 1));
 
   const plantsPerSpread = 8;
@@ -81,9 +111,10 @@ export function getPlantJournalSpread(
   };
 }
 
-export function getNextPlantProgress(totalXp: number, discoveredPlantIds: string[]) {
+export function getNextPlantProgress(totalXp: number, discoveredPlantIds: string[], pendingPlantGiftIds: string[] = []) {
   const discovered = new Set(discoveredPlantIds);
-  const plant = plantCatalog.find((item) => !discovered.has(item.id));
+  const pending = new Set(pendingPlantGiftIds);
+  const plant = plantCatalog.find((item) => item.id !== "fern" && !discovered.has(item.id) && !pending.has(item.id));
   if (!plant) return undefined;
 
   return { plant, ...getPlantThresholdProgress(plant, totalXp) };
@@ -101,26 +132,65 @@ export function migratePlantDiscoveries(data: StoredQuestData): StoredQuestData 
   const currentVersion = typeof data.schemaVersion === "number" && Number.isFinite(data.schemaVersion)
     ? data.schemaVersion
     : 0;
-  const targetVersion = Math.max(3, currentVersion);
+  const targetVersion = Math.max(5, currentVersion);
   const rawDiscoveries: unknown = data.discoveredPlantIds;
   const validDiscoveries = Array.isArray(rawDiscoveries)
     ? rawDiscoveries.filter((id): id is string => typeof id === "string" && id.length > 0)
     : [];
+  // Older saves implicitly received Fern because its previous XP threshold was zero.
+  // A save without this field is an existing user's save, so preserve that collection.
+  const hasGiftLedger = Array.isArray(data.pendingPlantGiftIds);
+  const starterPlantGiftPending = data.starterPlantGiftPending === true;
+  const savedDiscoveries = new Set(validDiscoveries);
   const totalXp = getXpLedgerTotal(
     data.completionHistory,
     data.personalXpByQuestId,
     data.legacyXpBonus,
   );
-  const discoveredPlantIds = mergeDiscoveredPlantIds(validDiscoveries, totalXp);
+  let pendingIds = Array.isArray(data.pendingPlantGiftIds)
+    ? data.pendingPlantGiftIds.filter((id): id is string => typeof id === "string" && plantCatalog.some((plant) => plant.id === id))
+    : [];
+
+  if (currentVersion < 5) {
+    // Before gift tracking, XP milestones were immediately collected. Preserve those discoveries.
+    for (const plantId of getQualifiedPlantIds(totalXp)) savedDiscoveries.add(plantId);
+    if (starterPlantGiftPending) {
+      savedDiscoveries.delete("fern");
+      pendingIds = [...new Set([...pendingIds, "fern"] )];
+    } else {
+      savedDiscoveries.add("fern");
+    }
+  } else if (starterPlantGiftPending && !hasGiftLedger) {
+    // Compatibility with the first Fern-only gift schema.
+    savedDiscoveries.delete("fern");
+    pendingIds = [...new Set([...pendingIds, "fern"] )];
+  }
+
+  pendingIds = mergePendingPlantGiftIds(pendingIds, totalXp, [...savedDiscoveries]);
+  const discoveredPlantIds = [
+    ...plantCatalog.map(({ id }) => id).filter((id) => savedDiscoveries.has(id)),
+    ...[...savedDiscoveries].filter((id) => !plantCatalog.some((plant) => plant.id === id)),
+  ];
+  const nextStarterPending = pendingIds.includes("fern");
   const discoveriesUnchanged = Array.isArray(rawDiscoveries) &&
     rawDiscoveries.length === discoveredPlantIds.length &&
     rawDiscoveries.every((id, index) => id === discoveredPlantIds[index]);
 
   if (
-    currentVersion >= 3 &&
+    currentVersion >= 5 &&
     targetVersion === data.schemaVersion &&
-    discoveriesUnchanged
+    discoveriesUnchanged &&
+    data.starterPlantGiftPending === nextStarterPending &&
+    Array.isArray(data.pendingPlantGiftIds) &&
+    data.pendingPlantGiftIds.length === pendingIds.length &&
+    data.pendingPlantGiftIds.every((id, index) => id === pendingIds[index])
   ) return data;
 
-  return { ...data, schemaVersion: targetVersion, discoveredPlantIds };
+  return {
+    ...data,
+    schemaVersion: targetVersion,
+    discoveredPlantIds,
+    pendingPlantGiftIds: pendingIds,
+    starterPlantGiftPending: nextStarterPending,
+  };
 }
