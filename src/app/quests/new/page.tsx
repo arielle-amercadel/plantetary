@@ -6,6 +6,8 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useState } from "react";
 import AppShell, { FigmaIcon } from "../../app-shell";
 import CategoryPicker, { CUSTOM_CATEGORY_VALUE } from "../../category-picker";
+import QuestSelect from "./quest-select";
+import QuestDatePicker from "./quest-date-picker";
 import { getCustomCategoryError, getQuestXp, useQuestStore } from "../../quest-store";
 import { findQuestForEditing, formatWeekdaySchedule, scheduledDaysForQuest } from "../../quest-logic";
 import type {
@@ -279,6 +281,7 @@ function CreateQuestForm({
                     id="quest-category"
                     label="Category"
                     options={categoryOptions}
+                    useCustomDropdown
                     disabled={!questType}
                     selection={categorySelection}
                     onSelectionChange={(selection) => {
@@ -296,21 +299,23 @@ function CreateQuestForm({
                 <section className="create-form-section">
                 <div className="create-field">
                     <label htmlFor="repeat-schedule">Repeat</label>
-                  <select
+                  <QuestSelect
                     id="repeat-schedule"
-                    name="repeatSchedule"
+                    label="Repeat"
                     required
                     value={repeatSchedule}
-                    onChange={(event) => {
-                      const value = event.target.value as RepeatSchedule | "";
+                    placeholder="Choose a schedule"
+                    options={[
+                      { value: "", label: "Choose a schedule", disabled: true },
+                      { value: "Every day", label: "Every day" },
+                      { value: "Selected days", label: "Selected days" },
+                    ]}
+                    onValueChange={(selectedValue) => {
+                      const value = selectedValue as RepeatSchedule | "";
                       setRepeatSchedule(value);
                       setSelectedDays(value === "Every day" ? weekdays : []);
                     }}
-                  >
-                    <option value="" disabled>Choose a schedule</option>
-                    <option value="Every day">Every day</option>
-                    <option value="Selected days">Selected days</option>
-                  </select>
+                  />
                 </div>
                 {repeatSchedule === "Selected days" && (
                   <fieldset className="create-fieldset create-days-field">
@@ -341,15 +346,14 @@ function CreateQuestForm({
                 <section className="create-form-section">
                 <div className="create-field">
                     <label htmlFor="quest-due-date">Due date <span>· optional</span></label>
-                  <input
+                  <QuestDatePicker
                     id="quest-due-date"
-                    name="dueDate"
-                    type="date"
+                    label="Due date"
                     value={dueDate}
-                      onChange={(event) => {
-                        setDueDate(event.target.value);
-                        setDueDateTouched(true);
-                      }}
+                    onValueChange={(value) => {
+                      setDueDate(value);
+                      setDueDateTouched(true);
+                    }}
                   />
                 </div>
                 </section>
@@ -368,18 +372,20 @@ function CreateQuestForm({
               <section className="create-form-section">
                 <div className="create-field">
                   <label htmlFor="quest-difficulty">Difficulty</label>
-                  <select
+                  <QuestSelect
                     id="quest-difficulty"
-                    name="difficulty"
+                    label="Difficulty"
                     required
                     value={difficulty}
-                    onChange={(event) => setDifficulty(event.target.value as Difficulty | "")}
-                  >
-                    <option value="" disabled>Choose difficulty</option>
-                    <option value="Easy">Easy · 5 XP</option>
-                    <option value="Medium">Medium · 10 XP</option>
-                    <option value="Hard">Hard · 20 XP</option>
-                  </select>
+                    placeholder="Choose difficulty"
+                    options={[
+                      { value: "", label: "Choose difficulty", disabled: true },
+                      { value: "Easy", label: "Easy · 5 XP" },
+                      { value: "Medium", label: "Medium · 10 XP" },
+                      { value: "Hard", label: "Hard · 20 XP" },
+                    ]}
+                    onValueChange={(value) => setDifficulty(value as Difficulty | "")}
+                  />
                 </div>
               </section>
 
