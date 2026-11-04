@@ -6,10 +6,14 @@ import {
   completeQuest,
   dailyPanel,
   expect,
+  expectCompletedOverall,
   expectHomeXp,
+  expectStreak,
+  historyCard,
   openApp,
   personalPanel,
   questRow,
+  readStorage,
   reloadApp,
   seedStorage,
   test,
@@ -212,6 +216,158 @@ test.describe("Due-date labels on quest rows", () => {
     for (const title of STARTER_DAILY) {
       await expect(questRow(dailyPanel(page), title)).toContainText("Every day");
     }
+  });
+});
+
+test.describe("Quests with no real due date", () => {
+  async function quickAddPersonal(page: Page, title: string, difficulty?: "Easy" | "Medium" | "Hard") {
+    const panel = personalPanel(page);
+    await panel.getByRole("button", { name: "Add quest" }).click();
+    await panel.getByLabel("New quest name").fill(title);
+    if (difficulty) await panel.getByLabel("Quest difficulty").selectOption(difficulty);
+    await panel.getByRole("button", { name: "Add", exact: true }).click();
+    await expect(dueQuestRow(page, title)).toBeVisible();
+  }
+
+  async function savedQuests(page: Page) {
+    return JSON.parse((await readStorage(page, QUEST_SAVE_KEY))!).questLists as {
+      daily: Record<string, unknown>[];
+      personal: Record<string, unknown>[];
+    };
+  }
+
+  test("a quick-add Personal Quest saves no date or label, and shows none after a reload", async ({ page }) => {
+    const title = "Water the ferns";
+    await openApp(page);
+
+    await quickAddPersonal(page, title);
+    await expect(categoryLineWithoutDate(page, "Personal", title)).toBeVisible();
+
+    const saved = (await savedQuests(page)).personal.find((quest) => quest.title === title)!;
+    expect(saved.schedule).toBe("");
+    expect(saved).not.toHaveProperty("dueDate");
+
+    await reloadApp(page);
+    await expect(categoryLineWithoutDate(page, "Personal", title)).toBeVisible();
+  });
+
+  test("a quick-add Personal Quest never becomes past due", async ({ page }) => {
+    const title = "Water the ferns";
+    await openApp(page);
+    await quickAddPersonal(page, title);
+
+    await advanceToDay(page, 3, "Thursday, October 22");
+
+    await expect(categoryLineWithoutDate(page, "Personal", title)).toBeVisible();
+    await expect(pastDueBadge(page, title)).toHaveCount(0);
+  });
+
+  test("starter Personal Quests save no date or label, and show only their categories", async ({ page }) => {
+    await openApp(page);
+
+    const expected = [
+      ["Review biology notes", "Study"],
+      ["Finish portfolio moodboard", "Projects"],
+      ["Tidy the desk", "Chores"],
+    ];
+    for (const [title, category] of expected) {
+      await expect(categoryLineWithoutDate(page, category, title)).toBeVisible();
+      await expect(pastDueBadge(page, title)).toHaveCount(0);
+    }
+
+    for (const quest of (await savedQuests(page)).personal) {
+      expect(quest.schedule).toBe("");
+      expect(quest).not.toHaveProperty("dueDate");
+    }
+
+    await advanceToDay(page, 2, "Wednesday, October 21");
+    await expect(page.getByText("Past Due", { exact: true })).toHaveCount(0);
+  });
+
+  test("an existing save keeps its old label text, which rows do not show", async ({ page }) => {
+    await seedPersonal(page, [personalQuest({ schedule: "Due today" })]);
+
+    await openApp(page);
+    await completeQuest(page, DUE_QUEST);
+    await reloadApp(page);
+
+    await expect(categoryLineWithoutDate(page, "Study")).toBeVisible();
+    expect((await savedQuests(page)).personal[0].schedule).toBe("Due today");
+  });
+
+  test("a quick-add Daily Quest keeps Every day, its schedule, and its streak", async ({ page }) => {
+    const title = "Quick stretch";
+    await seedStorage(page, { [QUEST_SAVE_KEY]: buildSave() });
+    await openApp(page);
+
+    await page.getByRole("button", { name: "Add habit" }).click();
+    await page.getByLabel("New quest name").fill(title);
+    await page.getByRole("button", { name: "Add", exact: true }).click();
+
+    const row = questRow(dailyPanel(page), title);
+    await expect(row).toContainText("Wellness · Every day");
+    const saved = (await savedQuests(page)).daily[0];
+    expect(saved.schedule).toBe("Every day");
+    expect(saved).not.toHaveProperty("dueDate");
+
+    await completeQuest(page, title);
+    await expectStreak(page, 1);
+    await expectHomeXp(page, 5);
+
+    await advanceToDay(page, 1, "Tuesday, October 20");
+    await expect(row).toContainText("Wellness · Every day");
+    await expect(page.getByRole("button", { name: `Complete: ${title}`, exact: true })).toBeEnabled();
+    await completeQuest(page, title);
+    await expectStreak(page, 2);
+    await expectHomeXp(page, 10);
+  });
+
+  test("completing and uncompleting a quest with no date keeps XP and history working", async ({ page }) => {
+    const title = "Water the ferns";
+    await openApp(page);
+    await quickAddPersonal(page, title, "Hard");
+
+    await completeQuest(page, title);
+    await expectHomeXp(page, 20);
+    await expectCompletedOverall(page, 1);
+    await reloadApp(page);
+    await expectHomeXp(page, 20);
+
+    await openApp(page, "/completion-history");
+    await expect(historyCard(page, title)).toContainText("+20 XP");
+
+    await openApp(page);
+    await uncompleteQuest(page, title);
+    await expectHomeXp(page, 0);
+    await expectCompletedOverall(page, 0);
+
+    await openApp(page, "/completion-history");
+    await expect(historyCard(page, title)).toHaveCount(0);
+  });
+
+  test("completing a starter or quick-add Personal Quest does not change the streak", async ({ page }) => {
+    await openApp(page);
+    await quickAddPersonal(page, "Water the ferns");
+
+    await completeQuest(page, "Water the ferns");
+    await completeQuest(page, "Tidy the desk");
+
+    await expectStreak(page, 0);
+    await expectHomeXp(page, 10);
+  });
+
+  test("XP from quests with no date earns plant gifts as usual", async ({ page }) => {
+    await openApp(page);
+    await quickAddPersonal(page, "Hard task", "Hard");
+    await expect(page.getByRole("link", { name: "Plant Journal, 1 gift waiting" })).toBeVisible();
+
+    await completeQuest(page, "Hard task");
+    await completeQuest(page, "Tidy the desk");
+    await expectHomeXp(page, 25);
+
+    // Fern from the start, plus Daisy at 25 XP.
+    await expect(page.getByRole("link", { name: "Plant Journal, 2 gifts waiting" })).toBeVisible();
+    await expect(page.getByRole("progressbar", { name: "XP progress toward Cactus" })).toBeVisible();
   });
 });
 

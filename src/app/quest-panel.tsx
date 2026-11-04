@@ -68,7 +68,7 @@ export default function QuestPanel({
       id: `${id}-${Date.now()}`,
       title: trimmedTitle,
       category,
-      schedule: id === "daily-quests" ? "Every day" : "Due today",
+      schedule: id === "daily-quests" ? "Every day" : "",
       difficulty: newDifficulty,
       completed: false,
     });
