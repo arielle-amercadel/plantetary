@@ -4,7 +4,7 @@ import Image from "next/image";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import CategoryPicker, { CUSTOM_CATEGORY_VALUE } from "./category-picker";
-import { getDailyQuestScheduleLabel, getQuestListProgress, isQuestPastDue, isQuestScheduledOnDate } from "./quest-logic";
+import { getDailyQuestScheduleLabel, getDueDateLabel, getQuestListProgress, isQuestPastDue, isQuestScheduledOnDate } from "./quest-logic";
 import { getCustomCategoryError, getQuestXp, useQuestStore, type Difficulty, type Quest } from "./quest-store";
 
 type QuestPanelProps = {
@@ -22,6 +22,10 @@ type QuestPanelProps = {
   onAddQuest: (quest: Quest) => void;
   onDeleteQuest: (questId: string) => void;
 };
+
+function QuestCategoryLine({ category, dateLabel }: { category: string; dateLabel?: string }) {
+  return <span>{category}{dateLabel && <> <span aria-hidden="true">·</span> {dateLabel}</>}</span>;
+}
 
 export default function QuestPanel({
   id,
@@ -161,7 +165,10 @@ export default function QuestPanel({
             </button>
             <div className="quest-copy">
               <strong>{quest.title}</strong>
-              <span>{quest.category} <span aria-hidden="true">·</span> {list === "daily" ? getDailyQuestScheduleLabel(quest) : quest.schedule}</span>
+              <QuestCategoryLine
+                category={quest.category}
+                dateLabel={list === "daily" ? getDailyQuestScheduleLabel(quest) : getDueDateLabel(quest.dueDate, todayKey)}
+              />
               {isQuestPastDue(quest, list, todayKey) && <span className="past-due-badge">Past Due</span>}
               {quest.notes && <span className="quest-notes">{quest.notes}</span>}
             </div>
