@@ -443,6 +443,31 @@ export function isQuestPastDue(quest: Quest, list: QuestListKey, todayKey: strin
     quest.dueDate < todayKey;
 }
 
+/**
+ * Builds a quest's due-date label from its real date, or returns undefined when there is no valid
+ * date to show. A due date is a calendar day with no timezone, so both keys are compared as written
+ * and formatted through dateFromKey's local noon: new Date("YYYY-MM-DD") would parse as UTC and show
+ * the previous day west of Greenwich. Without a valid today, relative wording and the "this year"
+ * shortcut are unavailable, so the label falls back to the full date.
+ */
+export function getDueDateLabel(dueDate: string | undefined, todayKey: string): string | undefined {
+  if (!isCompletionDateKey(dueDate)) return undefined;
+
+  const hasToday = isCompletionDateKey(todayKey);
+  if (hasToday) {
+    if (dueDate === todayKey) return "Due today";
+    if (dueDate === getLocalDateKey(addCalendarDays(dateFromKey(todayKey), 1))) return "Due tomorrow";
+  }
+
+  const includeYear = !hasToday || dueDate.slice(0, 4) !== todayKey.slice(0, 4);
+  const formattedDate = dateFromKey(dueDate).toLocaleDateString("en-US", {
+    month: "short",
+    day: "numeric",
+    ...(includeYear ? { year: "numeric" } : {}),
+  });
+  return `Due ${formattedDate}`;
+}
+
 function countSnapshotCompletions(snapshot: CompletionSnapshot | undefined): number {
   if (
     !snapshot ||
