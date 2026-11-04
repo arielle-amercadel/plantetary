@@ -104,18 +104,35 @@ describe("updating an existing quest", () => {
     })).toBe(true);
   });
 
-  it("updates a Personal due date and its display label together", () => {
-    const personal = makeQuest({
-      id: "personal-1",
-      schedule: "No due date",
-      dueDate: undefined,
-    });
-    const next = updateQuestInLists({ daily: [], personal: [personal] }, "personal", "personal-1", {
+  it("adds and changes a Personal due date without saving a display label", () => {
+    const personal = makeQuest({ id: "personal-1", schedule: "", dueDate: undefined });
+    const added = updateQuestInLists({ daily: [], personal: [personal] }, "personal", "personal-1", {
       dueDate: "2026-11-05",
-      schedule: "Due Nov 5",
+      schedule: "",
     });
+    const changed = updateQuestInLists(added, "personal", "personal-1", { dueDate: "2026-11-09", schedule: "" });
 
-    expect(next.personal[0]).toMatchObject({ dueDate: "2026-11-05", schedule: "Due Nov 5" });
+    expect(added.personal[0]).toMatchObject({ dueDate: "2026-11-05", schedule: "" });
+    expect(changed.personal[0]).toMatchObject({ dueDate: "2026-11-09", schedule: "" });
+  });
+
+  it("removes a cleared Personal due date from the saved quest", () => {
+    const personal = makeQuest({ id: "personal-1", schedule: "", dueDate: "2026-11-05" });
+    const cleared = updateQuestInLists({ daily: [], personal: [personal] }, "personal", "personal-1", {
+      dueDate: undefined,
+      schedule: "",
+    });
+    const saved = JSON.parse(JSON.stringify(cleared.personal[0])) as Quest;
+
+    expect(saved.schedule).toBe("");
+    expect(saved).not.toHaveProperty("dueDate");
+  });
+
+  it("replaces an old saved label when a Personal quest is saved again", () => {
+    const personal = makeQuest({ id: "personal-1", schedule: "Due Oct 20", dueDate: undefined });
+    const next = updateQuestInLists({ daily: [], personal: [personal] }, "personal", "personal-1", { schedule: "" });
+
+    expect(next.personal[0].schedule).toBe("");
   });
 
   it("leaves quest lists unchanged when the ID is missing", () => {
