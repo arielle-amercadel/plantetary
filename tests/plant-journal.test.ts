@@ -4,11 +4,13 @@ import { describe, expect, it } from "vitest";
 import type { CompletionHistory, StoredQuestData } from "../src/app/quest-types";
 import {
   getNextPlantProgress,
+  getPlantCollectionStatus,
   getPlantFilterResults,
   getPlantJournalSpread,
   getPlantJournalSpreadCount,
   getPlantThresholdProgress,
   getQualifiedPlantIds,
+  getWaitingGiftsLabel,
   mergeDiscoveredPlantIds,
   mergePendingPlantGiftIds,
   migratePlantDiscoveries,
@@ -149,7 +151,7 @@ describe("Plant Journal catalog and discovery logic", () => {
     expect(withoutFern).not.toContain("fern");
     expect(unwrapped).toEqual(["fern"]);
     expect(unwrapStarterFern(unwrapped)).toBe(unwrapped);
-    expect(getNextPlantProgress(0, withoutFern)?.plant.id).toBe("daisy");
+    expect(getNextPlantProgress(0, withoutFern, [])?.plant.id).toBe("daisy");
   });
 
   it("hides every pending gift plant from collection filters until unwrapped", () => {
@@ -276,7 +278,7 @@ describe("Plant Journal filters and next discovery", () => {
   });
 
   it("reports the next undiscovered threshold and XP progress", () => {
-    const next = getNextPlantProgress(50, ["fern", "daisy"]);
+    const next = getNextPlantProgress(50, ["fern", "daisy"], []);
     expect(next).toMatchObject({
       plant: { id: "cactus", xpThreshold: 60 },
       xpRemaining: 10,
@@ -286,7 +288,61 @@ describe("Plant Journal filters and next discovery", () => {
       xpRemaining: 30,
       progressPercent: 50,
     });
-    expect(getNextPlantProgress(450, plantCatalog.map((plant) => plant.id))).toBeUndefined();
+    expect(getNextPlantProgress(450, plantCatalog.map((plant) => plant.id), [])).toBeUndefined();
+  });
+
+  it("does not name an earned gift that is still wrapped as the next plant", () => {
+    const discovered = ["fern"];
+    const pending = mergePendingPlantGiftIds(undefined, 30, discovered);
+    expect(pending).toEqual(["daisy"]);
+
+    expect(getNextPlantProgress(30, discovered, pending)).toMatchObject({
+      plant: { id: "cactus", xpThreshold: 60 },
+      xpRemaining: 30,
+    });
+
+    const unwrapped = unwrapPlantGift(discovered, pending, "daisy");
+    expect(getNextPlantProgress(30, unwrapped.discoveredPlantIds, unwrapped.pendingPlantGiftIds)?.plant.id).toBe("cactus");
+  });
+
+  describe("collection status", () => {
+    const allPlantIds = plantCatalog.map((plant) => plant.id);
+    const finalXp = plantCatalog[plantCatalog.length - 1].xpThreshold;
+    const allExcept = (...plantIds: string[]) => allPlantIds.filter((id) => !plantIds.includes(id));
+
+    it("reports a waiting gift, not a complete collection, when the final plant is still wrapped", () => {
+      const discovered = allExcept("calathea");
+
+      expect(getNextPlantProgress(finalXp, discovered, ["calathea"])).toBeUndefined();
+      expect(getPlantCollectionStatus(finalXp, discovered, ["calathea"])).toBe("gifts-waiting");
+    });
+
+    it("reports waiting gifts when several remaining plants are all wrapped", () => {
+      const pending = ["orchid", "calathea"];
+
+      expect(getPlantCollectionStatus(finalXp, allExcept(...pending), pending)).toBe("gifts-waiting");
+    });
+
+    it("reports a waiting gift when the only unopened plant is the starter Fern", () => {
+      expect(getPlantCollectionStatus(finalXp, allExcept("fern"), ["fern"])).toBe("gifts-waiting");
+    });
+
+    it("reports a complete collection only after the final gift is unwrapped", () => {
+      const unwrapped = unwrapPlantGift(allExcept("calathea"), ["calathea"], "calathea");
+
+      expect(unwrapped.pendingPlantGiftIds).toEqual([]);
+      expect(getPlantCollectionStatus(finalXp, unwrapped.discoveredPlantIds, unwrapped.pendingPlantGiftIds)).toBe("complete");
+    });
+
+    it("stays in progress while a plant is still locked, even if another gift is wrapped", () => {
+      expect(getPlantCollectionStatus(30, ["fern"], ["daisy"])).toBe("in-progress");
+      expect(getPlantCollectionStatus(0, [], [])).toBe("in-progress");
+    });
+
+    it("words the waiting gift label for one or several gifts", () => {
+      expect(getWaitingGiftsLabel(1)).toBe("A gift is waiting");
+      expect(getWaitingGiftsLabel(2)).toBe("2 gifts are waiting");
+    });
   });
 
   it("keeps all sixteen plants across two spreads in catalog order", () => {

@@ -8,7 +8,7 @@ import AppShell, { FigmaIcon } from "./app-shell";
 import QuestPanel from "./quest-panel";
 import { getHomeQuestListsForDisplay } from "./quest-logic";
 import { getLevelProgress, useQuestStore } from "./quest-store";
-import { getNextPlantProgress, plantCatalog } from "./plant-journal-logic";
+import { getNextPlantProgress, getPlantCollectionStatus, getWaitingGiftsLabel, plantCatalog } from "./plant-journal-logic";
 import {
   defaultProfilePreferences,
   getGardenBannerTitle,
@@ -21,11 +21,12 @@ export default function Home() {
   const [isAddingDailyQuest, setIsAddingDailyQuest] = useState(false);
   const [isAddingPersonalQuest, setIsAddingPersonalQuest] = useState(false);
   const [displayName, setDisplayName] = useState(defaultProfilePreferences.displayName);
-  const { questLists, todayKey, totalXp, completedTodayCounts, completedOverallCounts, discoveredPlantIds, currentStreak, dailyCompletedQuestIds, dailyScheduledQuestIds, recoverableDailyQuestIds, hasRestored, addQuest, toggleQuest, deleteQuest, recoverOrphanedDailyQuest } = useQuestStore();
+  const { questLists, todayKey, totalXp, completedTodayCounts, completedOverallCounts, discoveredPlantIds, pendingPlantGiftIds, currentStreak, dailyCompletedQuestIds, dailyScheduledQuestIds, recoverableDailyQuestIds, hasRestored, addQuest, toggleQuest, deleteQuest, recoverOrphanedDailyQuest } = useQuestStore();
   const { level, xpIntoLevel, xpForNextLevel, xpProgressPercent } = getLevelProgress(totalXp);
   const homeQuestLists = getHomeQuestListsForDisplay(questLists, todayKey);
   const discoveredPlants = plantCatalog.filter((plant) => discoveredPlantIds.includes(plant.id));
-  const nextDiscovery = hasRestored ? getNextPlantProgress(totalXp, discoveredPlantIds) : undefined;
+  const nextDiscovery = hasRestored ? getNextPlantProgress(totalXp, discoveredPlantIds, pendingPlantGiftIds) : undefined;
+  const collectionStatus = getPlantCollectionStatus(totalXp, discoveredPlantIds, pendingPlantGiftIds);
   const gardenTitle = getGardenBannerTitle(displayName);
 
   useEffect(() => {
@@ -212,7 +213,7 @@ export default function Home() {
               <section className="next-reward">
                 <h2>
                   <FigmaIcon src="/icon-sparkles.svg" size={16} />
-                  <span>{!hasRestored ? "Growing your garden" : nextDiscovery ? "So close to a new leaf" : "Your collection is complete"}</span>
+                  <span>{!hasRestored ? "Growing your garden" : nextDiscovery ? "So close to a new leaf" : collectionStatus === "gifts-waiting" ? "Your collection is almost complete" : "Your collection is complete"}</span>
                 </h2>
                 {!hasRestored ? (
                   <div className="reward-details"><p>Your saved discoveries are loading.</p></div>
@@ -241,7 +242,11 @@ export default function Home() {
                   </>
                 ) : (
                   <div className="reward-details">
-                    <p>All {plantCatalog.length} plants have been discovered.</p>
+                    <p>
+                      {collectionStatus === "gifts-waiting"
+                        ? `${getWaitingGiftsLabel(pendingPlantGiftIds.length)} to be unwrapped in your Plant Journal.`
+                        : `All ${plantCatalog.length} plants have been discovered.`}
+                    </p>
                   </div>
                 )}
               </section>
