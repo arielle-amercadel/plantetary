@@ -28,7 +28,7 @@ Your progress is currently saved only in your browser's `localStorage`, so it st
 
 ## Getting Started
 
-You'll need [Node.js](https://nodejs.org) 20.9 or newer and npm.
+You'll need [Node.js](https://nodejs.org) 20.19 or newer and npm.
 
 ```bash
 git clone https://github.com/arielle-amercadel/plantetary.git
