@@ -33,16 +33,12 @@ describe("quest completion toggles", () => {
       [dateKey]: { scheduledQuestIds: ["another-quest"], completedQuestIds: [] },
     };
     const totalXpBefore = getXpLedgerTotal(history);
-    let nextQuest = dailyQuest;
     let nextHistory = history;
 
     if (isDailyQuestScheduledForToggle(dailyQuest, history[dateKey], monday)) {
-      nextQuest = { ...dailyQuest, completed: !dailyQuest.completed };
       nextHistory = toggleDailyQuestCompletion(history, dateKey, dailyQuest.id, dailyQuest.difficulty);
     }
 
-    expect(nextQuest).toBe(dailyQuest);
-    expect(nextQuest.completed).toBe(false);
     expect(nextHistory).toBe(history);
     expect(nextHistory[dateKey].completedQuestIds).toEqual([]);
     expect(getXpLedgerTotal(nextHistory)).toBe(totalXpBefore);
@@ -53,14 +49,10 @@ describe("quest completion toggles", () => {
     const history: CompletionHistory = {
       [dateKey]: { scheduledQuestIds: [dailyQuest.id], completedQuestIds: [] },
     };
-    const nextQuest = isDailyQuestScheduledForToggle(dailyQuest, history[dateKey], monday)
-      ? { ...dailyQuest, completed: !dailyQuest.completed }
-      : dailyQuest;
     const nextHistory = isDailyQuestScheduledForToggle(dailyQuest, history[dateKey], monday)
       ? toggleDailyQuestCompletion(history, dateKey, dailyQuest.id, dailyQuest.difficulty)
       : history;
 
-    expect(nextQuest.completed).toBe(true);
     expect(nextHistory[dateKey].completedQuestIds).toEqual([dailyQuest.id]);
     expect(getXpLedgerTotal(nextHistory)).toBe(10);
   });
@@ -74,11 +66,9 @@ describe("quest completion toggles", () => {
     const history: CompletionHistory = {
       "2026-10-24": { scheduledQuestIds: [dailyQuest.id], completedQuestIds: [] },
     };
-    let nextQuest = dailyQuest;
     let nextHistory = history;
 
     if (isDailyQuestScheduledForToggle(dailyQuest, history["2026-10-24"], saturday)) {
-      nextQuest = { ...dailyQuest, completed: !dailyQuest.completed };
       nextHistory = toggleDailyQuestCompletion(
         history,
         "2026-10-24",
@@ -87,7 +77,6 @@ describe("quest completion toggles", () => {
       );
     }
 
-    expect(nextQuest.completed).toBe(false);
     expect(nextHistory).toBe(history);
     expect(history["2026-10-24"].scheduledQuestIds).toEqual([dailyQuest.id]);
     expect(history["2026-10-24"].completedQuestIds).toEqual([]);

@@ -159,8 +159,7 @@ export async function expectCompletedOverall(page: Page, count: number) {
 }
 
 export async function expectStreak(page: Page, days: number) {
-  // Matches "1 day" as well as today's "1 days", so correcting that wording will not break these tests.
-  await expect(statCard(page, "Current streak").locator(".stat-value")).toHaveText(new RegExp(`^${days} days?$`));
+  await expect(statCard(page, "Current streak").locator(".stat-value")).toHaveText(days === 1 ? "1 day" : `${days} days`);
 }
 
 export function historyCard(page: Page, title: string) {

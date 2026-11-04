@@ -5,13 +5,18 @@ import {
   findCategoryMatch,
   formatLocalDateLabel,
   formatWeekdaySchedule,
+  getCompletedOverallCounts,
+  getCompletionHistoryView,
   getDailyQuestScheduleLabel,
+  getDailyQuestsForDisplay,
   getCustomCategoryError,
   getLevelProgress,
   getLocalDateKey,
+  getQuestListProgress,
   getQuestXp,
   getSnapshotStatus,
   getStreakValues,
+  getXpLedgerTotal,
   isQuestPastDue,
   isQuestScheduledOnDate,
 } from "../src/app/quest-logic";
@@ -169,6 +174,133 @@ describe("completion snapshots and streaks", () => {
     expect(afterRollover["2026-10-17"]).toEqual(history["2026-10-17"]);
     expect(repeatedUpdate).toBe(afterRollover);
     expect(repeatedUpdate["2026-10-17"].xpAwardedByQuestId).toEqual({ "every-day": 10 });
+  });
+
+  describe("filling days the app was not opened", () => {
+    const mondayOnly = makeQuest({ id: "mon", schedule: "Mon", repeatSchedule: "Selected days", selectedDays: ["Mon"] });
+    const completedMonday: CompletionHistory = {
+      "2026-10-19": { ...snapshot(["mon"], ["mon"]), xpAwardedByQuestId: { mon: 5 } },
+    };
+
+    it("records every day since the latest record, with nothing scheduled on the empty ones", () => {
+      const next = ensureCompletionSnapshotForDate(completedMonday, [mondayOnly], "2026-10-26");
+
+      expect(Object.keys(next).sort()).toEqual([
+        "2026-10-19", "2026-10-20", "2026-10-21", "2026-10-22", "2026-10-23", "2026-10-24", "2026-10-25", "2026-10-26",
+      ]);
+      expect(next["2026-10-22"]).toEqual(snapshot([]));
+      expect(next["2026-10-26"]).toEqual(snapshot(["mon"]));
+    });
+
+    it("preserves the streak across days with nothing scheduled, without increasing it", () => {
+      const next = ensureCompletionSnapshotForDate(completedMonday, [mondayOnly], "2026-10-26");
+
+      expect(getStreakValues(next, "2026-10-26")).toEqual({ currentStreak: 1, longestStreak: 1 });
+    });
+
+    it("counts successful scheduled days rather than calendar days", () => {
+      const nextMonday = ensureCompletionSnapshotForDate(completedMonday, [mondayOnly], "2026-10-26");
+      const completedAgain = { ...nextMonday, "2026-10-26": snapshot(["mon"], ["mon"]) };
+
+      expect(getStreakValues(completedAgain, "2026-10-26")).toEqual({ currentStreak: 2, longestStreak: 2 });
+    });
+
+    it("breaks the streak after a scheduled day that passed unopened, but not while that day is today", () => {
+      const onMissedDay = ensureCompletionSnapshotForDate(completedMonday, [mondayOnly], "2026-10-26");
+      const dayAfterMissedDay = ensureCompletionSnapshotForDate(completedMonday, [mondayOnly], "2026-10-27");
+
+      expect(getStreakValues(onMissedDay, "2026-10-26").currentStreak).toBe(1);
+      expect(dayAfterMissedDay["2026-10-26"]).toEqual(snapshot(["mon"]));
+      expect(getStreakValues(dayAfterMissedDay, "2026-10-27").currentStreak).toBe(0);
+      expect(getStreakValues(dayAfterMissedDay, "2026-10-27").longestStreak).toBe(1);
+    });
+
+    it("never overwrites existing records or changes XP, counts, or history", () => {
+      const next = ensureCompletionSnapshotForDate(completedMonday, [makeQuest({ id: "new-quest" })], "2026-10-26");
+
+      expect(next["2026-10-19"]).toBe(completedMonday["2026-10-19"]);
+      expect(getXpLedgerTotal(next)).toBe(5);
+      expect(getCompletedOverallCounts(next, undefined, [], 0).total).toBe(1);
+      expect(getCompletionHistoryView(next, undefined, undefined, [], 0, [mondayOnly]).sections.map((section) => section.dateKey))
+        .toEqual(["2026-10-19"]);
+      expect(completedMonday).toEqual({
+        "2026-10-19": { ...snapshot(["mon"], ["mon"]), xpAwardedByQuestId: { mon: 5 } },
+      });
+    });
+
+    it("leaves gaps before the latest record alone, because their schedules are unknown", () => {
+      const history: CompletionHistory = {
+        "2026-10-05": snapshot(["mon"], ["mon"]),
+        "2026-10-19": snapshot(["mon"], ["mon"]),
+      };
+      const next = ensureCompletionSnapshotForDate(history, [mondayOnly], "2026-10-20");
+
+      expect(Object.keys(next).sort()).toEqual(["2026-10-05", "2026-10-19", "2026-10-20"]);
+    });
+
+    it("fills nothing for a brand-new history or a date earlier than the latest record", () => {
+      expect(Object.keys(ensureCompletionSnapshotForDate({}, [mondayOnly], "2026-10-26"))).toEqual(["2026-10-26"]);
+      expect(Object.keys(ensureCompletionSnapshotForDate(completedMonday, [mondayOnly], "2026-10-10")).sort())
+        .toEqual(["2026-10-10", "2026-10-19"]);
+    });
+
+    it("returns the same history when today is already recorded", () => {
+      const history = { ...completedMonday, "2026-10-26": snapshot(["mon"]) };
+
+      expect(ensureCompletionSnapshotForDate(history, [mondayOnly], "2026-10-26")).toBe(history);
+    });
+
+    it("does not skip days across month ends, year ends, or clock changes", () => {
+      const next = ensureCompletionSnapshotForDate({ "2026-10-30": snapshot([]) }, [mondayOnly], "2027-01-03");
+      const keys = Object.keys(next).sort();
+
+      expect(keys).toHaveLength(66);
+      expect(keys).toContain("2026-11-01");
+      expect(keys).toContain("2026-12-31");
+      expect(keys).toContain("2027-01-01");
+    });
+  });
+
+  describe("Daily Quest checkmarks and progress", () => {
+    const today = makeQuest({ id: "today" });
+    const otherDay = makeQuest({ id: "other-day", schedule: "Tue", repeatSchedule: "Selected days", selectedDays: ["Tue"] });
+
+    it("uses today's completions and ignores the saved flag in both directions", () => {
+      const quests = [
+        makeQuest({ id: "done", completed: false }),
+        makeQuest({ id: "not-done", completed: true }),
+        { ...otherDay, completed: true },
+      ];
+      const displayed = getDailyQuestsForDisplay(quests, ["done"]);
+
+      expect(displayed.map((quest) => quest.completed)).toEqual([true, false, false]);
+      expect(quests[1].completed).toBe(true);
+    });
+
+    it("keeps a quest checked when it was completed today and then rescheduled away", () => {
+      const rescheduledAway = { ...otherDay, id: "moved" };
+
+      expect(getDailyQuestsForDisplay([rescheduledAway], ["moved"])[0].completed).toBe(true);
+    });
+
+    it("counts only today's scheduled Daily Quests", () => {
+      const displayed = getDailyQuestsForDisplay([today, otherDay, makeQuest({ id: "also-today" })], ["today"]);
+
+      expect(getQuestListProgress(displayed, "daily", ["today", "also-today"])).toEqual({ completed: 1, total: 2 });
+      expect(getQuestListProgress(displayed, "daily", [])).toEqual({ completed: 0, total: 0 });
+    });
+
+    it("counts a quest completed today and rescheduled away, since today's record still includes it", () => {
+      const displayed = getDailyQuestsForDisplay([{ ...otherDay, id: "moved" }], ["moved"]);
+
+      expect(getQuestListProgress(displayed, "daily", ["moved"])).toEqual({ completed: 1, total: 1 });
+    });
+
+    it("counts every Personal Quest using its own one-time completion", () => {
+      const quests = [makeQuest({ id: "a", completed: true }), makeQuest({ id: "b" })];
+
+      expect(getQuestListProgress(quests, "personal", [])).toEqual({ completed: 1, total: 2 });
+    });
   });
 
   it("returns zero streaks for empty history", () => {

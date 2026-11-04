@@ -103,10 +103,23 @@ export function ensureCompletionSnapshotForDate(
   dateKey: string,
 ): CompletionHistory {
   if (history[dateKey]) return history;
-  return {
-    ...history,
-    [dateKey]: createSnapshot(dailyQuests, dateFromKey(dateKey)),
-  };
+  const nextHistory: CompletionHistory = { ...history };
+
+  // Days the app was not opened still need a record, or nothing can tell a day with no scheduled
+  // quests from a missed one. The current list is accurate for those days because every schedule
+  // change records its own day first, so no edit can fall after the latest recorded day. Only days
+  // after that one are filled: earlier gaps have no such guarantee, and existing days never change.
+  const latestDateKey = Object.keys(history).filter(isCompletionDateKey).sort().at(-1);
+  if (latestDateKey && latestDateKey < dateKey) {
+    let gapDate = addCalendarDays(dateFromKey(latestDateKey), 1);
+    while (getLocalDateKey(gapDate) < dateKey) {
+      nextHistory[getLocalDateKey(gapDate)] = createSnapshot(dailyQuests, gapDate);
+      gapDate = addCalendarDays(gapDate, 1);
+    }
+  }
+
+  nextHistory[dateKey] = createSnapshot(dailyQuests, dateFromKey(dateKey));
+  return nextHistory;
 }
 
 export function isDailyQuestScheduledForToggle(
@@ -171,6 +184,23 @@ export function getHomeQuestListsForDisplay(questLists: QuestLists, todayKey: st
       : [],
     personal: questLists.personal,
   };
+}
+
+/** A Daily Quest's checkmark means "done today", so today's snapshot decides it, not the saved flag. */
+export function getDailyQuestsForDisplay(quests: Quest[], completedQuestIds: string[]): Quest[] {
+  return quests.map((quest) => ({ ...quest, completed: completedQuestIds.includes(quest.id) }));
+}
+
+/** Daily progress counts only today's scheduled quests, so a quest for another day is not unfinished work. */
+export function getQuestListProgress(
+  quests: Quest[],
+  list: QuestListKey,
+  dailyScheduledQuestIds: string[],
+): { completed: number; total: number } {
+  const counted = list === "daily"
+    ? quests.filter((quest) => dailyScheduledQuestIds.includes(quest.id))
+    : quests;
+  return { completed: counted.filter((quest) => quest.completed).length, total: counted.length };
 }
 
 export function findQuestForEditing(

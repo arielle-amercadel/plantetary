@@ -6,7 +6,7 @@ import Link from "next/link";
 import { useEffect, useState, type CSSProperties } from "react";
 import AppShell, { FigmaIcon } from "./app-shell";
 import QuestPanel from "./quest-panel";
-import { getHomeQuestListsForDisplay } from "./quest-logic";
+import { getDailyQuestsForDisplay, getHomeQuestListsForDisplay } from "./quest-logic";
 import { getLevelProgress, useQuestStore } from "./quest-store";
 import { getNextPlantProgress, getPlantCollectionStatus, getWaitingGiftsLabel, plantCatalog } from "./plant-journal-logic";
 import {
@@ -21,7 +21,7 @@ export default function Home() {
   const [isAddingDailyQuest, setIsAddingDailyQuest] = useState(false);
   const [isAddingPersonalQuest, setIsAddingPersonalQuest] = useState(false);
   const [displayName, setDisplayName] = useState(defaultProfilePreferences.displayName);
-  const { questLists, todayKey, totalXp, completedTodayCounts, completedOverallCounts, discoveredPlantIds, pendingPlantGiftIds, currentStreak, dailyCompletedQuestIds, dailyScheduledQuestIds, recoverableDailyQuestIds, hasRestored, addQuest, toggleQuest, deleteQuest, recoverOrphanedDailyQuest } = useQuestStore();
+  const { questLists, todayKey, totalXp, completedTodayCounts, completedOverallCounts, discoveredPlantIds, pendingPlantGiftIds, currentStreak, dailyCompletedQuestIds, recoverableDailyQuestIds, hasRestored, addQuest, toggleQuest, deleteQuest, recoverOrphanedDailyQuest } = useQuestStore();
   const { level, xpIntoLevel, xpForNextLevel, xpProgressPercent } = getLevelProgress(totalXp);
   const homeQuestLists = getHomeQuestListsForDisplay(questLists, todayKey);
   const discoveredPlants = plantCatalog.filter((plant) => discoveredPlantIds.includes(plant.id));
@@ -115,7 +115,7 @@ export default function Home() {
               <span className="stat-note">{completedOverallCounts.daily} daily · {completedOverallCounts.personal} personal</span>
             </div>
             <div className="stat-card">
-              <strong className="stat-value">{currentStreak} days</strong>
+              <strong className="stat-value">{currentStreak} {currentStreak === 1 ? "day" : "days"}</strong>
               <span className="stat-title">Current streak</span>
               <span className="stat-note">Little steps add up</span>
             </div>
@@ -156,9 +156,7 @@ export default function Home() {
                 addLabel="Add habit"
                 noteIcon="/icon-refresh.svg"
                 note="A fresh start every day at midnight. Your history stays with you."
-                quests={homeQuestLists.daily.map((quest) => dailyScheduledQuestIds.includes(quest.id)
-                  ? { ...quest, completed: dailyCompletedQuestIds.includes(quest.id) }
-                  : quest)}
+                quests={getDailyQuestsForDisplay(homeQuestLists.daily, dailyCompletedQuestIds)}
                 isAdding={isAddingDailyQuest}
                 onAddingChange={setIsAddingDailyQuest}
                 onToggleQuest={(questId) => toggleQuest("daily", questId)}

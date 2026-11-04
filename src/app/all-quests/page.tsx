@@ -2,25 +2,20 @@
 
 import AppShell from "../app-shell";
 import QuestPanel from "../quest-panel";
-import { getAllQuestListsForDisplay } from "../quest-logic";
+import { getAllQuestListsForDisplay, getDailyQuestsForDisplay } from "../quest-logic";
 import { useQuestStore } from "../quest-store";
 
 export default function AllQuestsPage() {
   const {
     questLists,
     todayKey,
-    dailyScheduledQuestIds,
     dailyCompletedQuestIds,
     addQuest,
     toggleQuest,
     deleteQuest,
   } = useQuestStore();
   const sortedQuestLists = getAllQuestListsForDisplay(questLists, todayKey);
-  const dailyQuests = sortedQuestLists.daily.map((quest) =>
-    dailyScheduledQuestIds.includes(quest.id)
-      ? { ...quest, completed: dailyCompletedQuestIds.includes(quest.id) }
-      : quest,
-  );
+  const dailyQuests = getDailyQuestsForDisplay(sortedQuestLists.daily, dailyCompletedQuestIds);
 
   return (
     <AppShell page="all-quests">
