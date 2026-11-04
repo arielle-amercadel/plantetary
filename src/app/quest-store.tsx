@@ -36,6 +36,7 @@ import {
   recordPersonalCompletionDate,
   recordCompletionDetails,
   removeCompletionDetails,
+  removeInvalidPersonalDueDates,
   recordPersonalXpAward,
   removeQuestFromHistoryAtDate,
   recoverOrphanedDailyQuestFromHistory,
@@ -185,7 +186,7 @@ const initialStoredQuestData = migratePlantDiscoveries(migrateStoredData({
   starterPlantGiftPending: true,
 }));
 
-function isQuest(value: unknown): value is Quest {
+function hasValidQuestFieldsExceptDueDate(value: unknown): value is Quest {
   if (typeof value !== "object" || value === null) return false;
 
   const quest = value as Record<string, unknown>;
@@ -200,9 +201,14 @@ function isQuest(value: unknown): value is Quest {
       quest.repeatSchedule === "Every day" || quest.repeatSchedule === "Selected days") &&
     (quest.selectedDays === undefined ||
       (Array.isArray(quest.selectedDays) && quest.selectedDays.every((day) => weekdays.includes(day)))) &&
-    (quest.dueDate === undefined || typeof quest.dueDate === "string") &&
     (quest.notes === undefined || typeof quest.notes === "string")
   );
+}
+
+function isDailyQuest(value: unknown): value is Quest {
+  if (!hasValidQuestFieldsExceptDueDate(value)) return false;
+  const dueDate: unknown = value.dueDate;
+  return dueDate === undefined || typeof dueDate === "string";
 }
 
 function isStoredQuestData(value: unknown): value is StoredQuestData {
@@ -215,9 +221,10 @@ function isStoredQuestData(value: unknown): value is StoredQuestData {
   return Boolean(
     questLists &&
       Array.isArray(questLists.daily) &&
-      questLists.daily.every(isQuest) &&
+      questLists.daily.every(isDailyQuest) &&
       Array.isArray(questLists.personal) &&
-      questLists.personal.every(isQuest) &&
+      // A bad Personal due date is removed on load rather than rejecting the whole save.
+      questLists.personal.every(hasValidQuestFieldsExceptDueDate) &&
       categoryLists &&
       Array.isArray(categoryLists.daily) &&
       categoryLists.daily.every((category) => typeof category === "string") &&
@@ -315,7 +322,9 @@ export function QuestProvider({ children }: { children: ReactNode }) {
               isValidDeletedLegacyPersonalCompletionCount(parsedData.deletedLegacyPersonalCompletionCount)
               ? parsedData.deletedLegacyPersonalCompletionCount
               : undefined;
+            const validQuestLists = removeInvalidPersonalDueDates(parsedData.questLists);
             const optionalFieldsUnchanged =
+              validQuestLists === parsedData.questLists &&
               normalizedCompletionHistory === parsedData.completionHistory &&
               validPersonalCompletionDates === parsedData.personalCompletedOnByQuestId &&
               validDeletedLegacyCount === parsedData.deletedLegacyPersonalCompletionCount;
@@ -323,6 +332,7 @@ export function QuestProvider({ children }: { children: ReactNode }) {
               ? parsedData
               : {
                 ...parsedData,
+                questLists: validQuestLists,
                 completionHistory: validHistory ? normalizedCompletionHistory : undefined,
                 personalCompletedOnByQuestId: validPersonalCompletionDates,
                 deletedLegacyPersonalCompletionCount: validDeletedLegacyCount,

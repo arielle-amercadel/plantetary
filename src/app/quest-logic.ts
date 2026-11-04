@@ -203,6 +203,22 @@ export function getQuestListProgress(
   return { completed: counted.filter((quest) => quest.completed).length, total: counted.length };
 }
 
+/**
+ * Removes only the due dates that are not real calendar dates, keeping the rest of each Personal
+ * Quest. Returns the same object when nothing changes, so a clean save is not treated as corrected.
+ */
+export function removeInvalidPersonalDueDates(questLists: QuestLists): QuestLists {
+  let changed = false;
+  const personal = questLists.personal.map((quest) => {
+    if (quest.dueDate === undefined || isCompletionDateKey(quest.dueDate)) return quest;
+    changed = true;
+    const correctedQuest = { ...quest };
+    delete correctedQuest.dueDate;
+    return correctedQuest;
+  });
+  return changed ? { ...questLists, personal } : questLists;
+}
+
 export function findQuestForEditing(
   questLists: QuestLists,
   questId: string,
