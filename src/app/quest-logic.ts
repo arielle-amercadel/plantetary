@@ -945,7 +945,12 @@ export function migrateStoredData(data: StoredQuestData): StoredQuestData {
     ? originalLegacyBonus
     : 0;
   const knownLedgerXp = getXpLedgerTotal(completionHistory, personalXpByQuestId);
-  const legacyXpBonus = Math.max(validLegacyBonus, getLegacyCompletedQuestXp(data) - knownLedgerXp, 0);
+  // Only saves from before the XP ledger (schema < 2) need their old XP converted. On newer
+  // saves the ledger is authoritative: a quest's current difficulty says nothing about what it
+  // earned, so comparing the two would turn a difficulty edit into permanent bonus XP.
+  const legacyXpBonus = currentVersion < 2
+    ? Math.max(validLegacyBonus, getLegacyCompletedQuestXp(data) - knownLedgerXp, 0)
+    : validLegacyBonus;
 
   const historyUnchanged = !historyChanged && (
     data.completionHistory === undefined
