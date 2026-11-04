@@ -152,41 +152,35 @@ describe("completion history", () => {
     expect(view.sections[0].completionCount).toBe(2);
   });
 
-  it("shows the confirmed title only for the October 17 reading completion without inventing details", () => {
+  it("treats the reading quest on October 17 like any other quest and date", () => {
     const history: CompletionHistory = {
-      "2026-10-17": {
-        scheduledQuestIds: ["reading", "other"],
-        completedQuestIds: ["reading", "other"],
-        xpAwardedByQuestId: { other: 5 },
-      },
+      "2026-10-17": { scheduledQuestIds: ["reading"], completedQuestIds: ["reading"] },
       "2026-10-18": { scheduledQuestIds: ["reading"], completedQuestIds: ["reading"] },
     };
-    const view = getCompletionHistoryView(
-      history,
-      undefined,
-      undefined,
-      [],
-      0,
-      [quest({ id: "reading", title: "A different current title", category: "Current category", difficulty: "Hard" })],
-    );
+    const currentQuest = quest({ id: "reading", title: "A different current title", category: "Current category", difficulty: "Hard" });
+    const view = getCompletionHistoryView(history, undefined, undefined, [], 0, [currentQuest]);
     const october17Reading = view.sections.find((section) => section.dateKey === "2026-10-17")?.daily[0];
     const october18Reading = view.sections.find((section) => section.dateKey === "2026-10-18")?.daily[0];
 
-    expect(october17Reading).toEqual({ questId: "reading", questType: "daily", displayTitle: "reading" });
-    expect(getCompletionHistoryCardText(october17Reading!)).toEqual({
-      title: "reading",
-      description: "Original quest details were not saved for this older completion.",
-    });
-    expect(october17Reading?.xp).toBeUndefined();
-    expect(october18Reading).toMatchObject({
+    expect(october17Reading).toEqual({
       questId: "reading",
       questType: "daily",
-      details: { title: "A different current title", category: "Current category", difficulty: "Hard" },
+      details: { title: "A different current title", category: "Current category", difficulty: "Hard", questType: "daily" },
       detailsSource: "current",
     });
-    expect(getCompletionHistoryCardText(october18Reading!)).toEqual({
+    expect(october17Reading).toEqual(october18Reading);
+    expect(getCompletionHistoryCardText(october17Reading!)).toEqual({
       title: "A different current title",
       description: "Current quest details — historical details unavailable · Current category · Hard",
+    });
+
+    const deletedQuestView = getCompletionHistoryView(history, undefined, undefined, [], 0, []);
+    const deletedOctober17Reading = deletedQuestView.sections.find((section) => section.dateKey === "2026-10-17")?.daily[0];
+
+    expect(deletedOctober17Reading).toEqual({ questId: "reading", questType: "daily" });
+    expect(getCompletionHistoryCardText(deletedOctober17Reading!)).toEqual({
+      title: "Daily Quest",
+      description: "Original quest details were not saved for this older completion.",
     });
   });
 

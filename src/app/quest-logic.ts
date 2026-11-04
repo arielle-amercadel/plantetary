@@ -579,10 +579,9 @@ export function getCompletionHistoryView(
         const savedDetails = snapshot.completionDetails?.daily?.[questId];
         const currentQuest = currentDailyQuests?.find((quest) => quest.id === questId);
         const hasSavedDetails = isCompletionQuestDetails(savedDetails, "daily");
-        const confirmedReadingCompletion = dateKey === "2026-10-17" && questId === "reading";
         const details = hasSavedDetails
           ? savedDetails
-          : currentQuest && !confirmedReadingCompletion
+          : currentQuest
             ? {
               title: currentQuest.title,
               category: currentQuest.category,
@@ -595,8 +594,7 @@ export function getCompletionHistoryView(
           questId,
           questType: "daily",
           ...(details ? { details } : {}),
-          ...(!hasSavedDetails && currentQuest && !confirmedReadingCompletion ? { detailsSource: "current" as const } : {}),
-          ...(confirmedReadingCompletion ? { displayTitle: "reading" } : {}),
+          ...(!hasSavedDetails && currentQuest ? { detailsSource: "current" as const } : {}),
           ...(typeof xp === "number" && Number.isFinite(xp) && xp > 0 ? { xp } : {}),
         });
       }
@@ -672,7 +670,7 @@ export function getCompletionHistoryCardText(item: CompletionHistoryItem): { tit
   }
 
   return {
-    title: title || item.displayTitle || `${item.questType === "daily" ? "Daily" : "Personal"} Quest`,
+    title: title || `${item.questType === "daily" ? "Daily" : "Personal"} Quest`,
     description: !item.details
       ? "Original quest details were not saved for this older completion."
       : [availableDetails.join(" · "), missingTitleNote].filter(Boolean).join(" · ") ||
