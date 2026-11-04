@@ -20,6 +20,28 @@ You can start editing the page by modifying `app/page.tsx`. The page auto-update
 
 This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
 
+## Browser Tests
+
+End-to-end tests use [Playwright](https://playwright.dev) with Chromium and live in `e2e/`. Install the browser once:
+
+```bash
+npx playwright install chromium
+```
+
+Then run the tests. Playwright starts its own dev server on port 3100:
+
+```bash
+npm run test:e2e
+```
+
+Next.js allows one dev server per project. If Plantetary's dev server is already running, either stop it first or point the tests at its port:
+
+```bash
+E2E_PORT=3002 npm run test:e2e
+```
+
+Unit tests run separately with `npm test`.
+
 ## Learn More
 
 To learn more about Next.js, take a look at the following resources:
