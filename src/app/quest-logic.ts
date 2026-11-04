@@ -103,10 +103,23 @@ export function ensureCompletionSnapshotForDate(
   dateKey: string,
 ): CompletionHistory {
   if (history[dateKey]) return history;
-  return {
-    ...history,
-    [dateKey]: createSnapshot(dailyQuests, dateFromKey(dateKey)),
-  };
+  const nextHistory: CompletionHistory = { ...history };
+
+  // Days the app was not opened still need a record, or nothing can tell a day with no scheduled
+  // quests from a missed one. The current list is accurate for those days because every schedule
+  // change records its own day first, so no edit can fall after the latest recorded day. Only days
+  // after that one are filled: earlier gaps have no such guarantee, and existing days never change.
+  const latestDateKey = Object.keys(history).filter(isCompletionDateKey).sort().at(-1);
+  if (latestDateKey && latestDateKey < dateKey) {
+    let gapDate = addCalendarDays(dateFromKey(latestDateKey), 1);
+    while (getLocalDateKey(gapDate) < dateKey) {
+      nextHistory[getLocalDateKey(gapDate)] = createSnapshot(dailyQuests, gapDate);
+      gapDate = addCalendarDays(gapDate, 1);
+    }
+  }
+
+  nextHistory[dateKey] = createSnapshot(dailyQuests, dateFromKey(dateKey));
+  return nextHistory;
 }
 
 export function isDailyQuestScheduledForToggle(
@@ -171,6 +184,23 @@ export function getHomeQuestListsForDisplay(questLists: QuestLists, todayKey: st
       : [],
     personal: questLists.personal,
   };
+}
+
+/** A Daily Quest's checkmark means "done today", so today's snapshot decides it, not the saved flag. */
+export function getDailyQuestsForDisplay(quests: Quest[], completedQuestIds: string[]): Quest[] {
+  return quests.map((quest) => ({ ...quest, completed: completedQuestIds.includes(quest.id) }));
+}
+
+/** Daily progress counts only today's scheduled quests, so a quest for another day is not unfinished work. */
+export function getQuestListProgress(
+  quests: Quest[],
+  list: QuestListKey,
+  dailyScheduledQuestIds: string[],
+): { completed: number; total: number } {
+  const counted = list === "daily"
+    ? quests.filter((quest) => dailyScheduledQuestIds.includes(quest.id))
+    : quests;
+  return { completed: counted.filter((quest) => quest.completed).length, total: counted.length };
 }
 
 export function findQuestForEditing(
@@ -579,10 +609,9 @@ export function getCompletionHistoryView(
         const savedDetails = snapshot.completionDetails?.daily?.[questId];
         const currentQuest = currentDailyQuests?.find((quest) => quest.id === questId);
         const hasSavedDetails = isCompletionQuestDetails(savedDetails, "daily");
-        const confirmedReadingCompletion = dateKey === "2026-10-17" && questId === "reading";
         const details = hasSavedDetails
           ? savedDetails
-          : currentQuest && !confirmedReadingCompletion
+          : currentQuest
             ? {
               title: currentQuest.title,
               category: currentQuest.category,
@@ -595,8 +624,7 @@ export function getCompletionHistoryView(
           questId,
           questType: "daily",
           ...(details ? { details } : {}),
-          ...(!hasSavedDetails && currentQuest && !confirmedReadingCompletion ? { detailsSource: "current" as const } : {}),
-          ...(confirmedReadingCompletion ? { displayTitle: "reading" } : {}),
+          ...(!hasSavedDetails && currentQuest ? { detailsSource: "current" as const } : {}),
           ...(typeof xp === "number" && Number.isFinite(xp) && xp > 0 ? { xp } : {}),
         });
       }
@@ -672,7 +700,7 @@ export function getCompletionHistoryCardText(item: CompletionHistoryItem): { tit
   }
 
   return {
-    title: title || item.displayTitle || `${item.questType === "daily" ? "Daily" : "Personal"} Quest`,
+    title: title || `${item.questType === "daily" ? "Daily" : "Personal"} Quest`,
     description: !item.details
       ? "Original quest details were not saved for this older completion."
       : [availableDetails.join(" · "), missingTitleNote].filter(Boolean).join(" · ") ||
@@ -945,7 +973,12 @@ export function migrateStoredData(data: StoredQuestData): StoredQuestData {
     ? originalLegacyBonus
     : 0;
   const knownLedgerXp = getXpLedgerTotal(completionHistory, personalXpByQuestId);
-  const legacyXpBonus = Math.max(validLegacyBonus, getLegacyCompletedQuestXp(data) - knownLedgerXp, 0);
+  // Only saves from before the XP ledger (schema < 2) need their old XP converted. On newer
+  // saves the ledger is authoritative: a quest's current difficulty says nothing about what it
+  // earned, so comparing the two would turn a difficulty edit into permanent bonus XP.
+  const legacyXpBonus = currentVersion < 2
+    ? Math.max(validLegacyBonus, getLegacyCompletedQuestXp(data) - knownLedgerXp, 0)
+    : validLegacyBonus;
 
   const historyUnchanged = !historyChanged && (
     data.completionHistory === undefined

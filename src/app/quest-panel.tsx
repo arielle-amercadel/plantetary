@@ -4,7 +4,7 @@ import Image from "next/image";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import CategoryPicker, { CUSTOM_CATEGORY_VALUE } from "./category-picker";
-import { getDailyQuestScheduleLabel, isQuestPastDue, isQuestScheduledOnDate } from "./quest-logic";
+import { getDailyQuestScheduleLabel, getQuestListProgress, isQuestPastDue, isQuestScheduledOnDate } from "./quest-logic";
 import { getCustomCategoryError, getQuestXp, useQuestStore, type Difficulty, type Quest } from "./quest-store";
 
 type QuestPanelProps = {
@@ -46,7 +46,7 @@ export default function QuestPanel({
   const [newDifficulty, setNewDifficulty] = useState<Difficulty>("Easy");
   const [categorySelection, setCategorySelection] = useState(defaultCategory);
   const [customCategoryName, setCustomCategoryName] = useState("");
-  const completedCount = quests.filter((quest) => quest.completed).length;
+  const progress = getQuestListProgress(quests, list, dailyScheduledQuestIds);
   const customCategoryError = categorySelection === CUSTOM_CATEGORY_VALUE
     ? getCustomCategoryError(categoryLists[list], customCategoryName)
     : "";
@@ -84,7 +84,7 @@ export default function QuestPanel({
             <span>{title}</span>
           </h2>
           <span className="quest-count">
-            {completedCount} / {quests.length} done
+            {progress.completed} / {progress.total} done
           </span>
         </div>
         {showAddButton && (

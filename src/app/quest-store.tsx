@@ -556,9 +556,6 @@ export function QuestProvider({ children }: { children: ReactNode }) {
       setPendingPlantGiftIds((current) =>
         mergePendingPlantGiftIds(current, nextTotalXp, discoveredPlantIds),
       );
-      updateQuestList(list, (quests) => quests.map((item) =>
-        item.id === questId ? { ...item, completed: !item.completed } : item,
-      ));
       return;
     }
 

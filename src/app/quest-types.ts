@@ -54,7 +54,6 @@ export type CompletionHistoryItem = {
   questType: CompletionQuestType;
   details?: CompletionQuestDetails;
   detailsSource?: "current";
-  displayTitle?: string;
   xp?: number;
 };
 export type CompletionHistorySection = {

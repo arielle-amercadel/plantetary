@@ -119,13 +119,28 @@ export function getPlantJournalSpread(
   };
 }
 
-export function getNextPlantProgress(totalXp: number, discoveredPlantIds: string[], pendingPlantGiftIds: string[] = []) {
+export function getNextPlantProgress(totalXp: number, discoveredPlantIds: string[], pendingPlantGiftIds: string[]) {
   const discovered = new Set(discoveredPlantIds);
   const pending = new Set(pendingPlantGiftIds);
   const plant = plantCatalog.find((item) => item.id !== "fern" && !discovered.has(item.id) && !pending.has(item.id));
   if (!plant) return undefined;
 
   return { plant, ...getPlantThresholdProgress(plant, totalXp) };
+}
+
+export type PlantCollectionStatus = "in-progress" | "gifts-waiting" | "complete";
+
+export function getPlantCollectionStatus(
+  totalXp: number,
+  discoveredPlantIds: string[],
+  pendingPlantGiftIds: string[],
+): PlantCollectionStatus {
+  if (getNextPlantProgress(totalXp, discoveredPlantIds, pendingPlantGiftIds)) return "in-progress";
+  return pendingPlantGiftIds.length > 0 ? "gifts-waiting" : "complete";
+}
+
+export function getWaitingGiftsLabel(giftCount: number): string {
+  return giftCount === 1 ? "A gift is waiting" : `${giftCount} gifts are waiting`;
 }
 
 export function getPlantThresholdProgress(plant: Plant, totalXp: number) {

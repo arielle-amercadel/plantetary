@@ -1,6 +1,22 @@
 import { describe, expect, it } from "vitest";
-import { getQuestXp, getXpLedgerTotal, migrateStoredData } from "../src/app/quest-logic";
-import type { CompletionSnapshot, Quest, StoredQuestData } from "../src/app/quest-types";
+import { migratePlantDiscoveries } from "../src/app/plant-journal-logic";
+import {
+  getQuestXp,
+  getXpLedgerTotal,
+  migrateStoredData,
+  recordPersonalXpAward,
+  reversePersonalXpAward,
+  toggleDailyQuestCompletion,
+  updateQuestInLists,
+} from "../src/app/quest-logic";
+import type {
+  CompletionSnapshot,
+  Difficulty,
+  Quest,
+  QuestListKey,
+  QuestLists,
+  StoredQuestData,
+} from "../src/app/quest-types";
 
 function quest(id: string, difficulty: Quest["difficulty"], completed: boolean): Quest {
   return {
@@ -21,6 +37,10 @@ function oldXpTotal(data: StoredQuestData): number {
   return [...data.questLists.daily, ...data.questLists.personal]
     .filter((item) => item.completed)
     .reduce((total, item) => total + getQuestXp(item.difficulty), 0);
+}
+
+function updateQuestListCompletion(lists: QuestLists, list: QuestListKey, completed: boolean): QuestLists {
+  return { ...lists, [list]: lists[list].map((item) => ({ ...item, completed })) };
 }
 
 function makeLegacyData(): StoredQuestData {
@@ -153,5 +173,139 @@ describe("stored XP ledger migration", () => {
 
     expect(migrated.personalXpByQuestId).toEqual({ personal: 20 });
     expect(migrated.completionHistory?.["2026-10-18"]?.xpAwardedByQuestId).toEqual({ daily: 10 });
+  });
+});
+
+describe("XP after editing a completed quest and reloading", () => {
+  const dateKey = "2026-10-19";
+
+  function currentSave(overrides: Partial<StoredQuestData>): StoredQuestData {
+    return {
+      schemaVersion: 5,
+      questLists: { daily: [], personal: [] },
+      categoryLists: { daily: [], personal: [] },
+      legacyXpBonus: 0,
+      ...overrides,
+    };
+  }
+
+  // The store restores saves from JSON and runs both migrations on every page load.
+  function reload(data: StoredQuestData): StoredQuestData {
+    return migratePlantDiscoveries(migrateStoredData(JSON.parse(JSON.stringify(data)) as StoredQuestData));
+  }
+
+  function totalXp(data: StoredQuestData): number {
+    return getXpLedgerTotal(data.completionHistory, data.personalXpByQuestId, data.legacyXpBonus);
+  }
+
+  function completedPersonalSave(): StoredQuestData {
+    return currentSave({
+      questLists: { daily: [], personal: [quest("personal", "Easy", true)] },
+      personalXpByQuestId: recordPersonalXpAward(undefined, "personal", "Easy"),
+    });
+  }
+
+  function completedDailySave(): StoredQuestData {
+    return currentSave({
+      questLists: { daily: [quest("daily", "Easy", true)], personal: [] },
+      completionHistory: toggleDailyQuestCompletion(
+        { [dateKey]: snapshot(["daily"], []) },
+        dateKey,
+        "daily",
+        "Easy",
+      ),
+    });
+  }
+
+  function editDifficulty(
+    data: StoredQuestData,
+    list: QuestListKey,
+    questId: string,
+    difficulty: Difficulty,
+  ): StoredQuestData {
+    return { ...data, questLists: updateQuestInLists(data.questLists, list, questId, { difficulty }) };
+  }
+
+  it("keeps earned XP when a completed personal quest is edited to a higher difficulty", () => {
+    const edited = editDifficulty(completedPersonalSave(), "personal", "personal", "Hard");
+    const reloaded = reload(edited);
+
+    expect(totalXp(reloaded)).toBe(5);
+    expect(reloaded.legacyXpBonus).toBe(0);
+    expect(reloaded.personalXpByQuestId).toEqual({ personal: 5 });
+  });
+
+  it("keeps earned XP when a completed daily quest is edited to a higher difficulty", () => {
+    const edited = editDifficulty(completedDailySave(), "daily", "daily", "Hard");
+    const reloaded = reload(edited);
+
+    expect(totalXp(reloaded)).toBe(5);
+    expect(reloaded.legacyXpBonus).toBe(0);
+    expect(reloaded.completionHistory?.[dateKey]?.xpAwardedByQuestId).toEqual({ daily: 5 });
+  });
+
+  it("does not change XP across repeated reloads", () => {
+    const once = reload(editDifficulty(completedPersonalSave(), "personal", "personal", "Hard"));
+    const twice = reload(once);
+    const thrice = reload(twice);
+
+    expect(totalXp(once)).toBe(5);
+    expect(totalXp(twice)).toBe(5);
+    expect(totalXp(thrice)).toBe(5);
+  });
+
+  it("removes only the XP originally earned when an edited quest is uncompleted", () => {
+    const reloaded = reload(editDifficulty(completedPersonalSave(), "personal", "personal", "Hard"));
+    const uncompleted: StoredQuestData = {
+      ...reloaded,
+      questLists: updateQuestListCompletion(reloaded.questLists, "personal", false),
+      personalXpByQuestId: reversePersonalXpAward(reloaded.personalXpByQuestId, "personal"),
+    };
+
+    expect(totalXp(reload(uncompleted))).toBe(0);
+  });
+
+  it("earns the new difficulty's XP when an edited quest is completed again", () => {
+    const edited = reload(editDifficulty(completedPersonalSave(), "personal", "personal", "Hard"));
+    const uncompleted = reversePersonalXpAward(edited.personalXpByQuestId, "personal");
+    const recompleted: StoredQuestData = {
+      ...edited,
+      personalXpByQuestId: recordPersonalXpAward(uncompleted, "personal", "Hard"),
+    };
+
+    expect(totalXp(reload(recompleted))).toBe(20);
+  });
+
+  it("preserves an existing legacy XP bonus without recalculating it", () => {
+    const save = editDifficulty(
+      { ...completedPersonalSave(), legacyXpBonus: 7 },
+      "personal",
+      "personal",
+      "Hard",
+    );
+    const reloaded = reload(save);
+
+    expect(reloaded.legacyXpBonus).toBe(7);
+    expect(totalXp(reloaded)).toBe(12);
+    expect(totalXp(reload(reloaded))).toBe(12);
+  });
+
+  it("migrates a genuine pre-ledger save only once", () => {
+    const preLedgerSave: StoredQuestData = {
+      questLists: { daily: [quest("daily", "Hard", true)], personal: [] },
+      categoryLists: { daily: [], personal: [] },
+      completionHistory: {},
+    };
+    const migrated = reload(preLedgerSave);
+
+    expect(migrated.schemaVersion).toBeGreaterThanOrEqual(2);
+    expect(migrated.legacyXpBonus).toBe(20);
+    expect(totalXp(migrated)).toBe(20);
+
+    const edited = editDifficulty(migrated, "daily", "daily", "Easy");
+    const reloaded = reload(reload(edited));
+
+    expect(reloaded.legacyXpBonus).toBe(20);
+    expect(totalXp(reloaded)).toBe(20);
   });
 });

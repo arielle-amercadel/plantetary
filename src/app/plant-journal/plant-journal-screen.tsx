@@ -6,9 +6,11 @@ import { FigmaIcon } from "../app-shell";
 import { getLevelProgress, useQuestStore } from "../quest-store";
 import {
   getNextPlantProgress,
+  getPlantCollectionStatus,
   getPlantFilterResults,
   getPlantJournalSpread,
   getPlantThresholdProgress,
+  getWaitingGiftsLabel,
   plantCatalog,
   type Plant,
   type PlantFilter,
@@ -120,6 +122,7 @@ export default function PlantJournalScreen() {
   const { totalXp, discoveredPlantIds, pendingPlantGiftIds, unwrapPlantGift, hasRestored } = useQuestStore();
   const { level, xpIntoLevel, xpForNextLevel } = getLevelProgress(totalXp);
   const nextDiscovery = getNextPlantProgress(totalXp, discoveredPlantIds, pendingPlantGiftIds);
+  const giftsAreLastRemaining = getPlantCollectionStatus(totalXp, discoveredPlantIds, pendingPlantGiftIds) === "gifts-waiting";
   const visiblePlants = getPlantFilterResults(discoveredPlantIds, filter, pendingPlantGiftIds);
   const discoveredSet = new Set(discoveredPlantIds);
   const collectionCount = plantCatalog.filter((plant) => discoveredSet.has(plant.id)).length;
@@ -218,8 +221,8 @@ export default function PlantJournalScreen() {
         <div className="journal-summary-item journal-next-discovery">
           <FigmaIcon src="/icon-sparkles.svg" size={22} />
           <div>
-            <strong>{nextDiscovery ? nextDiscovery.plant.name : "All plants discovered"}</strong>
-            <span>{nextDiscovery ? `${nextDiscovery.xpRemaining} XP until discovery` : "Your collection is complete"}</span>
+            <strong>{nextDiscovery ? nextDiscovery.plant.name : giftsAreLastRemaining ? getWaitingGiftsLabel(pendingPlantGiftIds.length) : "All plants discovered"}</strong>
+            <span>{nextDiscovery ? `${nextDiscovery.xpRemaining} XP until discovery` : giftsAreLastRemaining ? "Ready to be unwrapped" : "Your collection is complete"}</span>
           </div>
         </div>
       </section>
