@@ -11,6 +11,7 @@ import type {
   Quest,
   QuestListKey,
   QuestLists,
+  RepeatSchedule,
   StreakDay,
   StoredQuestData,
   Weekday,
@@ -21,7 +22,7 @@ export const weekdayLabels: Weekday[] = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri
 export const weekdayNames: Weekday[] = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 
 export function getLocalDateKey(date: Date): string {
-  const year = date.getFullYear();
+  const year = String(date.getFullYear()).padStart(4, "0");
   const month = String(date.getMonth() + 1).padStart(2, "0");
   const day = String(date.getDate()).padStart(2, "0");
   return `${year}-${month}-${day}`;
@@ -35,26 +36,44 @@ export function formatLocalDateLabel(date: Date, locale?: string): string {
   });
 }
 
+/**
+ * Builds a date at local noon. new Date(year, ...) treats years 0-99 as 1900-1999, so the year is set
+ * separately. Like that constructor, it rolls an out-of-range month or day over into the next one.
+ */
+export function localNoonDate(year: number, monthIndex: number, day: number): Date {
+  const date = new Date(2000, 0, 1, 12);
+  date.setFullYear(year, monthIndex, day);
+  return date;
+}
+
 export function dateFromKey(key: string): Date {
   const [year, month, day] = key.split("-").map(Number);
-  return new Date(year, month - 1, day, 12);
+  return localNoonDate(year, month - 1, day);
 }
 
 export function addCalendarDays(date: Date, amount: number): Date {
-  const result = new Date(date.getFullYear(), date.getMonth(), date.getDate(), 12);
+  const result = localNoonDate(date.getFullYear(), date.getMonth(), date.getDate());
   result.setDate(result.getDate() + amount);
   return result;
 }
 
 export function scheduledDaysForQuest(quest: Quest): Weekday[] {
   if (quest.repeatSchedule === "Every day") return weekdays;
+  return quest.selectedDays?.filter((day) => weekdays.includes(day)) ?? [];
+}
+
+/**
+ * The rules older saves were scheduled by, used only to convert them on load. Older quests could
+ * store only a display string, so clear, exact labels are accepted; ambiguous or unknown values stay
+ * unscheduled instead of becoming daily.
+ */
+function legacyScheduledDays(quest: Pick<Quest, "repeatSchedule" | "selectedDays"> & { schedule: string }): Weekday[] {
+  if (quest.repeatSchedule === "Every day") return weekdays;
   if (quest.repeatSchedule === "Selected days") {
     return quest.selectedDays?.filter((day) => weekdays.includes(day)) ?? [];
   }
   if (quest.selectedDays?.length) return quest.selectedDays.filter((day) => weekdays.includes(day));
 
-  // Older quests stored only a display string. Accept clear, exact schedule labels;
-  // ambiguous or unknown values stay unscheduled instead of becoming daily.
   const schedule = quest.schedule.trim();
   if (schedule.toLowerCase() === "every day") return weekdays;
   const parsedDays = schedule.split(",").map((day) => day.trim());
@@ -64,19 +83,75 @@ export function scheduledDaysForQuest(quest: Quest): Weekday[] {
   return [];
 }
 
+function hasSameDays(saved: unknown, days: Weekday[]): boolean {
+  return Array.isArray(saved) && saved.length === days.length && saved.every((day, index) => day === days[index]);
+}
+
+/**
+ * Gives saved Daily Quests explicit recurrence without changing which days they run on, then removes
+ * what no longer applies: the legacy schedule text, and any due date, since Daily Quests have none.
+ * Unusable field values are set aside first, and anything that yields no days stays unscheduled.
+ * Returns the same object when nothing changes, so a clean save is not treated as corrected.
+ */
+export function normalizeDailyQuestSchedules(questLists: QuestLists): QuestLists {
+  let changed = false;
+  const daily = questLists.daily.map((quest) => {
+    const saved = quest as unknown as Record<string, unknown>;
+    const schedule = typeof saved.schedule === "string" ? saved.schedule : "";
+    const selectedDays = Array.isArray(saved.selectedDays) ? saved.selectedDays as Weekday[] : undefined;
+    const savedRepeat = saved.repeatSchedule === "Every day" || saved.repeatSchedule === "Selected days"
+      ? saved.repeatSchedule
+      : undefined;
+    const days = legacyScheduledDays({ schedule, selectedDays, repeatSchedule: savedRepeat });
+    const isEveryDayText = !selectedDays?.length && schedule.trim().toLowerCase() === "every day";
+    const repeatSchedule: RepeatSchedule = savedRepeat ?? (isEveryDayText ? "Every day" : "Selected days");
+
+    if (
+      saved.schedule === undefined &&
+      saved.dueDate === undefined &&
+      saved.repeatSchedule === repeatSchedule &&
+      hasSameDays(saved.selectedDays, days)
+    ) {
+      return quest;
+    }
+    changed = true;
+    const cleanedQuest: Quest = { ...quest, repeatSchedule, selectedDays: [...days] };
+    delete cleanedQuest.schedule;
+    delete cleanedQuest.dueDate;
+    return cleanedQuest;
+  });
+  return changed ? { ...questLists, daily } : questLists;
+}
+
+function removePersonalScheduleText(questLists: QuestLists): QuestLists {
+  let changed = false;
+  const personal = questLists.personal.map((quest) => {
+    if (quest.schedule === undefined) return quest;
+    changed = true;
+    const cleanedQuest = { ...quest };
+    delete cleanedQuest.schedule;
+    return cleanedQuest;
+  });
+  return changed ? { ...questLists, personal } : questLists;
+}
+
+/**
+ * Brings saved quests up to the current format on load. Returns the same object when nothing changes,
+ * so a clean save is not treated as corrected.
+ */
+export function normalizeSavedQuestLists(questLists: QuestLists): QuestLists {
+  return normalizeDailyQuestSchedules(removePersonalScheduleText(removeInvalidPersonalDueDates(questLists)));
+}
+
 export function formatWeekdaySchedule(days: Weekday[]): string {
   return weekdays.filter((day) => days.includes(day)).join(", ");
 }
 
 export function getDailyQuestScheduleLabel(quest: Quest): string {
-  if (quest.repeatSchedule === "Every day" || quest.schedule.trim().toLowerCase() === "every day") {
-    return quest.schedule;
-  }
+  if (quest.repeatSchedule === "Every day") return "Every day";
 
   const scheduledDays = scheduledDaysForQuest(quest);
-  if (scheduledDays.length > 0) return formatWeekdaySchedule(scheduledDays);
-
-  return quest.schedule;
+  return scheduledDays.length > 0 ? formatWeekdaySchedule(scheduledDays) : "No days selected";
 }
 
 export function isQuestScheduledOnDate(quest: Quest, date: Date): boolean {
@@ -203,6 +278,22 @@ export function getQuestListProgress(
   return { completed: counted.filter((quest) => quest.completed).length, total: counted.length };
 }
 
+/**
+ * Removes only the due dates that are not real calendar dates, keeping the rest of each Personal
+ * Quest. Returns the same object when nothing changes, so a clean save is not treated as corrected.
+ */
+export function removeInvalidPersonalDueDates(questLists: QuestLists): QuestLists {
+  let changed = false;
+  const personal = questLists.personal.map((quest) => {
+    if (quest.dueDate === undefined || isCompletionDateKey(quest.dueDate)) return quest;
+    changed = true;
+    const correctedQuest = { ...quest };
+    delete correctedQuest.dueDate;
+    return correctedQuest;
+  });
+  return changed ? { ...questLists, personal } : questLists;
+}
+
 export function findQuestForEditing(
   questLists: QuestLists,
   questId: string,
@@ -221,9 +312,7 @@ export function hasQuestScheduleChanged(previous: Quest, updated: Quest): boolea
     : previousDays.length !== updatedDays.length ||
       previousDays.some((day, index) => day !== updatedDays[index]);
 
-  return previous.schedule !== updated.schedule ||
-    previous.repeatSchedule !== updated.repeatSchedule ||
-    selectedDaysChanged;
+  return previous.repeatSchedule !== updated.repeatSchedule || selectedDaysChanged;
 }
 
 export function addQuestToHistory(
@@ -441,6 +530,31 @@ export function isQuestPastDue(quest: Quest, list: QuestListKey, todayKey: strin
     isCompletionDateKey(quest.dueDate) &&
     isCompletionDateKey(todayKey) &&
     quest.dueDate < todayKey;
+}
+
+/**
+ * Builds a quest's due-date label from its real date, or returns undefined when there is no valid
+ * date to show. A due date is a calendar day with no timezone, so both keys are compared as written
+ * and formatted through dateFromKey's local noon: new Date("YYYY-MM-DD") would parse as UTC and show
+ * the previous day west of Greenwich. Without a valid today, relative wording and the "this year"
+ * shortcut are unavailable, so the label falls back to the full date.
+ */
+export function getDueDateLabel(dueDate: string | undefined, todayKey: string): string | undefined {
+  if (!isCompletionDateKey(dueDate)) return undefined;
+
+  const hasToday = isCompletionDateKey(todayKey);
+  if (hasToday) {
+    if (dueDate === todayKey) return "Due today";
+    if (dueDate === getLocalDateKey(addCalendarDays(dateFromKey(todayKey), 1))) return "Due tomorrow";
+  }
+
+  const includeYear = !hasToday || dueDate.slice(0, 4) !== todayKey.slice(0, 4);
+  const formattedDate = dateFromKey(dueDate).toLocaleDateString("en-US", {
+    month: "short",
+    day: "numeric",
+    ...(includeYear ? { year: "numeric" } : {}),
+  });
+  return `Due ${formattedDate}`;
 }
 
 function countSnapshotCompletions(snapshot: CompletionSnapshot | undefined): number {

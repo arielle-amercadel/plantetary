@@ -1,0 +1,368 @@
+{
+  "_about": "A real save produced by playing the app on main at commit 626f430, before Stage 1B, with a fixed clock ending Wednesday, October 21, 2026, in UTC. Do not edit: it stands in for an existing guest save. observedOnMain records what that version showed for this save.",
+  "observedOnMain": {
+    "progress": "2 Budding botanist Level 2 30 / 150 XP 120 XP to level 3 2 Completed today 2 daily · 0 personal 15 Quests completed 13 daily · 2 personal 2 days Current streak Little steps add up",
+    "daily": [
+      {
+        "title": "Drink a glass of water",
+        "done": false
+      },
+      {
+        "title": "Morning skincare",
+        "done": true
+      },
+      {
+        "title": "Read for 20 minutes",
+        "done": false
+      },
+      {
+        "title": "Evening stretch",
+        "done": false
+      },
+      {
+        "title": "Quick habit on main",
+        "done": false
+      },
+      {
+        "title": "Form Mon Wed on main",
+        "done": true
+      }
+    ],
+    "personal": [
+      {
+        "title": "Review biology notes",
+        "done": false
+      },
+      {
+        "title": "Tidy the desk",
+        "done": true
+      },
+      {
+        "title": "Quick errand on main",
+        "done": false
+      },
+      {
+        "title": "Form dated on main",
+        "done": false
+      }
+    ],
+    "allDailyTitles": [
+      "Drink a glass of water",
+      "Morning skincare",
+      "Read for 20 minutes",
+      "Evening stretch",
+      "Quick habit on main",
+      "Form Mon Wed on main"
+    ],
+    "collection": "1 of 16 plants discovered",
+    "gift": "Plant Journal, 3 gifts waiting",
+    "summaries": [
+      "Wednesday, October 21, 2026 2 completions",
+      "Tuesday, October 20, 2026 5 completions",
+      "Monday, October 19, 2026 8 completions"
+    ],
+    "openCards": 2,
+    "earlier": 0
+  },
+  "save": {
+    "schemaVersion": 5,
+    "questLists": {
+      "daily": [
+        {
+          "id": "water",
+          "title": "Drink a glass of water",
+          "category": "Wellness",
+          "schedule": "Every day",
+          "difficulty": "Easy",
+          "completed": false
+        },
+        {
+          "id": "skincare",
+          "title": "Morning skincare",
+          "category": "Self-care",
+          "schedule": "Every day",
+          "difficulty": "Easy",
+          "completed": false
+        },
+        {
+          "id": "reading",
+          "title": "Read for 20 minutes",
+          "category": "Personal growth",
+          "schedule": "Every day",
+          "difficulty": "Medium",
+          "completed": false
+        },
+        {
+          "id": "stretch",
+          "title": "Evening stretch",
+          "category": "Wellness",
+          "schedule": "Every day",
+          "difficulty": "Easy",
+          "completed": false
+        },
+        {
+          "id": "daily-quests-1792404001503",
+          "title": "Quick habit on main",
+          "category": "Wellness",
+          "schedule": "Every day",
+          "difficulty": "Easy",
+          "completed": false
+        },
+        {
+          "title": "Form Mon Wed on main",
+          "category": "Wellness",
+          "schedule": "Mon, Wed",
+          "difficulty": "Hard",
+          "notes": "",
+          "repeatSchedule": "Selected days",
+          "selectedDays": [
+            "Mon",
+            "Wed"
+          ],
+          "id": "daily-1792404002900",
+          "completed": false
+        }
+      ],
+      "personal": [
+        {
+          "id": "biology",
+          "title": "Review biology notes",
+          "category": "Study",
+          "schedule": "Due today",
+          "difficulty": "Medium",
+          "completed": false
+        },
+        {
+          "id": "desk",
+          "title": "Tidy the desk",
+          "category": "Chores",
+          "schedule": "No due date",
+          "difficulty": "Easy",
+          "completed": true
+        },
+        {
+          "id": "personal-quests-1792404001405",
+          "title": "Quick errand on main",
+          "category": "Personal",
+          "schedule": "Due today",
+          "difficulty": "Easy",
+          "completed": false
+        },
+        {
+          "title": "Form dated on main",
+          "category": "Study",
+          "schedule": "Due Oct 22",
+          "difficulty": "Medium",
+          "notes": "",
+          "dueDate": "2026-10-22",
+          "id": "personal-1792404004244",
+          "completed": false
+        }
+      ]
+    },
+    "categoryLists": {
+      "daily": [
+        "Wellness",
+        "Self-care",
+        "Personal growth"
+      ],
+      "personal": [
+        "Study",
+        "Projects",
+        "Chores",
+        "Personal"
+      ]
+    },
+    "completionHistory": {
+      "2026-10-19": {
+        "scheduledQuestIds": [
+          "water",
+          "skincare",
+          "reading",
+          "stretch",
+          "daily-quests-1792404001503",
+          "daily-1792404002900"
+        ],
+        "completedQuestIds": [
+          "water",
+          "skincare",
+          "reading",
+          "stretch",
+          "daily-quests-1792404001503",
+          "daily-1792404002900"
+        ],
+        "xpAwardedByQuestId": {
+          "water": 5,
+          "skincare": 5,
+          "reading": 10,
+          "stretch": 5,
+          "daily-quests-1792404001503": 5,
+          "daily-1792404002900": 20
+        },
+        "completionDetails": {
+          "daily": {
+            "water": {
+              "title": "Drink a glass of water",
+              "category": "Wellness",
+              "difficulty": "Easy",
+              "questType": "daily"
+            },
+            "skincare": {
+              "title": "Morning skincare",
+              "category": "Self-care",
+              "difficulty": "Easy",
+              "questType": "daily"
+            },
+            "reading": {
+              "title": "Read for 20 minutes",
+              "category": "Personal growth",
+              "difficulty": "Medium",
+              "questType": "daily"
+            },
+            "stretch": {
+              "title": "Evening stretch",
+              "category": "Wellness",
+              "difficulty": "Easy",
+              "questType": "daily"
+            },
+            "daily-quests-1792404001503": {
+              "title": "Quick habit on main",
+              "category": "Wellness",
+              "difficulty": "Easy",
+              "questType": "daily"
+            },
+            "daily-1792404002900": {
+              "title": "Form Mon Wed on main",
+              "category": "Wellness",
+              "difficulty": "Hard",
+              "questType": "daily"
+            }
+          },
+          "personal": {
+            "desk": {
+              "title": "Tidy the desk",
+              "category": "Chores",
+              "difficulty": "Easy",
+              "questType": "personal"
+            },
+            "moodboard": {
+              "title": "Finish portfolio moodboard",
+              "category": "Projects",
+              "difficulty": "Hard",
+              "questType": "personal"
+            }
+          }
+        }
+      },
+      "2026-10-20": {
+        "scheduledQuestIds": [
+          "water",
+          "skincare",
+          "reading",
+          "stretch",
+          "daily-quests-1792404001503"
+        ],
+        "completedQuestIds": [
+          "skincare",
+          "reading",
+          "stretch",
+          "daily-quests-1792404001503",
+          "water"
+        ],
+        "xpAwardedByQuestId": {
+          "skincare": 5,
+          "reading": 10,
+          "stretch": 5,
+          "daily-quests-1792404001503": 5,
+          "water": 5
+        },
+        "completionDetails": {
+          "daily": {
+            "skincare": {
+              "title": "Morning skincare",
+              "category": "Self-care",
+              "difficulty": "Easy",
+              "questType": "daily"
+            },
+            "reading": {
+              "title": "Read for 20 minutes",
+              "category": "Personal growth",
+              "difficulty": "Medium",
+              "questType": "daily"
+            },
+            "stretch": {
+              "title": "Evening stretch",
+              "category": "Wellness",
+              "difficulty": "Easy",
+              "questType": "daily"
+            },
+            "daily-quests-1792404001503": {
+              "title": "Quick habit on main",
+              "category": "Wellness",
+              "difficulty": "Easy",
+              "questType": "daily"
+            },
+            "water": {
+              "title": "Drink a glass of water",
+              "category": "Wellness",
+              "difficulty": "Easy",
+              "questType": "daily"
+            }
+          }
+        }
+      },
+      "2026-10-21": {
+        "scheduledQuestIds": [
+          "water",
+          "skincare",
+          "reading",
+          "stretch",
+          "daily-quests-1792404001503",
+          "daily-1792404002900"
+        ],
+        "completedQuestIds": [
+          "daily-1792404002900",
+          "skincare"
+        ],
+        "xpAwardedByQuestId": {
+          "daily-1792404002900": 20,
+          "skincare": 5
+        },
+        "completionDetails": {
+          "daily": {
+            "daily-1792404002900": {
+              "title": "Form Mon Wed on main",
+              "category": "Wellness",
+              "difficulty": "Hard",
+              "questType": "daily"
+            },
+            "skincare": {
+              "title": "Morning skincare",
+              "category": "Self-care",
+              "difficulty": "Easy",
+              "questType": "daily"
+            }
+          }
+        }
+      }
+    },
+    "personalXpByQuestId": {
+      "desk": 5,
+      "moodboard": 20
+    },
+    "personalCompletedOnByQuestId": {
+      "desk": "2026-10-19",
+      "moodboard": "2026-10-19"
+    },
+    "legacyXpBonus": 0,
+    "discoveredPlantIds": [
+      "fern"
+    ],
+    "pendingPlantGiftIds": [
+      "daisy",
+      "cactus",
+      "sunflower"
+    ],
+    "starterPlantGiftPending": false
+  }
+}

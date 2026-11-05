@@ -23,6 +23,7 @@ import {
   isCompletionDateKey,
   getCompletionHistoryView,
   normalizeCompletionHistoryDetails,
+  normalizeSavedQuestLists,
   getCompletedOverallCounts,
   getCompletedTodayCounts,
   getRecoverableOrphanedDailyQuestIds,
@@ -122,7 +123,8 @@ export const initialQuestLists: QuestLists = {
       id: "water",
       title: "Drink a glass of water",
       category: "Wellness",
-      schedule: "Every day",
+      repeatSchedule: "Every day",
+      selectedDays: [...weekdays],
       difficulty: "Easy",
       completed: false,
     },
@@ -130,7 +132,8 @@ export const initialQuestLists: QuestLists = {
       id: "skincare",
       title: "Morning skincare",
       category: "Self-care",
-      schedule: "Every day",
+      repeatSchedule: "Every day",
+      selectedDays: [...weekdays],
       difficulty: "Easy",
       completed: false,
     },
@@ -138,7 +141,8 @@ export const initialQuestLists: QuestLists = {
       id: "reading",
       title: "Read for 20 minutes",
       category: "Personal growth",
-      schedule: "Every day",
+      repeatSchedule: "Every day",
+      selectedDays: [...weekdays],
       difficulty: "Medium",
       completed: false,
     },
@@ -146,7 +150,8 @@ export const initialQuestLists: QuestLists = {
       id: "stretch",
       title: "Evening stretch",
       category: "Wellness",
-      schedule: "Every day",
+      repeatSchedule: "Every day",
+      selectedDays: [...weekdays],
       difficulty: "Easy",
       completed: false,
     },
@@ -156,7 +161,6 @@ export const initialQuestLists: QuestLists = {
       id: "biology",
       title: "Review biology notes",
       category: "Study",
-      schedule: "Due today",
       difficulty: "Medium",
       completed: false,
     },
@@ -164,7 +168,6 @@ export const initialQuestLists: QuestLists = {
       id: "moodboard",
       title: "Finish portfolio moodboard",
       category: "Projects",
-      schedule: "Due Oct 20",
       difficulty: "Hard",
       completed: false,
     },
@@ -172,7 +175,6 @@ export const initialQuestLists: QuestLists = {
       id: "desk",
       title: "Tidy the desk",
       category: "Chores",
-      schedule: "No due date",
       difficulty: "Easy",
       completed: false,
     },
@@ -185,7 +187,7 @@ const initialStoredQuestData = migratePlantDiscoveries(migrateStoredData({
   starterPlantGiftPending: true,
 }));
 
-function isQuest(value: unknown): value is Quest {
+function hasValidCoreQuestFields(value: unknown): value is Quest {
   if (typeof value !== "object" || value === null) return false;
 
   const quest = value as Record<string, unknown>;
@@ -193,15 +195,22 @@ function isQuest(value: unknown): value is Quest {
     typeof quest.id === "string" &&
     typeof quest.title === "string" &&
     typeof quest.category === "string" &&
-    typeof quest.schedule === "string" &&
     (quest.difficulty === "Easy" || quest.difficulty === "Medium" || quest.difficulty === "Hard") &&
     typeof quest.completed === "boolean" &&
+    (quest.notes === undefined || typeof quest.notes === "string")
+  );
+}
+
+function isPersonalQuest(value: unknown): value is Quest {
+  if (!hasValidCoreQuestFields(value)) return false;
+
+  const quest = value as unknown as Record<string, unknown>;
+  return (
+    (quest.schedule === undefined || typeof quest.schedule === "string") &&
     (quest.repeatSchedule === undefined ||
       quest.repeatSchedule === "Every day" || quest.repeatSchedule === "Selected days") &&
     (quest.selectedDays === undefined ||
-      (Array.isArray(quest.selectedDays) && quest.selectedDays.every((day) => weekdays.includes(day)))) &&
-    (quest.dueDate === undefined || typeof quest.dueDate === "string") &&
-    (quest.notes === undefined || typeof quest.notes === "string")
+      (Array.isArray(quest.selectedDays) && quest.selectedDays.every((day) => weekdays.includes(day))))
   );
 }
 
@@ -215,9 +224,11 @@ function isStoredQuestData(value: unknown): value is StoredQuestData {
   return Boolean(
     questLists &&
       Array.isArray(questLists.daily) &&
-      questLists.daily.every(isQuest) &&
+      // Bad recurrence or due-date fields on a Daily Quest are recovered on load rather than rejecting the whole save.
+      questLists.daily.every(hasValidCoreQuestFields) &&
       Array.isArray(questLists.personal) &&
-      questLists.personal.every(isQuest) &&
+      // A bad Personal due date is removed on load rather than rejecting the whole save.
+      questLists.personal.every(isPersonalQuest) &&
       categoryLists &&
       Array.isArray(categoryLists.daily) &&
       categoryLists.daily.every((category) => typeof category === "string") &&
@@ -315,7 +326,9 @@ export function QuestProvider({ children }: { children: ReactNode }) {
               isValidDeletedLegacyPersonalCompletionCount(parsedData.deletedLegacyPersonalCompletionCount)
               ? parsedData.deletedLegacyPersonalCompletionCount
               : undefined;
+            const validQuestLists = normalizeSavedQuestLists(parsedData.questLists);
             const optionalFieldsUnchanged =
+              validQuestLists === parsedData.questLists &&
               normalizedCompletionHistory === parsedData.completionHistory &&
               validPersonalCompletionDates === parsedData.personalCompletedOnByQuestId &&
               validDeletedLegacyCount === parsedData.deletedLegacyPersonalCompletionCount;
@@ -323,6 +336,7 @@ export function QuestProvider({ children }: { children: ReactNode }) {
               ? parsedData
               : {
                 ...parsedData,
+                questLists: validQuestLists,
                 completionHistory: validHistory ? normalizedCompletionHistory : undefined,
                 personalCompletedOnByQuestId: validPersonalCompletionDates,
                 deletedLegacyPersonalCompletionCount: validDeletedLegacyCount,

@@ -104,18 +104,35 @@ describe("updating an existing quest", () => {
     })).toBe(true);
   });
 
-  it("updates a Personal due date and its display label together", () => {
-    const personal = makeQuest({
-      id: "personal-1",
-      schedule: "No due date",
+  it("adds and changes a Personal due date without saving a display label", () => {
+    const personal = makeQuest({ id: "personal-1", schedule: undefined, dueDate: undefined });
+    const added = updateQuestInLists({ daily: [], personal: [personal] }, "personal", "personal-1", {
+      dueDate: "2026-11-05",
+    });
+    const changed = updateQuestInLists(added, "personal", "personal-1", { dueDate: "2026-11-09" });
+
+    expect(added.personal[0].dueDate).toBe("2026-11-05");
+    expect(changed.personal[0].dueDate).toBe("2026-11-09");
+    expect(changed.personal[0].schedule).toBeUndefined();
+  });
+
+  it("removes a cleared Personal due date from the saved quest", () => {
+    const personal = makeQuest({ id: "personal-1", schedule: undefined, dueDate: "2026-11-05" });
+    const cleared = updateQuestInLists({ daily: [], personal: [personal] }, "personal", "personal-1", {
       dueDate: undefined,
     });
-    const next = updateQuestInLists({ daily: [], personal: [personal] }, "personal", "personal-1", {
-      dueDate: "2026-11-05",
-      schedule: "Due Nov 5",
-    });
+    const saved = JSON.parse(JSON.stringify(cleared.personal[0])) as Quest;
 
-    expect(next.personal[0]).toMatchObject({ dueDate: "2026-11-05", schedule: "Due Nov 5" });
+    expect(saved).not.toHaveProperty("schedule");
+    expect(saved).not.toHaveProperty("dueDate");
+  });
+
+  it("does not count a change to the legacy text as a schedule change", () => {
+    const previous = makeQuest({ schedule: "Every day" });
+
+    expect(hasQuestScheduleChanged(previous, { ...previous, schedule: "Mon" })).toBe(false);
+    expect(hasQuestScheduleChanged(previous, { ...previous, schedule: undefined })).toBe(false);
+    expect(hasQuestScheduleChanged(previous, { ...previous, repeatSchedule: "Selected days" })).toBe(true);
   });
 
   it("leaves quest lists unchanged when the ID is missing", () => {

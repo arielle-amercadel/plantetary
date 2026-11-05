@@ -8,8 +8,9 @@ import AppShell, { FigmaIcon } from "../../app-shell";
 import CategoryPicker, { CUSTOM_CATEGORY_VALUE } from "../../category-picker";
 import QuestSelect from "./quest-select";
 import QuestDatePicker from "./quest-date-picker";
+import { isSavableDueDate } from "./quest-date-picker-logic";
 import { getCustomCategoryError, getQuestXp, useQuestStore } from "../../quest-store";
-import { findQuestForEditing, formatWeekdaySchedule, scheduledDaysForQuest } from "../../quest-logic";
+import { findQuestForEditing, formatWeekdaySchedule, getDueDateLabel, scheduledDaysForQuest } from "../../quest-logic";
 import type {
   Difficulty,
   Quest,
@@ -19,14 +20,6 @@ import type {
 } from "../../quest-store";
 
 const weekdays: Weekday[] = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
-
-function formatDueDate(value: string) {
-  if (!value) return "No due date";
-
-  const [year, month, day] = value.split("-").map(Number);
-  const date = new Date(year, month - 1, day);
-  return `Due ${date.toLocaleDateString("en-US", { month: "short", day: "numeric" })}`;
-}
 
 export default function CreateQuestPage() {
   return (
@@ -84,7 +77,7 @@ function CreateQuestForm({
 }) {
   const isEditing = editId !== null;
   const router = useRouter();
-  const { addQuest, updateQuest, addCategory, categoryLists } = useQuestStore();
+  const { addQuest, updateQuest, addCategory, categoryLists, todayKey } = useQuestStore();
   const [title, setTitle] = useState(editingQuest?.title ?? "");
   const [questType, setQuestType] = useState<QuestListKey | "">(editingList ?? "");
   const [categorySelection, setCategorySelection] = useState(editingQuest?.category ?? "");
@@ -92,7 +85,7 @@ function CreateQuestForm({
   const [difficulty, setDifficulty] = useState<Difficulty | "">(editingQuest?.difficulty ?? "");
   const [repeatSchedule, setRepeatSchedule] = useState<RepeatSchedule | "">(
     editingQuest
-      ? editingQuest.repeatSchedule ?? (editingQuest.schedule.trim().toLowerCase() === "every day" ? "Every day" : "Selected days")
+      ? editingQuest.repeatSchedule ?? "Selected days"
       : "",
   );
   const [selectedDays, setSelectedDays] = useState<Weekday[]>(editingQuest
@@ -102,7 +95,6 @@ function CreateQuestForm({
     : [],
   );
   const [dueDate, setDueDate] = useState(editingQuest?.dueDate ?? "");
-  const [dueDateTouched, setDueDateTouched] = useState(false);
   const [notes, setNotes] = useState(editingQuest?.notes ?? "");
   const [saveError, setSaveError] = useState("");
   const categoryOptions = questType
@@ -125,14 +117,10 @@ function CreateQuestForm({
       : repeatSchedule === "Selected days"
         ? selectedDays.length > 0 ? formatWeekdaySchedule(selectedDays) : "Choose days"
         : "Choose a repeat schedule"
-    : dueDate
-      ? formatDueDate(dueDate)
-      : isEditing && !dueDateTouched && editingQuest?.dueDate === undefined
-        ? editingQuest?.schedule ?? ""
-        : formatDueDate("");
+    : getDueDateLabel(dueDate, todayKey) ?? "No due date";
   const hasValidSchedule = questType === "daily"
     ? Boolean(repeatSchedule) && (repeatSchedule !== "Selected days" || selectedDays.length > 0)
-    : questType === "personal";
+    : questType === "personal" && isSavableDueDate(dueDate);
   const canSave = Boolean(
     title.trim() && questType && categoryValue && !categoryError && difficulty && hasValidSchedule,
   );
@@ -153,16 +141,12 @@ function CreateQuestForm({
     if (questType === "daily" && !repeatSchedule) return;
     if (categorySelection === CUSTOM_CATEGORY_VALUE && !addCategory(questType, categoryValue)) return;
 
-    const schedule = questType === "daily"
-      ? repeatSchedule === "Every day" ? "Every day" : selectedDays.join(", ")
-      : formatDueDate(dueDate);
     const dailyRepeatSchedule = questType === "daily" && repeatSchedule
       ? repeatSchedule
       : undefined;
     const updates: Partial<Omit<Quest, "id" | "completed">> = {
       title: title.trim(),
       category: categoryValue,
-      schedule,
       difficulty,
       notes: notes.trim(),
       ...(dailyRepeatSchedule
@@ -185,7 +169,6 @@ function CreateQuestForm({
         id: `${questType}-${Date.now()}`,
         title: title.trim(),
         category: categoryValue,
-        schedule,
         difficulty,
         completed: false,
       };
@@ -350,10 +333,7 @@ function CreateQuestForm({
                     id="quest-due-date"
                     label="Due date"
                     value={dueDate}
-                    onValueChange={(value) => {
-                      setDueDate(value);
-                      setDueDateTouched(true);
-                    }}
+                    onValueChange={setDueDate}
                   />
                 </div>
                 </section>

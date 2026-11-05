@@ -1,12 +1,11 @@
 "use client";
 
-import { getCompletionHistoryCardText } from "../quest-logic";
+import { dateFromKey, getCompletionHistoryCardText } from "../quest-logic";
 import { useQuestStore } from "../quest-store";
 import type { CompletionHistoryItem, CompletionHistorySection } from "../quest-types";
 
 function formatDate(dateKey: string): string {
-  const [year, month, day] = dateKey.split("-").map(Number);
-  return new Date(year, month - 1, day, 12).toLocaleDateString(undefined, {
+  return dateFromKey(dateKey).toLocaleDateString(undefined, {
     weekday: "long",
     month: "long",
     day: "numeric",

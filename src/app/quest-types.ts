@@ -7,7 +7,8 @@ export type Quest = {
   id: string;
   title: string;
   category: string;
-  schedule: string;
+  /** Legacy text kept only so older saves can be recognized and converted on load. */
+  schedule?: string;
   difficulty: Difficulty;
   completed: boolean;
   repeatSchedule?: RepeatSchedule;
