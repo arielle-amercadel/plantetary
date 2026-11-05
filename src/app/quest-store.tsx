@@ -5,7 +5,6 @@ import type { ReactNode } from "react";
 import type {
   CategoryLists,
   CompletionHistory,
-  CompletionSnapshot,
   Quest,
   QuestLists,
   QuestListKey,
@@ -20,10 +19,7 @@ import {
   findCategoryMatch,
   getXpLedgerTotal,
   getLocalDateKey,
-  isCompletionDateKey,
   getCompletionHistoryView,
-  normalizeCompletionHistoryDetails,
-  normalizeSavedQuestLists,
   getCompletedOverallCounts,
   getCompletedTodayCounts,
   getRecoverableOrphanedDailyQuestIds,
@@ -54,6 +50,7 @@ import {
   migratePlantDiscoveries,
   unwrapPlantGift as unwrapPlantGiftState,
 } from "./plant-journal-logic";
+import { loadQuestData, saveQuestData } from "./quest-storage";
 
 export type {
   Difficulty,
@@ -73,44 +70,6 @@ export {
   getCustomCategoryError,
   getLevelProgress,
 } from "./quest-logic";
-
-function isCompletionHistory(value: unknown): value is CompletionHistory {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
-  return Object.entries(value).every(([date, snapshot]) =>
-    /^\d{4}-\d{2}-\d{2}$/.test(date) &&
-    Boolean(snapshot) && typeof snapshot === "object" &&
-    Array.isArray((snapshot as CompletionSnapshot).scheduledQuestIds) &&
-    (snapshot as CompletionSnapshot).scheduledQuestIds.every((id) => typeof id === "string") &&
-    Array.isArray((snapshot as CompletionSnapshot).completedQuestIds) &&
-    (snapshot as CompletionSnapshot).completedQuestIds.every((id) => typeof id === "string"),
-  );
-}
-
-function normalizePersonalCompletionDates(value: unknown): Record<string, string> | undefined {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
-  const entries = Object.entries(value);
-  const validEntries = entries.filter(([questId, dateKey]) => questId.length > 0 && isCompletionDateKey(dateKey));
-  if (validEntries.length === entries.length) return value as Record<string, string>;
-  return validEntries.length > 0 ? Object.fromEntries(validEntries) : undefined;
-}
-
-function isValidDeletedLegacyPersonalCompletionCount(value: unknown): value is number {
-  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
-}
-
-const questStorageKey = "plantetary-quest-data";
-const validBackupStorageKey = "plantetary-quest-data-backup-v1";
-const invalidBackupStorageKey = "plantetary-quest-data-invalid-backup";
-
-function preserveRawValueIfAbsent(backupKey: string, rawValue: string): boolean {
-  try {
-    if (window.localStorage.getItem(backupKey) !== null) return true;
-    window.localStorage.setItem(backupKey, rawValue);
-    return window.localStorage.getItem(backupKey) === rawValue;
-  } catch {
-    return false;
-  }
-}
 
 const initialCategoryLists: CategoryLists = {
   daily: ["Wellness", "Self-care", "Personal growth"],
@@ -187,56 +146,6 @@ const initialStoredQuestData = migratePlantDiscoveries(migrateStoredData({
   starterPlantGiftPending: true,
 }));
 
-function hasValidCoreQuestFields(value: unknown): value is Quest {
-  if (typeof value !== "object" || value === null) return false;
-
-  const quest = value as Record<string, unknown>;
-  return (
-    typeof quest.id === "string" &&
-    typeof quest.title === "string" &&
-    typeof quest.category === "string" &&
-    (quest.difficulty === "Easy" || quest.difficulty === "Medium" || quest.difficulty === "Hard") &&
-    typeof quest.completed === "boolean" &&
-    (quest.notes === undefined || typeof quest.notes === "string")
-  );
-}
-
-function isPersonalQuest(value: unknown): value is Quest {
-  if (!hasValidCoreQuestFields(value)) return false;
-
-  const quest = value as unknown as Record<string, unknown>;
-  return (
-    (quest.schedule === undefined || typeof quest.schedule === "string") &&
-    (quest.repeatSchedule === undefined ||
-      quest.repeatSchedule === "Every day" || quest.repeatSchedule === "Selected days") &&
-    (quest.selectedDays === undefined ||
-      (Array.isArray(quest.selectedDays) && quest.selectedDays.every((day) => weekdays.includes(day))))
-  );
-}
-
-function isStoredQuestData(value: unknown): value is StoredQuestData {
-  if (typeof value !== "object" || value === null) return false;
-
-  const data = value as Record<string, unknown>;
-  const questLists = data.questLists as Record<string, unknown> | undefined;
-  const categoryLists = data.categoryLists as Record<string, unknown> | undefined;
-
-  return Boolean(
-    questLists &&
-      Array.isArray(questLists.daily) &&
-      // Bad recurrence or due-date fields on a Daily Quest are recovered on load rather than rejecting the whole save.
-      questLists.daily.every(hasValidCoreQuestFields) &&
-      Array.isArray(questLists.personal) &&
-      // A bad Personal due date is removed on load rather than rejecting the whole save.
-      questLists.personal.every(isPersonalQuest) &&
-      categoryLists &&
-      Array.isArray(categoryLists.daily) &&
-      categoryLists.daily.every((category) => typeof category === "string") &&
-      Array.isArray(categoryLists.personal) &&
-      categoryLists.personal.every((category) => typeof category === "string"),
-  );
-}
-
 type QuestStoreValue = {
   questLists: QuestLists;
   categoryLists: CategoryLists;
@@ -299,67 +208,7 @@ export function QuestProvider({ children }: { children: ReactNode }) {
   const [canPersistStorage, setCanPersistStorage] = useState(true);
 
   useEffect(() => {
-    let canPersist = true;
-    let restoredData = initialStoredQuestData;
-
-    try {
-      if (typeof window !== "undefined") {
-        const rawData = window.localStorage.getItem(questStorageKey);
-        if (rawData !== null) {
-          let parsedData: unknown;
-          try {
-            parsedData = JSON.parse(rawData);
-          } catch {
-            parsedData = undefined;
-          }
-
-          if (isStoredQuestData(parsedData)) {
-            const validHistory = parsedData.completionHistory === undefined ||
-              isCompletionHistory(parsedData.completionHistory);
-            const normalizedCompletionHistory = validHistory && parsedData.completionHistory
-              ? normalizeCompletionHistoryDetails(parsedData.completionHistory)
-              : parsedData.completionHistory;
-            const validPersonalCompletionDates = normalizePersonalCompletionDates(
-              parsedData.personalCompletedOnByQuestId,
-            );
-            const validDeletedLegacyCount = parsedData.deletedLegacyPersonalCompletionCount === undefined ||
-              isValidDeletedLegacyPersonalCompletionCount(parsedData.deletedLegacyPersonalCompletionCount)
-              ? parsedData.deletedLegacyPersonalCompletionCount
-              : undefined;
-            const validQuestLists = normalizeSavedQuestLists(parsedData.questLists);
-            const optionalFieldsUnchanged =
-              validQuestLists === parsedData.questLists &&
-              normalizedCompletionHistory === parsedData.completionHistory &&
-              validPersonalCompletionDates === parsedData.personalCompletedOnByQuestId &&
-              validDeletedLegacyCount === parsedData.deletedLegacyPersonalCompletionCount;
-            const validatedData: StoredQuestData = validHistory && optionalFieldsUnchanged
-              ? parsedData
-              : {
-                ...parsedData,
-                questLists: validQuestLists,
-                completionHistory: validHistory ? normalizedCompletionHistory : undefined,
-                personalCompletedOnByQuestId: validPersonalCompletionDates,
-                deletedLegacyPersonalCompletionCount: validDeletedLegacyCount,
-              };
-            const migratedData = migratePlantDiscoveries(migrateStoredData(validatedData));
-            if (
-              (migratedData !== validatedData || validatedData !== parsedData) &&
-              !preserveRawValueIfAbsent(validBackupStorageKey, rawData)
-            ) {
-              canPersist = false;
-              console.error("Plantetary could not back up saved data before migrating it. Changes will not be saved this session.");
-            }
-            restoredData = migratedData;
-          } else if (!preserveRawValueIfAbsent(invalidBackupStorageKey, rawData)) {
-            canPersist = false;
-            console.error("Plantetary could not back up invalid saved data. Defaults will not overwrite it this session.");
-          }
-        }
-      }
-    } catch {
-      canPersist = false;
-      console.error("Plantetary could not safely access saved data. Changes will not be saved this session.");
-    }
+    const { data: restoredData, canPersist } = loadQuestData(initialStoredQuestData);
 
     queueMicrotask(() => {
       const restoredToday = getLocalDateKey(new Date());
@@ -416,28 +265,21 @@ export function QuestProvider({ children }: { children: ReactNode }) {
   const starterPlantGiftPending = pendingPlantGiftIds.includes("fern");
 
   useEffect(() => {
-    if (!hasRestored || !canPersistStorage || typeof window === "undefined") return;
+    if (!hasRestored || !canPersistStorage) return;
 
-    try {
-      window.localStorage.setItem(
-        questStorageKey,
-        JSON.stringify({
-          schemaVersion,
-          questLists,
-          categoryLists,
-          completionHistory,
-          personalXpByQuestId,
-          personalCompletedOnByQuestId,
-          deletedLegacyPersonalCompletionCount,
-          legacyXpBonus,
-          discoveredPlantIds,
-          pendingPlantGiftIds,
-          starterPlantGiftPending,
-        }),
-      );
-    } catch {
-      return;
-    }
+    saveQuestData({
+      schemaVersion,
+      questLists,
+      categoryLists,
+      completionHistory,
+      personalXpByQuestId,
+      personalCompletedOnByQuestId,
+      deletedLegacyPersonalCompletionCount,
+      legacyXpBonus,
+      discoveredPlantIds,
+      pendingPlantGiftIds,
+      starterPlantGiftPending,
+    });
   }, [hasRestored, canPersistStorage, questLists, categoryLists, completionHistory, personalXpByQuestId, personalCompletedOnByQuestId, deletedLegacyPersonalCompletionCount, legacyXpBonus, discoveredPlantIds, pendingPlantGiftIds, starterPlantGiftPending, schemaVersion, todayKey, totalXp]);
 
   const historyForDisplay = completionHistory;
