@@ -2,7 +2,7 @@
 
 import { createPortal } from "react-dom";
 import { useCallback, useEffect, useRef, useState, type FocusEvent, type KeyboardEvent } from "react";
-import { dateFromKey, getLocalDateKey, isCompletionDateKey, weekdayNames } from "../../quest-logic";
+import { dateFromKey, getLocalDateKey, isCompletionDateKey, localNoonDate, weekdayNames } from "../../quest-logic";
 import {
   getCalendarGridDays,
   shiftCalendarDateByDays,
@@ -24,7 +24,7 @@ type QuestDatePickerProps = {
 };
 
 function monthStart(date: Date) {
-  return new Date(date.getFullYear(), date.getMonth(), 1, 12);
+  return localNoonDate(date.getFullYear(), date.getMonth(), 1);
 }
 
 function monthLabel(date: Date) {

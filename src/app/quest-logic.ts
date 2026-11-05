@@ -22,7 +22,7 @@ export const weekdayLabels: Weekday[] = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri
 export const weekdayNames: Weekday[] = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 
 export function getLocalDateKey(date: Date): string {
-  const year = date.getFullYear();
+  const year = String(date.getFullYear()).padStart(4, "0");
   const month = String(date.getMonth() + 1).padStart(2, "0");
   const day = String(date.getDate()).padStart(2, "0");
   return `${year}-${month}-${day}`;
@@ -36,13 +36,23 @@ export function formatLocalDateLabel(date: Date, locale?: string): string {
   });
 }
 
+/**
+ * Builds a date at local noon. new Date(year, ...) treats years 0-99 as 1900-1999, so the year is set
+ * separately. Like that constructor, it rolls an out-of-range month or day over into the next one.
+ */
+export function localNoonDate(year: number, monthIndex: number, day: number): Date {
+  const date = new Date(2000, 0, 1, 12);
+  date.setFullYear(year, monthIndex, day);
+  return date;
+}
+
 export function dateFromKey(key: string): Date {
   const [year, month, day] = key.split("-").map(Number);
-  return new Date(year, month - 1, day, 12);
+  return localNoonDate(year, month - 1, day);
 }
 
 export function addCalendarDays(date: Date, amount: number): Date {
-  const result = new Date(date.getFullYear(), date.getMonth(), date.getDate(), 12);
+  const result = localNoonDate(date.getFullYear(), date.getMonth(), date.getDate());
   result.setDate(result.getDate() + amount);
   return result;
 }

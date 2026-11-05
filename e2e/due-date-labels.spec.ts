@@ -219,6 +219,46 @@ test.describe("Due-date labels on quest rows", () => {
   });
 });
 
+test.describe("Due dates in very early years", () => {
+  test("rows, the form preview, and the calendar all use the real year", async ({ page }) => {
+    await seedPersonal(page, [personalQuest({ dueDate: "0001-01-01", schedule: undefined })]);
+    await openApp(page);
+
+    await expect(dueQuestRow(page)).toContainText("Study · Due Jan 1, 1");
+    await expect(dueQuestRow(page)).not.toContainText("1901");
+    await expect(pastDueBadge(page)).toBeVisible();
+
+    await page.getByRole("button", { name: `Edit ${DUE_QUEST}`, exact: true }).click();
+    await expect(page.getByRole("region", { name: "Quest preview" }).locator(".quest-preview-schedule")).toHaveText("Due Jan 1, 1");
+    await page.getByRole("button", { name: "Due date", exact: true }).click();
+    await expect(page.getByRole("dialog")).not.toContainText("1901");
+    await expect(page.getByRole("dialog").getByRole("heading", { level: 2 })).toHaveText(/^January 1$/);
+    await page.keyboard.press("Escape");
+
+    await page.getByRole("button", { name: "Save changes" }).click();
+    await expect(page).toHaveURL(/\/$/);
+    await reloadApp(page);
+    await expect(dueQuestRow(page)).toContainText("Study · Due Jan 1, 1");
+    expect(JSON.parse((await readStorage(page, QUEST_SAVE_KEY))!).questLists.personal[0].dueDate).toBe("0001-01-01");
+  });
+
+  test("the completion history shows the real year", async ({ page }) => {
+    await seedStorage(page, {
+      [QUEST_SAVE_KEY]: JSON.stringify({
+        ...JSON.parse(buildSave()),
+        personalXpByQuestId: { old: 5 },
+        personalCompletedOnByQuestId: { old: "0099-12-31" },
+      }),
+    });
+
+    await openApp(page, "/completion-history");
+
+    const summary = page.locator("summary").first();
+    await expect(summary).toContainText("December 31, 99");
+    await expect(summary).not.toContainText("1999");
+  });
+});
+
 test.describe("Quests with no real due date", () => {
   async function quickAddPersonal(page: Page, title: string, difficulty?: "Easy" | "Medium" | "Hard") {
     const panel = personalPanel(page);
