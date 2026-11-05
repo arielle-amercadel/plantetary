@@ -4,7 +4,7 @@ import Image from "next/image";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import CategoryPicker, { CUSTOM_CATEGORY_VALUE } from "./category-picker";
-import { getDailyQuestScheduleLabel, getDueDateLabel, getQuestListProgress, isQuestPastDue, isQuestScheduledOnDate } from "./quest-logic";
+import { getDailyQuestScheduleLabel, getDueDateLabel, getQuestListProgress, isQuestPastDue, isQuestScheduledOnDate, weekdays } from "./quest-logic";
 import { getCustomCategoryError, getQuestXp, useQuestStore, type Difficulty, type Quest } from "./quest-store";
 
 type QuestPanelProps = {
@@ -68,7 +68,8 @@ export default function QuestPanel({
       id: `${id}-${Date.now()}`,
       title: trimmedTitle,
       category,
-      schedule: id === "daily-quests" ? "Every day" : "",
+      schedule: list === "daily" ? "Every day" : "",
+      ...(list === "daily" ? { repeatSchedule: "Every day" as const, selectedDays: [...weekdays] } : {}),
       difficulty: newDifficulty,
       completed: false,
     });

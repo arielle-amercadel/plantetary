@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { getDueDateLabel, isQuestPastDue, isQuestScheduledOnDate } from "../src/app/quest-logic";
+import {
+  getDailyQuestScheduleLabel,
+  getDueDateLabel,
+  isQuestPastDue,
+  isQuestScheduledOnDate,
+  scheduledDaysForQuest,
+  weekdays,
+} from "../src/app/quest-logic";
 import { initialQuestLists } from "../src/app/quest-store";
 
 const todayKey = "2026-10-19";
@@ -25,6 +32,53 @@ describe("starter quests", () => {
     for (const quest of initialQuestLists.personal) {
       expect(isQuestScheduledOnDate(quest, monday)).toBe(false);
     }
+  });
+
+  describe("explicit recurrence on Daily Quests", () => {
+    const allDays = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+
+    it("saves Every day with all seven days in the standard order", () => {
+      expect(initialQuestLists.daily).toHaveLength(4);
+      for (const quest of initialQuestLists.daily) {
+        expect(quest.repeatSchedule).toBe("Every day");
+        expect(quest.selectedDays).toEqual(allDays);
+      }
+    });
+
+    it("stays scheduled and labeled the same without relying on the legacy text", () => {
+      for (const quest of initialQuestLists.daily) {
+        const withoutText = { ...quest, schedule: "" };
+
+        expect(isQuestScheduledOnDate(withoutText, monday)).toBe(true);
+        expect(scheduledDaysForQuest(withoutText)).toEqual(allDays);
+        expect(getDailyQuestScheduleLabel(quest)).toBe("Every day");
+      }
+    });
+
+    it("gives each quest its own list, separate from the shared weekday constant", () => {
+      const lists = initialQuestLists.daily.map((quest) => quest.selectedDays);
+
+      expect(new Set(lists).size).toBe(lists.length);
+      for (const list of lists) expect(list).not.toBe(weekdays);
+    });
+
+    it("preserves the other starter details", () => {
+      expect(initialQuestLists.daily.map(({ id, title, category, difficulty, completed }) => ({
+        id, title, category, difficulty, completed,
+      }))).toEqual([
+        { id: "water", title: "Drink a glass of water", category: "Wellness", difficulty: "Easy", completed: false },
+        { id: "skincare", title: "Morning skincare", category: "Self-care", difficulty: "Easy", completed: false },
+        { id: "reading", title: "Read for 20 minutes", category: "Personal growth", difficulty: "Medium", completed: false },
+        { id: "stretch", title: "Evening stretch", category: "Wellness", difficulty: "Easy", completed: false },
+      ]);
+    });
+
+    it("does not add recurrence to Personal Quests", () => {
+      for (const quest of initialQuestLists.personal) {
+        expect(quest).not.toHaveProperty("repeatSchedule");
+        expect(quest).not.toHaveProperty("selectedDays");
+      }
+    });
   });
 
   it("keeps Daily Quests scheduled every day through their saved text", () => {
