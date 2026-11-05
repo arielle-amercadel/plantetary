@@ -11,7 +11,8 @@ This stage adds Plantetary's database tables, access rules and tests, and nothin
 | `supabase/migrations/20261105220100_create_profiles.sql` | `profiles` table, its triggers and access rules |
 | `supabase/migrations/20261105220200_create_quest_saves.sql` | `quest_saves` table, its triggers and access rules |
 | `supabase/migrations/20261105220300_create_save_backups.sql` | `save_backups` table, backup limits, the daily backup trigger and access rules |
-| `supabase/tests/database/*.test.sql` | 101 pgTAP tests across 5 files |
+| `supabase/migrations/20261105223950_fix_revision_reuse_and_backup_retention.sql` | Review fixes: revisions never repeat, and backup limits hold under concurrent inserts |
+| `supabase/tests/database/*.test.sql` | 125 pgTAP tests across 7 files |
 
 Migrations run in filename order. Never edit one after it has been applied to your hosted project; add a new migration instead.
 
@@ -43,15 +44,22 @@ RLS doesn't stop people from editing their own data, including XP. That's fine f
 
 | Trigger | Table | Effect |
 | --- | --- | --- |
-| Revision and timestamps | `quest_saves` | Revision starts at 1 and goes up by 1 on every update. `created_at` never changes, and `updated_at` is set on every update. |
+| Revision and timestamps | `quest_saves` | Revision goes up by 1 on every save and never repeats for a user, even if the save is deleted and created again. A user's first save is revision 1. `created_at` never changes, and `updated_at` is set on every update. |
 | Format guard | `quest_saves` | `schema_version` can't go down, so an old open tab can't overwrite a save made by a newer version of the app. |
 | `updated_at` | `profiles` | Set on every update. |
 | Daily backup | `quest_saves` | When a save's content changes, the copy being replaced is backed up, at most once per user per UTC day. |
-| Backup limits | `save_backups` | Keeps the newest 14 `daily`, 20 `conflict` and 5 `browser_import` backups per user, and removes older ones. |
+| Backup limits | `save_backups` | Keeps the newest 14 `daily`, 20 `conflict` and 5 `browser_import` backups per user, and removes older ones. Backups added at the same time for one user and reason take turns, so the limits hold. |
 
 The UTC day only spaces out backups. Game days still come from the player's own device, as before.
 
-To save without overwriting another device's change, the app will send `where revision = <the revision it loaded>`. If no row changes, another device saved first, which is a conflict. That's Stage 7's job; the tests here prove the database supports it.
+To save without overwriting another device's change, the app will send `where revision = <the revision it loaded>`. If no row changes, another device saved first, or the save was deleted and recreated, which is a conflict. That's Stage 7's job; the tests here prove the database supports it.
+
+Two small private tables support this, and users can't reach either:
+
+- `private.quest_save_revisions` remembers each user's highest revision, so it survives the save being deleted.
+- `private.save_backup_retention_locks` has one row per user and backup reason, which is locked while backups are pruned.
+
+Under the default `READ COMMITTED` isolation, a second write simply waits its turn. Under `REPEATABLE READ` or `SERIALIZABLE`, it fails with a serialization error (`40001`) and must be retried.
 
 ## Changes from the Stage 3 design
 
@@ -65,6 +73,8 @@ The core design is unchanged: one JSON record per user, stored as `json` rather 
 | Limits for `conflict` (20) and `browser_import` (5) backups | Stage 3 only limited daily backups. Each backup can be up to 10 MB, so a bug that keeps saving conflict copies could grow without limit. After 5 imports, the oldest import backup is removed. |
 | Users can't set a backup's `created_at` | Otherwise a backup could be backdated, which would affect which ones the limits remove. |
 | `profiles` gains `created_at`, and blank names are rejected | Matches the other tables, and the app already rejects blank names. |
+| Revisions never repeat for a user, even after delete and recreate (review fix) | Restarting at 1 let a stale tab that loaded revision 1 overwrite the recreated save without a conflict. |
+| Backups for one user and reason are pruned one at a time (review fix) | Pruning only saw committed backups, so two added at the same time could both be kept and exceed the limit. |
 | Every grant is written out | A hosted project may expose new tables to logged-out visitors automatically. Explicit grants give the same result either way. |
 | Trigger functions live in a `private` schema | The browser can't reach them through the Data API. |
 | No automatic profile on sign-up | A profile created at sign-up with the default name "Mira" could compete with the browser profile the user imports in Stage 8. The app will create it instead. |
@@ -82,6 +92,8 @@ npx supabase stop     # stop it when you're done
 ```
 
 The last lines of `test db` should say `All tests successful` and `Result: PASS`.
+
+`06_concurrency.test.sql` opens several extra sessions with `dblink` to add backups and save at the same moment. Those sessions commit for real, so the file uses its own test users and deletes them at the start and end.
 
 After changing a migration, rebuild the local database from scratch before testing:
 
@@ -112,7 +124,7 @@ Supabase CLI v3 targets your **local** database unless you add `--remote`. Every
    npx supabase link --project-ref <your-project-ref>
    ```
 
-5. **Preview what will run.** You should see the four migrations listed and nothing else.
+5. **Preview what will run.** You should see only the migrations your project doesn't have yet.
 
    ```bash
    npx supabase db push --remote --dry-run
@@ -124,17 +136,21 @@ Supabase CLI v3 targets your **local** database unless you add `--remote`. Every
    npx supabase db push --remote
    ```
 
-7. **Confirm they're recorded.** All four should show in both the Local and Remote columns.
+7. **Confirm they're recorded.** Every migration should show in both the Local and Remote columns.
 
    ```bash
    npx supabase migration list --remote
    ```
 
+Steps 1–4 are only needed once per computer. For a later migration, start at step 5.
+
 Please don't paste the migrations into the SQL Editor instead. The tables would work, but the CLI wouldn't know they'd been applied and would try to apply them again later.
 
 ## Run the tests against your hosted project
 
-Optional, but best done now while the project has no real users. Each test file runs inside a transaction that's rolled back, so its test users and rows are never kept.
+Optional, but best done while the project has no real users. Each test file runs inside a transaction that's rolled back, so its test users and rows are never kept.
+
+The concurrency tests (`06_concurrency.test.sql`) open extra sessions that commit for real, so they run only on the local stack. On your hosted project they're reported as skipped and never connect.
 
 ```bash
 npx supabase test db --remote
