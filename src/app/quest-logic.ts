@@ -11,6 +11,7 @@ import type {
   Quest,
   QuestListKey,
   QuestLists,
+  RepeatSchedule,
   StreakDay,
   StoredQuestData,
   Weekday,
@@ -62,6 +63,39 @@ export function scheduledDaysForQuest(quest: Quest): Weekday[] {
     return parsedDays as Weekday[];
   }
   return [];
+}
+
+function hasSameDays(saved: unknown, days: Weekday[]): boolean {
+  return Array.isArray(saved) && saved.length === days.length && saved.every((day, index) => day === days[index]);
+}
+
+/**
+ * Gives saved Daily Quests explicit recurrence without changing which days they run on.
+ * scheduledDaysForQuest decides the days, so conversion and scheduling cannot disagree. Unusable
+ * field values are set aside first, and anything that yields no days stays unscheduled. The legacy
+ * schedule text is kept. Returns the same object when nothing changes, so a clean save is not
+ * treated as corrected.
+ */
+export function normalizeDailyQuestSchedules(questLists: QuestLists): QuestLists {
+  let changed = false;
+  const daily = questLists.daily.map((quest) => {
+    const saved = quest as unknown as Record<string, unknown>;
+    const schedule = typeof saved.schedule === "string" ? saved.schedule : "";
+    const selectedDays = Array.isArray(saved.selectedDays) ? saved.selectedDays as Weekday[] : undefined;
+    const savedRepeat = saved.repeatSchedule === "Every day" || saved.repeatSchedule === "Selected days"
+      ? saved.repeatSchedule
+      : undefined;
+    const days = scheduledDaysForQuest({ ...quest, schedule, selectedDays, repeatSchedule: savedRepeat });
+    const isEveryDayText = !selectedDays?.length && schedule.trim().toLowerCase() === "every day";
+    const repeatSchedule: RepeatSchedule = savedRepeat ?? (isEveryDayText ? "Every day" : "Selected days");
+
+    if (saved.schedule === schedule && saved.repeatSchedule === repeatSchedule && hasSameDays(saved.selectedDays, days)) {
+      return quest;
+    }
+    changed = true;
+    return { ...quest, schedule, repeatSchedule, selectedDays: [...days] };
+  });
+  return changed ? { ...questLists, daily } : questLists;
 }
 
 export function formatWeekdaySchedule(days: Weekday[]): string {

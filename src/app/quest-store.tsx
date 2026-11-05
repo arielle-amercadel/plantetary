@@ -23,6 +23,7 @@ import {
   isCompletionDateKey,
   getCompletionHistoryView,
   normalizeCompletionHistoryDetails,
+  normalizeDailyQuestSchedules,
   getCompletedOverallCounts,
   getCompletedTodayCounts,
   getRecoverableOrphanedDailyQuestIds,
@@ -194,7 +195,7 @@ const initialStoredQuestData = migratePlantDiscoveries(migrateStoredData({
   starterPlantGiftPending: true,
 }));
 
-function hasValidQuestFieldsExceptDueDate(value: unknown): value is Quest {
+function hasValidCoreQuestFields(value: unknown): value is Quest {
   if (typeof value !== "object" || value === null) return false;
 
   const quest = value as Record<string, unknown>;
@@ -202,19 +203,28 @@ function hasValidQuestFieldsExceptDueDate(value: unknown): value is Quest {
     typeof quest.id === "string" &&
     typeof quest.title === "string" &&
     typeof quest.category === "string" &&
-    typeof quest.schedule === "string" &&
     (quest.difficulty === "Easy" || quest.difficulty === "Medium" || quest.difficulty === "Hard") &&
     typeof quest.completed === "boolean" &&
-    (quest.repeatSchedule === undefined ||
-      quest.repeatSchedule === "Every day" || quest.repeatSchedule === "Selected days") &&
-    (quest.selectedDays === undefined ||
-      (Array.isArray(quest.selectedDays) && quest.selectedDays.every((day) => weekdays.includes(day)))) &&
     (quest.notes === undefined || typeof quest.notes === "string")
   );
 }
 
+function isPersonalQuest(value: unknown): value is Quest {
+  if (!hasValidCoreQuestFields(value)) return false;
+
+  const quest = value as unknown as Record<string, unknown>;
+  return (
+    typeof quest.schedule === "string" &&
+    (quest.repeatSchedule === undefined ||
+      quest.repeatSchedule === "Every day" || quest.repeatSchedule === "Selected days") &&
+    (quest.selectedDays === undefined ||
+      (Array.isArray(quest.selectedDays) && quest.selectedDays.every((day) => weekdays.includes(day))))
+  );
+}
+
+// Bad recurrence fields on a Daily Quest are recovered on load rather than rejecting the whole save.
 function isDailyQuest(value: unknown): value is Quest {
-  if (!hasValidQuestFieldsExceptDueDate(value)) return false;
+  if (!hasValidCoreQuestFields(value)) return false;
   const dueDate: unknown = value.dueDate;
   return dueDate === undefined || typeof dueDate === "string";
 }
@@ -232,7 +242,7 @@ function isStoredQuestData(value: unknown): value is StoredQuestData {
       questLists.daily.every(isDailyQuest) &&
       Array.isArray(questLists.personal) &&
       // A bad Personal due date is removed on load rather than rejecting the whole save.
-      questLists.personal.every(hasValidQuestFieldsExceptDueDate) &&
+      questLists.personal.every(isPersonalQuest) &&
       categoryLists &&
       Array.isArray(categoryLists.daily) &&
       categoryLists.daily.every((category) => typeof category === "string") &&
@@ -330,7 +340,9 @@ export function QuestProvider({ children }: { children: ReactNode }) {
               isValidDeletedLegacyPersonalCompletionCount(parsedData.deletedLegacyPersonalCompletionCount)
               ? parsedData.deletedLegacyPersonalCompletionCount
               : undefined;
-            const validQuestLists = removeInvalidPersonalDueDates(parsedData.questLists);
+            const validQuestLists = normalizeDailyQuestSchedules(
+              removeInvalidPersonalDueDates(parsedData.questLists),
+            );
             const optionalFieldsUnchanged =
               validQuestLists === parsedData.questLists &&
               normalizedCompletionHistory === parsedData.completionHistory &&
