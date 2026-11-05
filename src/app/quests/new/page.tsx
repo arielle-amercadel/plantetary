@@ -140,16 +140,12 @@ function CreateQuestForm({
     if (questType === "daily" && !repeatSchedule) return;
     if (categorySelection === CUSTOM_CATEGORY_VALUE && !addCategory(questType, categoryValue)) return;
 
-    const schedule = questType === "daily"
-      ? repeatSchedule === "Every day" ? "Every day" : selectedDays.join(", ")
-      : "";
     const dailyRepeatSchedule = questType === "daily" && repeatSchedule
       ? repeatSchedule
       : undefined;
     const updates: Partial<Omit<Quest, "id" | "completed">> = {
       title: title.trim(),
       category: categoryValue,
-      schedule,
       difficulty,
       notes: notes.trim(),
       ...(dailyRepeatSchedule
@@ -172,7 +168,6 @@ function CreateQuestForm({
         id: `${questType}-${Date.now()}`,
         title: title.trim(),
         category: categoryValue,
-        schedule,
         difficulty,
         completed: false,
       };

@@ -171,7 +171,7 @@ test.describe("Due-date labels on quest rows", () => {
     await expectHomeXp(page, 0);
   });
 
-  test("Daily Quests keep their schedule labels and ignore any due date", async ({ page }) => {
+  test("Daily Quests keep their schedule labels and do not use any saved due date", async ({ page }) => {
     await seedStorage(page, {
       [QUEST_SAVE_KEY]: buildSave({
         daily: [
@@ -244,7 +244,7 @@ test.describe("Quests with no real due date", () => {
     await expect(categoryLineWithoutDate(page, "Personal", title)).toBeVisible();
 
     const saved = (await savedQuests(page)).personal.find((quest) => quest.title === title)!;
-    expect(saved.schedule).toBe("");
+    expect(saved).not.toHaveProperty("schedule");
     expect(saved).not.toHaveProperty("dueDate");
 
     await reloadApp(page);
@@ -276,7 +276,7 @@ test.describe("Quests with no real due date", () => {
     }
 
     for (const quest of (await savedQuests(page)).personal) {
-      expect(quest.schedule).toBe("");
+      expect(quest).not.toHaveProperty("schedule");
       expect(quest).not.toHaveProperty("dueDate");
     }
 
@@ -284,7 +284,7 @@ test.describe("Quests with no real due date", () => {
     await expect(page.getByText("Past Due", { exact: true })).toHaveCount(0);
   });
 
-  test("an existing save keeps its old label text, which rows do not show", async ({ page }) => {
+  test("an existing save's old label text is never shown, and is removed on load", async ({ page }) => {
     await seedPersonal(page, [personalQuest({ schedule: "Due today" })]);
 
     await openApp(page);
@@ -292,7 +292,7 @@ test.describe("Quests with no real due date", () => {
     await reloadApp(page);
 
     await expect(categoryLineWithoutDate(page, "Study")).toBeVisible();
-    expect((await savedQuests(page)).personal[0].schedule).toBe("Due today");
+    expect((await savedQuests(page)).personal[0]).not.toHaveProperty("schedule");
   });
 
   test("a quick-add Daily Quest keeps Every day, its schedule, and its streak", async ({ page }) => {
@@ -307,7 +307,8 @@ test.describe("Quests with no real due date", () => {
     const row = questRow(dailyPanel(page), title);
     await expect(row).toContainText("Wellness · Every day");
     const saved = (await savedQuests(page)).daily[0];
-    expect(saved.schedule).toBe("Every day");
+    expect(saved).not.toHaveProperty("schedule");
+    expect(saved.repeatSchedule).toBe("Every day");
     expect(saved).not.toHaveProperty("dueDate");
 
     await completeQuest(page, title);

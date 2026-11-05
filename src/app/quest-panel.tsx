@@ -68,7 +68,6 @@ export default function QuestPanel({
       id: `${id}-${Date.now()}`,
       title: trimmedTitle,
       category,
-      schedule: list === "daily" ? "Every day" : "",
       ...(list === "daily" ? { repeatSchedule: "Every day" as const, selectedDays: [...weekdays] } : {}),
       difficulty: newDifficulty,
       completed: false,

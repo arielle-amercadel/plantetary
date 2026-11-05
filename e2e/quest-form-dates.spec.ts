@@ -96,7 +96,7 @@ test.describe("Creating a Personal Quest", () => {
     await expect(row(page)).toContainText("Study · Due Oct 22");
     const saved = await savedQuest(page, "personal");
     expect(saved.dueDate).toBe("2026-10-22");
-    expect(saved.schedule).toBe("");
+    expect(saved).not.toHaveProperty("schedule");
 
     await reloadApp(page);
     await expect(row(page)).toContainText("Study · Due Oct 22");
@@ -110,7 +110,7 @@ test.describe("Creating a Personal Quest", () => {
     await expect(row(page).getByText("Study", { exact: true })).toBeVisible();
     const saved = await savedQuest(page, "personal");
     expect(saved).not.toHaveProperty("dueDate");
-    expect(saved.schedule).toBe("");
+    expect(saved).not.toHaveProperty("schedule");
 
     await reloadApp(page);
     await expect(row(page).getByText("Study", { exact: true })).toBeVisible();
@@ -188,7 +188,7 @@ test.describe("Editing a Personal Quest's date", () => {
     await expect(row(page)).toContainText("Study · Due Oct 22");
     const saved = await savedQuest(page, "personal");
     expect(saved.dueDate).toBe("2026-10-22");
-    expect(saved.schedule).toBe("");
+    expect(saved).not.toHaveProperty("schedule");
   });
 
   test("a date can be changed, and survives a reload", async ({ page }) => {
@@ -223,14 +223,14 @@ test.describe("Editing a Personal Quest's date", () => {
     await expect(row(page).getByText("Study", { exact: true })).toBeVisible();
     const saved = await savedQuest(page, "personal");
     expect(saved).not.toHaveProperty("dueDate");
-    expect(saved.schedule).toBe("");
+    expect(saved).not.toHaveProperty("schedule");
 
     await openEdit(page);
     await expect(previewDateLine(page)).toHaveText("No due date");
   });
 
   for (const oldLabel of ["Due today", "Due Oct 20", "No due date"]) {
-    test(`an old saved "${oldLabel}" label does not resurface, and saving removes it`, async ({ page }) => {
+    test(`an old saved "${oldLabel}" label does not resurface, and is removed from the saved quest`, async ({ page }) => {
       await seedPersonal(page, { schedule: oldLabel });
       await openApp(page);
 
@@ -239,7 +239,7 @@ test.describe("Editing a Personal Quest's date", () => {
       await saveEdit(page);
 
       const saved = await savedQuest(page, "personal");
-      expect(saved.schedule).toBe("");
+      expect(saved).not.toHaveProperty("schedule");
       expect(saved).not.toHaveProperty("dueDate");
       await expect(row(page).getByText("Study", { exact: true })).toBeVisible();
     });
@@ -254,7 +254,7 @@ test.describe("Editing a Personal Quest's date", () => {
     await saveEdit(page);
 
     const saved = await savedQuest(page, "personal");
-    expect(saved.schedule).toBe("");
+    expect(saved).not.toHaveProperty("schedule");
     expect(saved.dueDate).toBe("2026-10-22");
   });
 
@@ -298,7 +298,7 @@ test.describe("Daily Quests in the form", () => {
     await expect(page).toHaveURL(/\/$/);
 
     const saved = await savedQuest(page, "daily", TITLE);
-    expect(saved.schedule).toBe("Every day");
+    expect(saved).not.toHaveProperty("schedule");
     expect(saved.repeatSchedule).toBe("Every day");
     expect(saved).not.toHaveProperty("dueDate");
     await expect(questRow(dailyPanel(page), TITLE)).toContainText("Wellness · Every day");
@@ -319,7 +319,7 @@ test.describe("Daily Quests in the form", () => {
     await expect(page).toHaveURL(/\/$/);
 
     const saved = await savedQuest(page, "daily", TITLE);
-    expect(saved.schedule).toBe("Mon, Wed");
+    expect(saved).not.toHaveProperty("schedule");
     expect(saved.selectedDays).toEqual(["Mon", "Wed"]);
     expect(saved).not.toHaveProperty("dueDate");
     await expect(questRow(dailyPanel(page), TITLE)).toContainText("Wellness · Mon, Wed");
@@ -328,7 +328,9 @@ test.describe("Daily Quests in the form", () => {
     await expect(previewDateLine(page)).toHaveText("Mon, Wed · resets at midnight");
     await page.getByRole("button", { name: "Fri", exact: true }).click();
     await saveEdit(page);
-    expect((await savedQuest(page, "daily", TITLE)).schedule).toBe("Mon, Wed, Fri");
+    const edited = await savedQuest(page, "daily", TITLE);
+    expect(edited.selectedDays).toEqual(["Mon", "Wed", "Fri"]);
+    expect(edited).not.toHaveProperty("schedule");
   });
 
   test("editing a starter Daily Quest keeps its schedule and streak", async ({ page }) => {
@@ -348,6 +350,8 @@ test.describe("Daily Quests in the form", () => {
 
     await expect(questRow(dailyPanel(page), starter)).toContainText("Wellness · Every day");
     await expectStreak(page, 1);
-    expect((await savedQuest(page, "daily", starter)).schedule).toBe("Every day");
+    const edited = await savedQuest(page, "daily", starter);
+    expect(edited.repeatSchedule).toBe("Every day");
+    expect(edited).not.toHaveProperty("schedule");
   });
 });

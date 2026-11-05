@@ -17,7 +17,7 @@ describe("starter quests", () => {
     expect(initialQuestLists.personal.length).toBeGreaterThan(0);
     for (const quest of initialQuestLists.personal) {
       expect(quest.dueDate).toBeUndefined();
-      expect(quest.schedule).toBe("");
+      expect(quest).not.toHaveProperty("schedule");
     }
   });
 
@@ -28,7 +28,7 @@ describe("starter quests", () => {
     }
   });
 
-  it("does not treat a Personal Quest's empty schedule as a scheduled day", () => {
+  it("does not treat a Personal Quest as scheduled on any day", () => {
     for (const quest of initialQuestLists.personal) {
       expect(isQuestScheduledOnDate(quest, monday)).toBe(false);
     }
@@ -45,12 +45,10 @@ describe("starter quests", () => {
       }
     });
 
-    it("stays scheduled and labeled the same without relying on the legacy text", () => {
+    it("is scheduled and labeled from its recurrence", () => {
       for (const quest of initialQuestLists.daily) {
-        const withoutText = { ...quest, schedule: "" };
-
-        expect(isQuestScheduledOnDate(withoutText, monday)).toBe(true);
-        expect(scheduledDaysForQuest(withoutText)).toEqual(allDays);
+        expect(isQuestScheduledOnDate(quest, monday)).toBe(true);
+        expect(scheduledDaysForQuest(quest)).toEqual(allDays);
         expect(getDailyQuestScheduleLabel(quest)).toBe("Every day");
       }
     });
@@ -81,10 +79,10 @@ describe("starter quests", () => {
     });
   });
 
-  it("keeps the legacy text on Daily Quests, which stay scheduled every day", () => {
+  it("gives Daily Quests no legacy text or due date, and keeps them scheduled every day", () => {
     expect(initialQuestLists.daily.length).toBeGreaterThan(0);
     for (const quest of initialQuestLists.daily) {
-      expect(quest.schedule).toBe("Every day");
+      expect(quest).not.toHaveProperty("schedule");
       expect(quest.dueDate).toBeUndefined();
       expect(isQuestScheduledOnDate(quest, monday)).toBe(true);
     }

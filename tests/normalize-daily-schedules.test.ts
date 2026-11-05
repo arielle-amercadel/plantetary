@@ -4,6 +4,7 @@ import {
   getDailyQuestScheduleLabel,
   getStreakValues,
   normalizeDailyQuestSchedules,
+  normalizeSavedQuestLists,
   scheduledDaysForQuest,
   weekdays,
 } from "../src/app/quest-logic";
@@ -16,7 +17,6 @@ function quest(overrides: Record<string, unknown> = {}): Quest {
     id: "quest",
     title: "Test quest",
     category: "Wellness",
-    schedule: "",
     difficulty: "Easy",
     completed: false,
     ...overrides,
@@ -34,7 +34,7 @@ describe("normalizeDailyQuestSchedules", () => {
 
       expect(converted.repeatSchedule).toBe("Every day");
       expect(converted.selectedDays).toEqual(ALL_DAYS);
-      expect(converted.schedule).toBe(schedule);
+      expect(converted).not.toHaveProperty("schedule");
     });
 
     it.each<[string, Weekday[]]>([
@@ -48,7 +48,7 @@ describe("normalizeDailyQuestSchedules", () => {
 
       expect(converted.repeatSchedule).toBe("Selected days");
       expect(converted.selectedDays).toEqual(expected);
-      expect(converted.schedule).toBe(schedule);
+      expect(converted).not.toHaveProperty("schedule");
     });
 
     it.each(["Daily", "Weekdays", "", "   ", "Monday", "mon, wed", "Mon, Funday", "Mon, Wed,", "Due today"])(
@@ -59,20 +59,20 @@ describe("normalizeDailyQuestSchedules", () => {
         expect(converted.repeatSchedule).toBe("Selected days");
         expect(converted.selectedDays).toEqual([]);
         expect(scheduledDaysForQuest(converted)).toEqual([]);
-        expect(converted.schedule).toBe(schedule);
+        expect(converted).not.toHaveProperty("schedule");
       },
     );
   });
 
   describe("existing structured recurrence", () => {
     it("leaves a clean Every day quest as the same object", () => {
-      const clean = quest({ schedule: "Every day", repeatSchedule: "Every day", selectedDays: [...ALL_DAYS] });
+      const clean = quest({ repeatSchedule: "Every day", selectedDays: [...ALL_DAYS] });
 
       expect(normalize(clean)).toBe(clean);
     });
 
     it("leaves a clean Selected days quest as the same object, whatever its day order", () => {
-      const clean = quest({ schedule: "Wed, Mon", repeatSchedule: "Selected days", selectedDays: ["Wed", "Mon"] });
+      const clean = quest({ repeatSchedule: "Selected days", selectedDays: ["Wed", "Mon"] });
 
       expect(normalize(clean)).toBe(clean);
     });
@@ -94,38 +94,37 @@ describe("normalizeDailyQuestSchedules", () => {
       ["an empty list falls back to every-day text", { selectedDays: [], schedule: "Every day" }, "Every day", ALL_DAYS],
       ["an empty list falls back to weekday text", { selectedDays: [], schedule: "Mon" }, "Selected days", ["Mon"]],
     ])("%s", (_description, fields, repeatSchedule, days) => {
-      const before = quest(fields);
-      const converted = normalize(before);
-
-      expect(converted.repeatSchedule).toBe(repeatSchedule);
-      expect(converted.selectedDays).toEqual(days);
-      expect(converted.schedule).toBe(before.schedule);
-    });
-  });
-
-  describe("malformed recurrence", () => {
-    it.each<[string, Record<string, unknown>, string, Weekday[], string]>([
-      ["an unknown repeatSchedule, recovering from every-day text", { repeatSchedule: "Weekly", schedule: "Every day" }, "Every day", ALL_DAYS, "Every day"],
-      ["an unknown repeatSchedule, recovering from weekday text", { repeatSchedule: "Weekly", schedule: "Mon, Wed" }, "Selected days", ["Mon", "Wed"], "Mon, Wed"],
-      ["an unknown repeatSchedule, recovering from a day list", { repeatSchedule: "Weekly", selectedDays: ["Fri"], schedule: "Mon" }, "Selected days", ["Fri"], "Mon"],
-      ["an unknown repeatSchedule with nothing usable", { repeatSchedule: "Weekly", schedule: "Daily" }, "Selected days", [], "Daily"],
-      ["a wrong-type repeatSchedule", { repeatSchedule: 5, schedule: "Mon" }, "Selected days", ["Mon"], "Mon"],
-      ["a null repeatSchedule", { repeatSchedule: null, schedule: "Every day" }, "Every day", ALL_DAYS, "Every day"],
-      ["a day list holding invalid entries", { repeatSchedule: "Selected days", selectedDays: ["Mon", "Funday", 7, null], schedule: "" }, "Selected days", ["Mon"], ""],
-      ["only invalid entries, which do not fall back to text", { selectedDays: ["Funday"], schedule: "Every day" }, "Selected days", [], "Every day"],
-      ["a day list that is a string", { selectedDays: "Mon", schedule: "Every day" }, "Every day", ALL_DAYS, "Every day"],
-      ["a day list that is an object", { selectedDays: { Mon: true }, schedule: "Tue" }, "Selected days", ["Tue"], "Tue"],
-      ["a null day list under Selected days", { repeatSchedule: "Selected days", selectedDays: null, schedule: "Mon" }, "Selected days", [], "Mon"],
-      ["a wrong-type schedule", { schedule: 42 }, "Selected days", [], ""],
-      ["a null schedule", { schedule: null, selectedDays: ["Mon"] }, "Selected days", ["Mon"], ""],
-      ["a missing schedule", { schedule: undefined }, "Selected days", [], ""],
-      ["a missing schedule with valid recurrence", { schedule: undefined, repeatSchedule: "Every day" }, "Every day", ALL_DAYS, ""],
-    ])("recovers %s", (_description, fields, repeatSchedule, days, schedule) => {
       const converted = normalize(quest(fields));
 
       expect(converted.repeatSchedule).toBe(repeatSchedule);
       expect(converted.selectedDays).toEqual(days);
-      expect(converted.schedule).toBe(schedule);
+      expect(converted).not.toHaveProperty("schedule");
+    });
+  });
+
+  describe("malformed recurrence", () => {
+    it.each<[string, Record<string, unknown>, string, Weekday[]]>([
+      ["an unknown repeatSchedule, recovering from every-day text", { repeatSchedule: "Weekly", schedule: "Every day" }, "Every day", ALL_DAYS],
+      ["an unknown repeatSchedule, recovering from weekday text", { repeatSchedule: "Weekly", schedule: "Mon, Wed" }, "Selected days", ["Mon", "Wed"]],
+      ["an unknown repeatSchedule, recovering from a day list", { repeatSchedule: "Weekly", selectedDays: ["Fri"], schedule: "Mon" }, "Selected days", ["Fri"]],
+      ["an unknown repeatSchedule with nothing usable", { repeatSchedule: "Weekly", schedule: "Daily" }, "Selected days", []],
+      ["a wrong-type repeatSchedule", { repeatSchedule: 5, schedule: "Mon" }, "Selected days", ["Mon"]],
+      ["a null repeatSchedule", { repeatSchedule: null, schedule: "Every day" }, "Every day", ALL_DAYS],
+      ["a day list holding invalid entries", { repeatSchedule: "Selected days", selectedDays: ["Mon", "Funday", 7, null], schedule: "" }, "Selected days", ["Mon"]],
+      ["only invalid entries, which do not fall back to text", { selectedDays: ["Funday"], schedule: "Every day" }, "Selected days", []],
+      ["a day list that is a string", { selectedDays: "Mon", schedule: "Every day" }, "Every day", ALL_DAYS],
+      ["a day list that is an object", { selectedDays: { Mon: true }, schedule: "Tue" }, "Selected days", ["Tue"]],
+      ["a null day list under Selected days", { repeatSchedule: "Selected days", selectedDays: null, schedule: "Mon" }, "Selected days", []],
+      ["a wrong-type schedule", { schedule: 42 }, "Selected days", []],
+      ["a null schedule", { schedule: null, selectedDays: ["Mon"] }, "Selected days", ["Mon"]],
+      ["a missing schedule", {}, "Selected days", []],
+      ["a missing schedule with valid recurrence", { repeatSchedule: "Every day" }, "Every day", ALL_DAYS],
+    ])("recovers %s", (_description, fields, repeatSchedule, days) => {
+      const converted = normalize(quest(fields));
+
+      expect(converted.repeatSchedule).toBe(repeatSchedule);
+      expect(converted.selectedDays).toEqual(days);
+      expect(converted).not.toHaveProperty("schedule");
       expect(scheduledDaysForQuest(converted)).toEqual(days);
       expect(() => getDailyQuestScheduleLabel(converted)).not.toThrow();
     });
@@ -140,7 +139,7 @@ describe("normalizeDailyQuestSchedules", () => {
         return target.selectedDays?.filter((day) => ALL_DAYS.includes(day)) ?? [];
       }
       if (target.selectedDays?.length) return target.selectedDays.filter((day) => ALL_DAYS.includes(day));
-      const text = target.schedule.trim();
+      const text = (target.schedule ?? "").trim();
       if (text.toLowerCase() === "every day") return ALL_DAYS;
       const parsed = text.split(",").map((day) => day.trim());
       if (parsed.length > 0 && parsed.every((day) => ALL_DAYS.includes(day as Weekday))) return parsed as Weekday[];
@@ -202,8 +201,8 @@ describe("normalizeDailyQuestSchedules", () => {
     it("returns the same lists when nothing needs converting, so no backup is triggered", () => {
       const lists: QuestLists = {
         daily: [
-          quest({ id: "a", schedule: "Every day", repeatSchedule: "Every day", selectedDays: [...ALL_DAYS] }),
-          quest({ id: "b", schedule: "Mon", repeatSchedule: "Selected days", selectedDays: ["Mon"] }),
+          quest({ id: "a", repeatSchedule: "Every day", selectedDays: [...ALL_DAYS] }),
+          quest({ id: "b", repeatSchedule: "Selected days", selectedDays: ["Mon"] }),
         ],
         personal: [quest({ id: "p", schedule: "Due today" })],
       };
@@ -212,7 +211,7 @@ describe("normalizeDailyQuestSchedules", () => {
     });
 
     it("returns new lists when any quest changes, and reuses the quests that did not", () => {
-      const clean = quest({ id: "a", schedule: "Every day", repeatSchedule: "Every day", selectedDays: [...ALL_DAYS] });
+      const clean = quest({ id: "a", repeatSchedule: "Every day", selectedDays: [...ALL_DAYS] });
       const lists: QuestLists = { daily: [clean, quest({ id: "b", schedule: "Mon" })], personal: [] };
 
       const next = normalizeDailyQuestSchedules(lists);
@@ -223,18 +222,29 @@ describe("normalizeDailyQuestSchedules", () => {
     });
 
     it("keeps every other field of a converted quest", () => {
-      const before = quest({
-        id: "keep",
-        title: "Keep me",
-        category: "Self-care",
-        difficulty: "Hard",
-        completed: true,
-        notes: "A note",
-        dueDate: "2026-10-22",
-        schedule: "Every day",
-      });
+      const fields = { id: "keep", title: "Keep me", category: "Self-care", difficulty: "Hard", completed: true, notes: "A note" };
 
-      expect(normalize(before)).toEqual({ ...before, repeatSchedule: "Every day", selectedDays: ALL_DAYS });
+      expect(normalize(quest({ ...fields, schedule: "Every day" }))).toEqual({
+        ...fields,
+        repeatSchedule: "Every day",
+        selectedDays: ALL_DAYS,
+      });
+    });
+
+    it.each<[string, unknown]>([
+      ["a valid date", "2026-10-22"],
+      ["an impossible date", "2026-02-30"],
+      ["malformed text", "not-a-date"],
+      ["an empty string", ""],
+      ["a number", 123],
+      ["null", null],
+      ["an object", { year: 2026 }],
+    ])("removes %s from a Daily Quest's due date, and keeps its schedule", (_description, dueDate) => {
+      const converted = normalize(quest({ repeatSchedule: "Selected days", selectedDays: ["Mon"], notes: "A note", dueDate }));
+
+      expect(converted).not.toHaveProperty("dueDate");
+      expect(converted.selectedDays).toEqual(["Mon"]);
+      expect(converted.notes).toBe("A note");
     });
 
     it("does not change the original quest or lists", () => {
@@ -264,6 +274,69 @@ describe("normalizeDailyQuestSchedules", () => {
       const lists: QuestLists = { daily: [quest({ id: "d", schedule: "Mon" })], personal };
 
       expect(normalizeDailyQuestSchedules(lists).personal).toBe(personal);
+    });
+  });
+
+  describe("normalizeSavedQuestLists", () => {
+    const clean = (): QuestLists => ({
+      daily: [quest({ id: "d", repeatSchedule: "Selected days", selectedDays: ["Mon"] })],
+      personal: [quest({ id: "dated", dueDate: "2026-10-22" }), quest({ id: "undated" })],
+    });
+
+    it("returns the same lists for a clean save", () => {
+      const lists = clean();
+
+      expect(normalizeSavedQuestLists(lists)).toBe(lists);
+    });
+
+    it.each(["Due today", "Due Oct 20", "No due date", "", "Every day"])("removes the old Personal label %j", (schedule) => {
+      const { personal } = normalizeSavedQuestLists({ daily: [], personal: [quest({ schedule, notes: "A note" })] });
+
+      expect(personal[0]).not.toHaveProperty("schedule");
+      expect(personal[0].notes).toBe("A note");
+    });
+
+    it("keeps valid Personal due dates and removes invalid ones", () => {
+      const { personal } = normalizeSavedQuestLists({
+        daily: [],
+        personal: [
+          quest({ id: "good", schedule: "Due Oct 22", dueDate: "2026-10-22" }),
+          quest({ id: "bad", schedule: "Due today", dueDate: "2026-02-30" }),
+        ],
+      });
+
+      expect(personal[0].dueDate).toBe("2026-10-22");
+      expect(personal[1]).not.toHaveProperty("dueDate");
+    });
+
+    it("does not give Personal Quests any recurrence", () => {
+      const { personal } = normalizeSavedQuestLists({ daily: [], personal: [quest({ schedule: "Every day" })] });
+
+      expect(personal[0]).not.toHaveProperty("repeatSchedule");
+      expect(personal[0]).not.toHaveProperty("selectedDays");
+    });
+
+    it("cleans every quest in a mixed save, and changes nothing the second time", () => {
+      const once = normalizeSavedQuestLists({
+        daily: [quest({ id: "a", schedule: "Every day", dueDate: "2026-10-22" }), quest({ id: "b", repeatSchedule: "Selected days", selectedDays: ["Mon"] })],
+        personal: [quest({ id: "c", schedule: "Due today", dueDate: "not-a-date" }), quest({ id: "d" })],
+      });
+
+      expect(JSON.stringify(once)).not.toContain("schedule\"");
+      expect(JSON.stringify(once)).not.toContain("not-a-date");
+      expect(normalizeSavedQuestLists(once)).toBe(once);
+    });
+
+    it("does not change the original lists", () => {
+      const lists: QuestLists = {
+        daily: [quest({ schedule: "Every day", dueDate: "2026-10-22" })],
+        personal: [quest({ schedule: "Due today" })],
+      };
+      const before = JSON.stringify(lists);
+
+      normalizeSavedQuestLists(lists);
+
+      expect(JSON.stringify(lists)).toBe(before);
     });
   });
 

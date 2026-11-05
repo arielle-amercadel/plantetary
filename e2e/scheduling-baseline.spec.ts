@@ -438,17 +438,17 @@ test.describe("[saved format] how the current version stores this data", () => {
     expect(history["2026-10-19"].xpAwardedByQuestId).toEqual({ "text-every-day": 5 });
   });
 
-  // Changed on purpose in Stage 1B Step 3, which converts saved quests on load.
-  test("text-only quests are converted on load, keeping their text, with the original backed up", async ({ page }) => {
+  // Changed on purpose in Stage 1B Steps 3 and 5, which convert saved quests and remove their text.
+  test("text-only quests are converted on load, without their text, with the original backed up", async ({ page }) => {
     const original = buildSave({ daily: [daily(EVERY_DAY, "Every day"), daily(MON_WED, "Mon, Wed")] });
     await seedStorage(page, { [QUEST_SAVE_KEY]: original });
     await openApp(page);
     await reloadApp(page);
 
     const [everyDay, monWed] = (await savedData(page)).questLists.daily;
-    expect(everyDay.schedule).toBe("Every day");
+    expect(everyDay).not.toHaveProperty("schedule");
     expect(everyDay.repeatSchedule).toBe("Every day");
-    expect(monWed.schedule).toBe("Mon, Wed");
+    expect(monWed).not.toHaveProperty("schedule");
     expect(monWed.repeatSchedule).toBe("Selected days");
     expect(monWed.selectedDays).toEqual(["Mon", "Wed"]);
     expect(await readStorage(page, VALID_BACKUP_KEY)).toBe(original);

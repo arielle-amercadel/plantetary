@@ -57,7 +57,7 @@ export function scheduledDaysForQuest(quest: Quest): Weekday[] {
  * store only a display string, so clear, exact labels are accepted; ambiguous or unknown values stay
  * unscheduled instead of becoming daily.
  */
-function legacyScheduledDays(quest: Pick<Quest, "repeatSchedule" | "selectedDays" | "schedule">): Weekday[] {
+function legacyScheduledDays(quest: Pick<Quest, "repeatSchedule" | "selectedDays"> & { schedule: string }): Weekday[] {
   if (quest.repeatSchedule === "Every day") return weekdays;
   if (quest.repeatSchedule === "Selected days") {
     return quest.selectedDays?.filter((day) => weekdays.includes(day)) ?? [];
@@ -78,10 +78,10 @@ function hasSameDays(saved: unknown, days: Weekday[]): boolean {
 }
 
 /**
- * Gives saved Daily Quests explicit recurrence without changing which days they run on. Unusable
- * field values are set aside first, and anything that yields no days stays unscheduled. The legacy
- * schedule text is kept. Returns the same object when nothing changes, so a clean save is not
- * treated as corrected.
+ * Gives saved Daily Quests explicit recurrence without changing which days they run on, then removes
+ * what no longer applies: the legacy schedule text, and any due date, since Daily Quests have none.
+ * Unusable field values are set aside first, and anything that yields no days stays unscheduled.
+ * Returns the same object when nothing changes, so a clean save is not treated as corrected.
  */
 export function normalizeDailyQuestSchedules(questLists: QuestLists): QuestLists {
   let changed = false;
@@ -96,13 +96,41 @@ export function normalizeDailyQuestSchedules(questLists: QuestLists): QuestLists
     const isEveryDayText = !selectedDays?.length && schedule.trim().toLowerCase() === "every day";
     const repeatSchedule: RepeatSchedule = savedRepeat ?? (isEveryDayText ? "Every day" : "Selected days");
 
-    if (saved.schedule === schedule && saved.repeatSchedule === repeatSchedule && hasSameDays(saved.selectedDays, days)) {
+    if (
+      saved.schedule === undefined &&
+      saved.dueDate === undefined &&
+      saved.repeatSchedule === repeatSchedule &&
+      hasSameDays(saved.selectedDays, days)
+    ) {
       return quest;
     }
     changed = true;
-    return { ...quest, schedule, repeatSchedule, selectedDays: [...days] };
+    const cleanedQuest: Quest = { ...quest, repeatSchedule, selectedDays: [...days] };
+    delete cleanedQuest.schedule;
+    delete cleanedQuest.dueDate;
+    return cleanedQuest;
   });
   return changed ? { ...questLists, daily } : questLists;
+}
+
+function removePersonalScheduleText(questLists: QuestLists): QuestLists {
+  let changed = false;
+  const personal = questLists.personal.map((quest) => {
+    if (quest.schedule === undefined) return quest;
+    changed = true;
+    const cleanedQuest = { ...quest };
+    delete cleanedQuest.schedule;
+    return cleanedQuest;
+  });
+  return changed ? { ...questLists, personal } : questLists;
+}
+
+/**
+ * Brings saved quests up to the current format on load. Returns the same object when nothing changes,
+ * so a clean save is not treated as corrected.
+ */
+export function normalizeSavedQuestLists(questLists: QuestLists): QuestLists {
+  return normalizeDailyQuestSchedules(removePersonalScheduleText(removeInvalidPersonalDueDates(questLists)));
 }
 
 export function formatWeekdaySchedule(days: Weekday[]): string {
@@ -274,9 +302,7 @@ export function hasQuestScheduleChanged(previous: Quest, updated: Quest): boolea
     : previousDays.length !== updatedDays.length ||
       previousDays.some((day, index) => day !== updatedDays[index]);
 
-  return previous.schedule !== updated.schedule ||
-    previous.repeatSchedule !== updated.repeatSchedule ||
-    selectedDaysChanged;
+  return previous.repeatSchedule !== updated.repeatSchedule || selectedDaysChanged;
 }
 
 export function addQuestToHistory(

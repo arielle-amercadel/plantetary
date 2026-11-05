@@ -37,7 +37,7 @@ async function savedDaily(page: Page, title: string): Promise<SavedQuest> {
 function expectExplicitEveryDay(quest: SavedQuest) {
   expect(quest.repeatSchedule).toBe("Every day");
   expect(quest.selectedDays).toEqual(ALL_DAYS);
-  expect(quest.schedule).toBe("Every day");
+  expect(quest).not.toHaveProperty("schedule");
 }
 
 async function quickAddDaily(page: Page, title = QUICK, difficulty?: "Easy" | "Medium" | "Hard") {
@@ -50,7 +50,7 @@ async function quickAddDaily(page: Page, title = QUICK, difficulty?: "Easy" | "M
 }
 
 test.describe("Starter Daily Quests", () => {
-  test("save explicit recurrence alongside the legacy text, and keep their labels", async ({ page }) => {
+  test("save explicit recurrence with no legacy text, and keep their labels", async ({ page }) => {
     await openApp(page);
 
     for (const title of STARTER_DAILY) {
@@ -113,7 +113,7 @@ test.describe("Starter Daily Quests", () => {
 });
 
 test.describe("Quick-add Daily Quests", () => {
-  test("save explicit recurrence alongside the legacy text, and survive a reload", async ({ page }) => {
+  test("save explicit recurrence with no legacy text, and survive a reload", async ({ page }) => {
     await openApp(page);
     await quickAddDaily(page);
 
@@ -183,7 +183,7 @@ test.describe("Quick-add Daily Quests", () => {
 
     const save = JSON.parse((await readStorage(page, QUEST_SAVE_KEY))!);
     const saved = (save.questLists.personal as SavedQuest[]).find((quest) => quest.title === title)!;
-    expect(saved.schedule).toBe("");
+    expect(saved).not.toHaveProperty("schedule");
     expect(saved).not.toHaveProperty("repeatSchedule");
     expect(saved).not.toHaveProperty("selectedDays");
     expect(saved).not.toHaveProperty("dueDate");
@@ -224,7 +224,7 @@ test.describe("Full-form Daily Quests", () => {
     let saved = await savedDaily(page, TITLE);
     expect(saved.repeatSchedule).toBe("Selected days");
     expect(saved.selectedDays).toEqual(["Mon", "Thu"]);
-    expect(saved.schedule).toBe("Mon, Thu");
+    expect(saved).not.toHaveProperty("schedule");
 
     await page.getByRole("button", { name: `Edit ${TITLE}`, exact: true }).click();
     await chooseOption(page, "Repeat", "Every day");

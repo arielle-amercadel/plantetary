@@ -181,25 +181,25 @@ test.describe("Invalid saved due dates", () => {
     expect(await readStorage(page, VALID_BACKUP_KEY)).toBe(original);
   });
 
-  test("old schedule text stays untouched on a corrected quest", async ({ page }) => {
-    await seedStorage(page, {
-      [QUEST_SAVE_KEY]: rawSave([personalQuest("2026-02-30", { schedule: "Due Oct 20" })]),
-    });
+  test("old schedule text is removed along with the bad date, with the original backed up", async ({ page }) => {
+    const original = rawSave([personalQuest("2026-02-30", { schedule: "Due Oct 20" })]);
+    await seedStorage(page, { [QUEST_SAVE_KEY]: original });
 
     await openApp(page);
 
     await expect(row(page).getByText("Study", { exact: true })).toBeVisible();
     await expect.poll(async () => (await savedPersonal(page))[0]).not.toHaveProperty("dueDate");
-    expect((await savedPersonal(page))[0].schedule).toBe("Due Oct 20");
+    expect((await savedPersonal(page))[0]).not.toHaveProperty("schedule");
+    expect(await readStorage(page, VALID_BACKUP_KEY)).toBe(original);
   });
 });
 
 test.describe("Saves with nothing to correct", () => {
-  test("valid dates, undated quests, and old labels are kept, with no backup written", async ({ page }) => {
+  test("valid dates and undated quests are kept, with no backup written", async ({ page }) => {
     await seedStorage(page, {
       [QUEST_SAVE_KEY]: rawSave([
-        personalQuest("2026-10-22", { id: "good", title: "Good date" }),
-        personalQuest(undefined, { id: "none", title: "No date", schedule: "No due date" }),
+        personalQuest("2026-10-22", { id: "good", title: "Good date", schedule: undefined }),
+        personalQuest(undefined, { id: "none", title: "No date", schedule: undefined }),
       ]),
     });
 
@@ -210,13 +210,12 @@ test.describe("Saves with nothing to correct", () => {
     const saved = await savedPersonal(page);
     expect(saved[0].dueDate).toBe("2026-10-22");
     expect(saved[1]).not.toHaveProperty("dueDate");
-    expect(saved[1].schedule).toBe("No due date");
     expect(await readStorage(page, VALID_BACKUP_KEY)).toBeNull();
   });
 });
 
 test.describe("Daily Quests are not affected", () => {
-  test("recurrence, streak, and a stray due date are left as they are", async ({ page }) => {
+  test("recurrence and streak are unchanged, and a stray due date is removed", async ({ page }) => {
     const title = "Monday and Tuesday";
     await seedStorage(page, {
       [QUEST_SAVE_KEY]: rawSave([personalQuest("2026-02-30")], {
@@ -252,8 +251,9 @@ test.describe("Daily Quests are not affected", () => {
     await expectStreak(page, 2);
 
     const save = JSON.parse((await readStorage(page, QUEST_SAVE_KEY))!);
-    expect(save.questLists.daily[0].dueDate).toBe("2026-02-30");
-    expect(save.questLists.daily[0].schedule).toBe("Mon, Tue");
+    expect(save.questLists.daily[0]).not.toHaveProperty("dueDate");
+    expect(save.questLists.daily[0]).not.toHaveProperty("schedule");
+    expect(save.questLists.daily[0].selectedDays).toEqual(["Mon", "Tue"]);
     expect(save.questLists.personal[0]).not.toHaveProperty("dueDate");
   });
 });

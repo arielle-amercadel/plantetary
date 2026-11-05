@@ -79,7 +79,7 @@ type SeedQuest = {
   id: string;
   title: string;
   category: string;
-  schedule: string;
+  schedule?: string;
   difficulty: "Easy" | "Medium" | "Hard";
   completed: boolean;
   repeatSchedule?: "Every day" | "Selected days";

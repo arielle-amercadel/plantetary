@@ -23,7 +23,7 @@ import {
   isCompletionDateKey,
   getCompletionHistoryView,
   normalizeCompletionHistoryDetails,
-  normalizeDailyQuestSchedules,
+  normalizeSavedQuestLists,
   getCompletedOverallCounts,
   getCompletedTodayCounts,
   getRecoverableOrphanedDailyQuestIds,
@@ -37,7 +37,6 @@ import {
   recordPersonalCompletionDate,
   recordCompletionDetails,
   removeCompletionDetails,
-  removeInvalidPersonalDueDates,
   recordPersonalXpAward,
   removeQuestFromHistoryAtDate,
   recoverOrphanedDailyQuestFromHistory,
@@ -124,7 +123,6 @@ export const initialQuestLists: QuestLists = {
       id: "water",
       title: "Drink a glass of water",
       category: "Wellness",
-      schedule: "Every day",
       repeatSchedule: "Every day",
       selectedDays: [...weekdays],
       difficulty: "Easy",
@@ -134,7 +132,6 @@ export const initialQuestLists: QuestLists = {
       id: "skincare",
       title: "Morning skincare",
       category: "Self-care",
-      schedule: "Every day",
       repeatSchedule: "Every day",
       selectedDays: [...weekdays],
       difficulty: "Easy",
@@ -144,7 +141,6 @@ export const initialQuestLists: QuestLists = {
       id: "reading",
       title: "Read for 20 minutes",
       category: "Personal growth",
-      schedule: "Every day",
       repeatSchedule: "Every day",
       selectedDays: [...weekdays],
       difficulty: "Medium",
@@ -154,7 +150,6 @@ export const initialQuestLists: QuestLists = {
       id: "stretch",
       title: "Evening stretch",
       category: "Wellness",
-      schedule: "Every day",
       repeatSchedule: "Every day",
       selectedDays: [...weekdays],
       difficulty: "Easy",
@@ -166,7 +161,6 @@ export const initialQuestLists: QuestLists = {
       id: "biology",
       title: "Review biology notes",
       category: "Study",
-      schedule: "",
       difficulty: "Medium",
       completed: false,
     },
@@ -174,7 +168,6 @@ export const initialQuestLists: QuestLists = {
       id: "moodboard",
       title: "Finish portfolio moodboard",
       category: "Projects",
-      schedule: "",
       difficulty: "Hard",
       completed: false,
     },
@@ -182,7 +175,6 @@ export const initialQuestLists: QuestLists = {
       id: "desk",
       title: "Tidy the desk",
       category: "Chores",
-      schedule: "",
       difficulty: "Easy",
       completed: false,
     },
@@ -214,19 +206,12 @@ function isPersonalQuest(value: unknown): value is Quest {
 
   const quest = value as unknown as Record<string, unknown>;
   return (
-    typeof quest.schedule === "string" &&
+    (quest.schedule === undefined || typeof quest.schedule === "string") &&
     (quest.repeatSchedule === undefined ||
       quest.repeatSchedule === "Every day" || quest.repeatSchedule === "Selected days") &&
     (quest.selectedDays === undefined ||
       (Array.isArray(quest.selectedDays) && quest.selectedDays.every((day) => weekdays.includes(day))))
   );
-}
-
-// Bad recurrence fields on a Daily Quest are recovered on load rather than rejecting the whole save.
-function isDailyQuest(value: unknown): value is Quest {
-  if (!hasValidCoreQuestFields(value)) return false;
-  const dueDate: unknown = value.dueDate;
-  return dueDate === undefined || typeof dueDate === "string";
 }
 
 function isStoredQuestData(value: unknown): value is StoredQuestData {
@@ -239,7 +224,8 @@ function isStoredQuestData(value: unknown): value is StoredQuestData {
   return Boolean(
     questLists &&
       Array.isArray(questLists.daily) &&
-      questLists.daily.every(isDailyQuest) &&
+      // Bad recurrence or due-date fields on a Daily Quest are recovered on load rather than rejecting the whole save.
+      questLists.daily.every(hasValidCoreQuestFields) &&
       Array.isArray(questLists.personal) &&
       // A bad Personal due date is removed on load rather than rejecting the whole save.
       questLists.personal.every(isPersonalQuest) &&
@@ -340,9 +326,7 @@ export function QuestProvider({ children }: { children: ReactNode }) {
               isValidDeletedLegacyPersonalCompletionCount(parsedData.deletedLegacyPersonalCompletionCount)
               ? parsedData.deletedLegacyPersonalCompletionCount
               : undefined;
-            const validQuestLists = normalizeDailyQuestSchedules(
-              removeInvalidPersonalDueDates(parsedData.questLists),
-            );
+            const validQuestLists = normalizeSavedQuestLists(parsedData.questLists);
             const optionalFieldsUnchanged =
               validQuestLists === parsedData.questLists &&
               normalizedCompletionHistory === parsedData.completionHistory &&
