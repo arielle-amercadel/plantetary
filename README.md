@@ -26,6 +26,8 @@ A cozy, plant-themed gamified quest and habit tracker. Complete small daily and 
 
 Your progress is currently saved only in your browser's `localStorage`, so it stays on that browser and device. Accounts and database storage are planned for a future version.
 
+The database tables for that version are in `supabase/`, but the app doesn't use them yet. See [docs/supabase-database.md](docs/supabase-database.md) for how to set them up and test them.
+
 ## Getting Started
 
 You'll need [Node.js](https://nodejs.org) 20.19 or newer and npm.
