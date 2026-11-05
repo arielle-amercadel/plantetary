@@ -84,7 +84,7 @@ function CreateQuestForm({
   const [difficulty, setDifficulty] = useState<Difficulty | "">(editingQuest?.difficulty ?? "");
   const [repeatSchedule, setRepeatSchedule] = useState<RepeatSchedule | "">(
     editingQuest
-      ? editingQuest.repeatSchedule ?? (editingQuest.schedule.trim().toLowerCase() === "every day" ? "Every day" : "Selected days")
+      ? editingQuest.repeatSchedule ?? "Selected days"
       : "",
   );
   const [selectedDays, setSelectedDays] = useState<Weekday[]>(editingQuest

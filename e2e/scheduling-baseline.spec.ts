@@ -171,19 +171,19 @@ test.describe("[structured recurrence] saved quests with repeatSchedule", () => 
 });
 
 test.describe("[precedence] when saved scheduling fields disagree", () => {
-  test("repeatSchedule Every day beats weekday text, though the row shows the text", async ({ page }) => {
+  test("repeatSchedule Every day beats weekday text, and the row shows the real schedule", async ({ page }) => {
     const title = "Every day over Monday";
     await seedDaily(page, [daily(title, "Mon", { repeatSchedule: "Every day" })]);
     await openApp(page);
 
     await advanceToDay(page, 1, "Tuesday, October 20");
 
-    await expect(row(page, title)).toContainText("Wellness · Mon");
+    await expect(row(page, title)).toContainText("Wellness · Every day");
     await completeQuest(page, title);
     await expectHomeXp(page, 5);
   });
 
-  test("repeatSchedule Selected days beats every-day text, though the row shows the text", async ({ page }) => {
+  test("repeatSchedule Selected days beats every-day text, and the row shows the real schedule", async ({ page }) => {
     const title = "Tuesday over every day";
     await seedDaily(page, [daily(title, "Every day", { repeatSchedule: "Selected days", selectedDays: ["Tue"] })]);
 
@@ -191,7 +191,7 @@ test.describe("[precedence] when saved scheduling fields disagree", () => {
     await expect(row(page, title)).toHaveCount(0);
 
     await advanceToDay(page, 1, "Tuesday, October 20");
-    await expect(row(page, title)).toContainText("Wellness · Every day");
+    await expect(row(page, title)).toContainText("Wellness · Tue");
     await completeQuest(page, title);
     await expectHomeXp(page, 5);
   });
@@ -215,7 +215,7 @@ test.describe("[precedence] when saved scheduling fields disagree", () => {
     await expect(row(page, title)).toHaveCount(0);
 
     await openApp(page, "/all-quests");
-    await expect(row(page, title)).toContainText("Wellness · Every day");
+    await expect(row(page, title)).toContainText("Wellness · No days selected");
     await expect(page.getByRole("button", { name: `Complete: ${title}`, exact: true })).toBeDisabled();
   });
 });

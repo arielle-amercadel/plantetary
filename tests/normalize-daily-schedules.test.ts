@@ -131,7 +131,22 @@ describe("normalizeDailyQuestSchedules", () => {
     });
   });
 
-  describe("equivalence with today's scheduling", () => {
+  describe("equivalence with the rules older saves ran on", () => {
+    // A frozen copy of the scheduling rules from before Stage 1B Step 4, which older saves relied on.
+    // It stays here so conversion keeps being checked against what those quests actually did.
+    function daysBeforeStep4(target: Quest): Weekday[] {
+      if (target.repeatSchedule === "Every day") return ALL_DAYS;
+      if (target.repeatSchedule === "Selected days") {
+        return target.selectedDays?.filter((day) => ALL_DAYS.includes(day)) ?? [];
+      }
+      if (target.selectedDays?.length) return target.selectedDays.filter((day) => ALL_DAYS.includes(day));
+      const text = target.schedule.trim();
+      if (text.toLowerCase() === "every day") return ALL_DAYS;
+      const parsed = text.split(",").map((day) => day.trim());
+      if (parsed.length > 0 && parsed.every((day) => ALL_DAYS.includes(day as Weekday))) return parsed as Weekday[];
+      return [];
+    }
+
     const repeats = [undefined, "Every day", "Selected days"] as const;
     const dayLists: (Weekday[] | undefined)[] = [undefined, [], ["Mon"], ["Wed", "Mon"], ["Mon", "Mon"], [...ALL_DAYS]];
     const schedules = [
@@ -147,13 +162,21 @@ describe("normalizeDailyQuestSchedules", () => {
 
     it("schedules the same days, in the same order, for every shape", () => {
       for (const shape of shapes) {
-        expect(scheduledDaysForQuest(normalize(shape)), JSON.stringify(shape)).toEqual(scheduledDaysForQuest(shape));
+        expect(scheduledDaysForQuest(normalize(shape)), JSON.stringify(shape)).toEqual(daysBeforeStep4(shape));
       }
     });
 
-    it("shows the same row label for every shape, including contradictory ones", () => {
+    it("labels every shape from its real schedule, whatever its text said", () => {
       for (const shape of shapes) {
-        expect(getDailyQuestScheduleLabel(normalize(shape)), JSON.stringify(shape)).toBe(getDailyQuestScheduleLabel(shape));
+        const days = daysBeforeStep4(shape);
+        const converted = normalize(shape);
+        const expected = converted.repeatSchedule === "Every day"
+          ? "Every day"
+          : days.length > 0
+            ? ALL_DAYS.filter((day) => days.includes(day)).join(", ")
+            : "No days selected";
+
+        expect(getDailyQuestScheduleLabel(converted), JSON.stringify(shape)).toBe(expected);
       }
     });
 
@@ -245,19 +268,21 @@ describe("normalizeDailyQuestSchedules", () => {
   });
 
   describe("progress built on converted quests", () => {
-    it("produces the same snapshots and streak as the original quests", () => {
+    it("fills unopened days from the text-only quests' original days, and leaves finished days alone", () => {
       const original = [quest({ id: "every", schedule: "Every day" }), quest({ id: "mw", schedule: "Mon, Wed" })];
       const converted = normalizeDailyQuestSchedules({ daily: original, personal: [] }).daily;
       const start: CompletionHistory = {
         "2026-10-19": { scheduledQuestIds: ["every", "mw"], completedQuestIds: ["every", "mw"], xpAwardedByQuestId: { every: 5, mw: 5 } },
       };
 
-      const before = ensureCompletionSnapshotForDate(start, original, "2026-10-23");
       const after = ensureCompletionSnapshotForDate(start, converted, "2026-10-23");
 
-      expect(after).toEqual(before);
       expect(after["2026-10-19"]).toBe(start["2026-10-19"]);
-      expect(getStreakValues(after, "2026-10-23")).toEqual(getStreakValues(before, "2026-10-23"));
+      expect(after["2026-10-20"].scheduledQuestIds).toEqual(["every"]);
+      expect(after["2026-10-21"].scheduledQuestIds).toEqual(["every", "mw"]);
+      expect(after["2026-10-22"].scheduledQuestIds).toEqual(["every"]);
+      expect(after["2026-10-23"].scheduledQuestIds).toEqual(["every"]);
+      expect(getStreakValues(after, "2026-10-23")).toEqual({ currentStreak: 0, longestStreak: 1 });
     });
   });
 });

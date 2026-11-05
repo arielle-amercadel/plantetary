@@ -81,7 +81,7 @@ describe("starter quests", () => {
     });
   });
 
-  it("keeps Daily Quests scheduled every day through their saved text", () => {
+  it("keeps the legacy text on Daily Quests, which stay scheduled every day", () => {
     expect(initialQuestLists.daily.length).toBeGreaterThan(0);
     for (const quest of initialQuestLists.daily) {
       expect(quest.schedule).toBe("Every day");

@@ -67,7 +67,7 @@ test.describe("Converting saved daily schedules on load", () => {
 
     await openApp(page);
     await expect(row(page, EVERY_DAY)).toContainText("Wellness · Every day");
-    await expect(row(page, "Lowercase")).toContainText("Wellness · every day");
+    await expect(row(page, "Lowercase")).toContainText("Wellness · Every day");
     await expect(row(page, MON_WED)).toContainText("Wellness · Mon, Wed");
 
     await expect.poll(async () => (await savedDaily(page, EVERY_DAY)).repeatSchedule).toBe("Every day");
@@ -111,7 +111,7 @@ test.describe("Converting saved daily schedules on load", () => {
     expect(await readStorage(page, VALID_BACKUP_KEY)).toBe(original);
   });
 
-  test("unknown text stays unscheduled, and keeps its text and row label", async ({ page }) => {
+  test("unknown text stays unscheduled, keeps its saved text, and shows No days selected", async ({ page }) => {
     const title = "Unknown schedule";
     await seedStorage(page, { [QUEST_SAVE_KEY]: rawSave([dailyQuest(title, { schedule: "Daily" })]) });
 
@@ -119,7 +119,7 @@ test.describe("Converting saved daily schedules on load", () => {
     await expect(row(page, title)).toHaveCount(0);
 
     await openApp(page, "/all-quests");
-    await expect(row(page, title)).toContainText("Wellness · Daily");
+    await expect(row(page, title)).toContainText("Wellness · No days selected");
     await expect(page.getByRole("button", { name: `Complete: ${title}`, exact: true })).toBeDisabled();
 
     const quest = await savedDaily(page, title);
@@ -128,7 +128,7 @@ test.describe("Converting saved daily schedules on load", () => {
     expect(quest.schedule).toBe("Daily");
   });
 
-  test("conflicting fields keep their real schedule and today's row labels", async ({ page }) => {
+  test("conflicting fields keep their real schedule, and rows show that schedule", async ({ page }) => {
     await seedStorage(page, {
       [QUEST_SAVE_KEY]: rawSave([
         dailyQuest("Every day over Mon", { schedule: "Mon", repeatSchedule: "Every day" }),
@@ -138,14 +138,17 @@ test.describe("Converting saved daily schedules on load", () => {
     });
 
     await openApp(page);
-    await expect(row(page, "Every day over Mon")).toContainText("Wellness · Mon");
+    await expect(row(page, "Every day over Mon")).toContainText("Wellness · Every day");
     await expect(row(page, "Tuesday over text")).toHaveCount(0);
     await expect(row(page, "Explicitly no days")).toHaveCount(0);
 
     await advanceToDay(page, 1, "Tuesday, October 20");
-    await expect(row(page, "Every day over Mon")).toContainText("Wellness · Mon");
-    await expect(row(page, "Tuesday over text")).toContainText("Wellness · Every day");
+    await expect(row(page, "Every day over Mon")).toContainText("Wellness · Every day");
+    await expect(row(page, "Tuesday over text")).toContainText("Wellness · Tue");
     await expect(row(page, "Explicitly no days")).toHaveCount(0);
+
+    await openApp(page, "/all-quests");
+    await expect(row(page, "Explicitly no days")).toContainText("Wellness · No days selected");
 
     expect((await savedDaily(page, "Every day over Mon")).selectedDays).toEqual(ALL_DAYS);
     expect((await savedDaily(page, "Explicitly no days")).selectedDays).toEqual([]);
@@ -198,8 +201,8 @@ test.describe("Recovering malformed saved recurrence", () => {
     await expect(row(page, noSchedule)).toHaveCount(0);
 
     await openApp(page, "/all-quests");
-    await expect(row(page, noSchedule).getByText("Wellness", { exact: true })).toBeVisible();
-    await expect(row(page, wrongType).getByText("Wellness", { exact: true })).toBeVisible();
+    await expect(row(page, noSchedule)).toContainText("Wellness · No days selected");
+    await expect(row(page, wrongType)).toContainText("Wellness · No days selected");
     await expect(page.getByRole("button", { name: `Complete: ${noSchedule}`, exact: true })).toBeDisabled();
     expect((await savedDaily(page, wrongType)).schedule).toBe("");
     expect((await savedDaily(page, wrongType)).selectedDays).toEqual([]);
@@ -411,6 +414,82 @@ test.describe("Progress after conversion", () => {
     await expect(page.getByRole("progressbar", { name: "XP progress toward Cactus" })).toBeVisible();
     await reloadApp(page);
     await expect(page.getByRole("link", { name: "Plant Journal, 1 gift waiting" })).toBeVisible();
+  });
+
+  test("the form opens each quest with its real schedule, not its old text", async ({ page }) => {
+    await seedStorage(page, {
+      [QUEST_SAVE_KEY]: rawSave([
+        dailyQuest("Every day with stale text", { schedule: "Mon", repeatSchedule: "Every day" }),
+        dailyQuest("Tuesday with stale text", { schedule: "Every day", repeatSchedule: "Selected days", selectedDays: ["Tue"] }),
+      ]),
+    });
+    await openApp(page, "/all-quests");
+    const preview = page.getByRole("region", { name: "Quest preview" }).locator(".quest-preview-schedule");
+
+    await page.getByRole("button", { name: "Edit Every day with stale text", exact: true }).click();
+    await expect(page.getByRole("combobox", { name: "Repeat", exact: true })).toContainText("Every day");
+    await expect(preview).toHaveText("Every day · resets at midnight");
+
+    await openApp(page, "/all-quests");
+    await page.getByRole("button", { name: "Edit Tuesday with stale text", exact: true }).click();
+    await expect(page.getByRole("combobox", { name: "Repeat", exact: true })).toContainText("Selected days");
+    await expect(page.getByRole("button", { name: "Tue", exact: true })).toHaveAttribute("aria-pressed", "true");
+    await expect(page.getByRole("button", { name: "Mon", exact: true })).toHaveAttribute("aria-pressed", "false");
+    await expect(preview).toHaveText("Tue · resets at midnight");
+
+    await page.getByRole("button", { name: "Save changes" }).click();
+    await expect(page).toHaveURL(/\/$/);
+    const saved = await savedDaily(page, "Tuesday with stale text");
+    expect(saved.selectedDays).toEqual(["Tue"]);
+    expect(saved.repeatSchedule).toBe("Selected days");
+    expect(saved.schedule).toBe("Tue");
+  });
+
+  test("an unscheduled quest can be repaired by choosing days", async ({ page }) => {
+    const title = "Unknown schedule";
+    await seedStorage(page, { [QUEST_SAVE_KEY]: rawSave([dailyQuest(title, { schedule: "Daily" })]) });
+    await openApp(page, "/all-quests");
+
+    await page.getByRole("button", { name: `Edit ${title}`, exact: true }).click();
+    await expect(page.getByRole("combobox", { name: "Repeat", exact: true })).toContainText("Selected days");
+    const save = page.getByRole("button", { name: "Save changes" });
+    await expect(save).toBeDisabled();
+
+    await page.getByRole("button", { name: "Mon", exact: true }).click();
+    await expect(save).toBeEnabled();
+    await save.click();
+    await expect(page).toHaveURL(/\/$/);
+
+    await expect(row(page, title)).toContainText("Wellness · Mon");
+    await completeQuest(page, title);
+    await expectHomeXp(page, 5);
+    await reloadApp(page);
+    await expect(row(page, title)).toContainText("Wellness · Mon");
+    expect((await savedDaily(page, title)).selectedDays).toEqual(["Mon"]);
+  });
+
+  test("a Personal Quest with old schedule text gains no recurrence when edited", async ({ page }) => {
+    const title = "Personal with old text";
+    await seedStorage(page, {
+      [QUEST_SAVE_KEY]: JSON.stringify({
+        ...JSON.parse(buildSave()),
+        questLists: {
+          daily: [],
+          personal: [{ id: "p", title, category: "Study", schedule: "Every day", difficulty: "Easy", completed: false }],
+        },
+      }),
+    });
+    await openApp(page);
+
+    await page.getByRole("button", { name: `Edit ${title}`, exact: true }).click();
+    await expect(page.getByRole("heading", { name: "Edit quest" })).toBeVisible();
+    await page.getByRole("button", { name: "Save changes" }).click();
+    await expect(page).toHaveURL(/\/$/);
+
+    await expect(questRow(personalPanel(page), title).getByText("Study", { exact: true })).toBeVisible();
+    const [quest] = (await saved(page)).questLists.personal as Fields[];
+    expect(quest).not.toHaveProperty("repeatSchedule");
+    expect(quest).not.toHaveProperty("selectedDays");
   });
 
   test("a converted quest opens correctly in the edit form and keeps its schedule when saved", async ({ page }) => {

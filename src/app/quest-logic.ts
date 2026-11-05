@@ -49,13 +49,21 @@ export function addCalendarDays(date: Date, amount: number): Date {
 
 export function scheduledDaysForQuest(quest: Quest): Weekday[] {
   if (quest.repeatSchedule === "Every day") return weekdays;
+  return quest.selectedDays?.filter((day) => weekdays.includes(day)) ?? [];
+}
+
+/**
+ * The rules older saves were scheduled by, used only to convert them on load. Older quests could
+ * store only a display string, so clear, exact labels are accepted; ambiguous or unknown values stay
+ * unscheduled instead of becoming daily.
+ */
+function legacyScheduledDays(quest: Pick<Quest, "repeatSchedule" | "selectedDays" | "schedule">): Weekday[] {
+  if (quest.repeatSchedule === "Every day") return weekdays;
   if (quest.repeatSchedule === "Selected days") {
     return quest.selectedDays?.filter((day) => weekdays.includes(day)) ?? [];
   }
   if (quest.selectedDays?.length) return quest.selectedDays.filter((day) => weekdays.includes(day));
 
-  // Older quests stored only a display string. Accept clear, exact schedule labels;
-  // ambiguous or unknown values stay unscheduled instead of becoming daily.
   const schedule = quest.schedule.trim();
   if (schedule.toLowerCase() === "every day") return weekdays;
   const parsedDays = schedule.split(",").map((day) => day.trim());
@@ -70,8 +78,7 @@ function hasSameDays(saved: unknown, days: Weekday[]): boolean {
 }
 
 /**
- * Gives saved Daily Quests explicit recurrence without changing which days they run on.
- * scheduledDaysForQuest decides the days, so conversion and scheduling cannot disagree. Unusable
+ * Gives saved Daily Quests explicit recurrence without changing which days they run on. Unusable
  * field values are set aside first, and anything that yields no days stays unscheduled. The legacy
  * schedule text is kept. Returns the same object when nothing changes, so a clean save is not
  * treated as corrected.
@@ -85,7 +92,7 @@ export function normalizeDailyQuestSchedules(questLists: QuestLists): QuestLists
     const savedRepeat = saved.repeatSchedule === "Every day" || saved.repeatSchedule === "Selected days"
       ? saved.repeatSchedule
       : undefined;
-    const days = scheduledDaysForQuest({ ...quest, schedule, selectedDays, repeatSchedule: savedRepeat });
+    const days = legacyScheduledDays({ schedule, selectedDays, repeatSchedule: savedRepeat });
     const isEveryDayText = !selectedDays?.length && schedule.trim().toLowerCase() === "every day";
     const repeatSchedule: RepeatSchedule = savedRepeat ?? (isEveryDayText ? "Every day" : "Selected days");
 
@@ -103,14 +110,10 @@ export function formatWeekdaySchedule(days: Weekday[]): string {
 }
 
 export function getDailyQuestScheduleLabel(quest: Quest): string {
-  if (quest.repeatSchedule === "Every day" || quest.schedule.trim().toLowerCase() === "every day") {
-    return quest.schedule;
-  }
+  if (quest.repeatSchedule === "Every day") return "Every day";
 
   const scheduledDays = scheduledDaysForQuest(quest);
-  if (scheduledDays.length > 0) return formatWeekdaySchedule(scheduledDays);
-
-  return quest.schedule;
+  return scheduledDays.length > 0 ? formatWeekdaySchedule(scheduledDays) : "No days selected";
 }
 
 export function isQuestScheduledOnDate(quest: Quest, date: Date): boolean {

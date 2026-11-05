@@ -19,6 +19,7 @@ import {
   getXpLedgerTotal,
   isQuestPastDue,
   isQuestScheduledOnDate,
+  normalizeDailyQuestSchedules,
 } from "../src/app/quest-logic";
 import type { CompletionHistory, CompletionSnapshot, Quest } from "../src/app/quest-types";
 
@@ -81,7 +82,10 @@ describe("local dates and quest schedules", () => {
     expect(isQuestPastDue({ ...personal, dueDate: "2026-02-30" }, "personal", todayKey)).toBe(false);
   });
 
-  it("matches every-day, selected-day, and legacy schedules", () => {
+  it("matches every-day and selected-day schedules, and legacy schedules once converted on load", () => {
+    const converted = (schedule: string) =>
+      normalizeDailyQuestSchedules({ daily: [makeQuest({ schedule })], personal: [] }).daily[0];
+
     expect(isQuestScheduledOnDate(makeQuest({ repeatSchedule: "Every day" }), monday)).toBe(true);
     expect(isQuestScheduledOnDate(makeQuest({ repeatSchedule: "Every day" }), tuesday)).toBe(true);
     expect(isQuestScheduledOnDate(makeQuest({
@@ -92,10 +96,10 @@ describe("local dates and quest schedules", () => {
       repeatSchedule: "Selected days",
       selectedDays: ["Mon", "Wed"],
     }), tuesday)).toBe(false);
-    expect(isQuestScheduledOnDate(makeQuest({ schedule: "Every day" }), tuesday)).toBe(true);
-    expect(isQuestScheduledOnDate(makeQuest({ schedule: "Mon, Wed" }), monday)).toBe(true);
-    expect(isQuestScheduledOnDate(makeQuest({ schedule: "Mon, Wed" }), tuesday)).toBe(false);
-    expect(isQuestScheduledOnDate(makeQuest({ schedule: "Due today" }), monday)).toBe(false);
+    expect(isQuestScheduledOnDate(converted("Every day"), tuesday)).toBe(true);
+    expect(isQuestScheduledOnDate(converted("Mon, Wed"), monday)).toBe(true);
+    expect(isQuestScheduledOnDate(converted("Mon, Wed"), tuesday)).toBe(false);
+    expect(isQuestScheduledOnDate(converted("Due today"), monday)).toBe(false);
   });
 
   it("formats selected weekdays in Monday-to-Sunday order without changing the selection", () => {
@@ -111,11 +115,14 @@ describe("local dates and quest schedules", () => {
     expect(quest.selectedDays).toEqual(["Wed", "Mon", "Tue"]);
   });
 
-  it("formats legacy weekday labels chronologically and preserves non-weekday labels", () => {
-    expect(getDailyQuestScheduleLabel(makeQuest({ schedule: "Wed, Mon, Tue" })))
-      .toBe("Mon, Tue, Wed");
-    expect(getDailyQuestScheduleLabel(makeQuest({ schedule: "Every day" }))).toBe("Every day");
-    expect(getDailyQuestScheduleLabel(makeQuest({ schedule: "Due Oct 17" }))).toBe("Due Oct 17");
+  it("formats converted legacy weekdays chronologically, and does not show non-weekday text", () => {
+    const labelOf = (schedule: string) => getDailyQuestScheduleLabel(
+      normalizeDailyQuestSchedules({ daily: [makeQuest({ schedule })], personal: [] }).daily[0],
+    );
+
+    expect(labelOf("Wed, Mon, Tue")).toBe("Mon, Tue, Wed");
+    expect(labelOf("Every day")).toBe("Every day");
+    expect(labelOf("Due Oct 17")).toBe("No days selected");
   });
 });
 
@@ -155,7 +162,7 @@ describe("completion snapshots and streaks", () => {
   });
 
   it("creates one snapshot on local-date rollover without replacing existing history or XP", () => {
-    const quests = [makeQuest({ id: "every-day" })];
+    const quests = [makeQuest({ id: "every-day", repeatSchedule: "Every day" })];
     const history: CompletionHistory = {
       "2026-10-17": {
         scheduledQuestIds: ["every-day"],
