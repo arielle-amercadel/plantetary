@@ -1212,6 +1212,16 @@ button {
   transform: translateY(-1px);
 }
 
+.quest-date-month-button:disabled,
+.quest-date-month-button:disabled:hover {
+  border-color: transparent;
+  color: var(--muted);
+  background: transparent;
+  cursor: not-allowed;
+  opacity: 0.4;
+  transform: none;
+}
+
 .quest-date-grid {
   display: flex;
   flex-direction: column;
@@ -1283,6 +1293,15 @@ button {
   color: #fffdf8;
   background: var(--leaf);
   font-weight: 700;
+}
+
+.quest-date-day:disabled,
+.quest-date-day:disabled:hover {
+  border-color: transparent;
+  color: #b5aa9a;
+  background: transparent;
+  cursor: not-allowed;
+  opacity: 0.4;
 }
 
 .quest-date-calendar-footer {

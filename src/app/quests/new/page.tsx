@@ -8,6 +8,7 @@ import AppShell, { FigmaIcon } from "../../app-shell";
 import CategoryPicker, { CUSTOM_CATEGORY_VALUE } from "../../category-picker";
 import QuestSelect from "./quest-select";
 import QuestDatePicker from "./quest-date-picker";
+import { isSavableDueDate } from "./quest-date-picker-logic";
 import { getCustomCategoryError, getQuestXp, useQuestStore } from "../../quest-store";
 import { findQuestForEditing, formatWeekdaySchedule, getDueDateLabel, scheduledDaysForQuest } from "../../quest-logic";
 import type {
@@ -119,7 +120,7 @@ function CreateQuestForm({
     : getDueDateLabel(dueDate, todayKey) ?? "No due date";
   const hasValidSchedule = questType === "daily"
     ? Boolean(repeatSchedule) && (repeatSchedule !== "Selected days" || selectedDays.length > 0)
-    : questType === "personal";
+    : questType === "personal" && isSavableDueDate(dueDate);
   const canSave = Boolean(
     title.trim() && questType && categoryValue && !categoryError && difficulty && hasValidSchedule,
   );

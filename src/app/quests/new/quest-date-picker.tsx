@@ -4,6 +4,7 @@ import { createPortal } from "react-dom";
 import { useCallback, useEffect, useRef, useState, type FocusEvent, type KeyboardEvent } from "react";
 import { dateFromKey, getLocalDateKey, isCompletionDateKey, localNoonDate, weekdayNames } from "../../quest-logic";
 import {
+  canTurnCalendarMonth,
   getCalendarGridDays,
   shiftCalendarDateByDays,
   shiftCalendarDateByMonths,
@@ -199,6 +200,7 @@ export default function QuestDatePicker({ id, label, value, onValueChange }: Que
             <button
               aria-label="Previous month"
               className="quest-date-month-button"
+              disabled={!canTurnCalendarMonth(displayedMonth.getFullYear(), displayedMonth.getMonth(), -1)}
               onClick={() => turnMonth(-1)}
               type="button"
             >
@@ -208,6 +210,7 @@ export default function QuestDatePicker({ id, label, value, onValueChange }: Que
             <button
               aria-label="Next month"
               className="quest-date-month-button"
+              disabled={!canTurnCalendarMonth(displayedMonth.getFullYear(), displayedMonth.getMonth(), 1)}
               onClick={() => turnMonth(1)}
               type="button"
             >
@@ -244,6 +247,7 @@ export default function QuestDatePicker({ id, label, value, onValueChange }: Que
                         aria-label={dayLabel}
                         aria-pressed={isSelected}
                         className={`quest-date-day${day.isCurrentMonth ? "" : " is-outside-month"}${isToday ? " is-today" : ""}${isSelected ? " is-selected" : ""}`}
+                        disabled={!isCompletionDateKey(day.dateKey)}
                         id={`${id}-day-${day.dateKey}`}
                         onClick={() => selectDate(day.dateKey)}
                         onKeyDown={(event) => handleDayKeyDown(event, day.dateKey)}
