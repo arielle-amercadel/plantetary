@@ -6,6 +6,7 @@ import {
   authRequests,
   fakeSession,
   readGameStorage,
+  storedAccessToken,
   useFakeAuth,
   type FakeAuth,
 } from "./auth-support";
@@ -221,15 +222,25 @@ test.describe("Staying signed in", () => {
     expect(authRequests(auth, "GET /user").length).toBeGreaterThan(checksBefore);
   });
 
-  test("signs out a session the server no longer accepts", async ({ page }) => {
+  test("shows a session the server no longer accepts as ended, without deleting it, until the player removes it", async ({ page }) => {
     const auth = await useFakeAuth(page);
     await signIn(page);
+    const token = await storedAccessToken(page);
     auth.reply("GET /user", { status: 403, body: authError("user_not_found", "User from sub claim in JWT does not exist") });
 
     await reloadApp(page);
 
-    await expect(accountSection(page)).toContainText("Your sign-in had ended");
+    await expect(accountSection(page)).toContainText(`Your sign-in for ${TEST_EMAIL} has ended`);
     await expect(accountSection(page).getByLabel("Email address")).toBeVisible();
+    // Nothing was deleted automatically: the UI says it's still stored, and it is.
+    expect(await storedAccessToken(page)).toBe(token);
+    expect(authRequests(auth, "POST /logout")).toHaveLength(0);
+    await reloadApp(page);
+    await expect(accountSection(page)).toContainText("has ended");
+
+    await accountSection(page).getByRole("button", { name: "Remove it from this browser" }).click();
+    await expect(accountSection(page)).toContainText("You're signed out");
+    expect(await storedAccessToken(page)).toBeNull();
     await reloadApp(page);
     await expect(accountSection(page)).toContainText("You're playing as a guest");
   });

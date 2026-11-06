@@ -33,26 +33,27 @@ export function fakeUser(email = TEST_EMAIL) {
   };
 }
 
-function tokenClaims(email: string) {
+/** `expiresIn` is in seconds from the tests' clock; a negative value makes an already-expired token. */
+function tokenClaims(email: string, expiresIn = 3600) {
   const issuedAt = nowSeconds();
   return {
     sub: fakeUser(email).id,
     email,
     role: "authenticated",
     aud: "authenticated",
-    iat: issuedAt,
-    exp: issuedAt + 3600,
+    iat: issuedAt - Math.max(0, -expiresIn),
+    exp: issuedAt + expiresIn,
     session_id: `session-${email}`,
   };
 }
 
-function sessionFor(email: string, accessToken: string) {
+function sessionFor(email: string, accessToken: string, expiresIn = 3600) {
   const issuedAt = nowSeconds();
   return {
     access_token: accessToken,
     token_type: "bearer",
-    expires_in: 3600,
-    expires_at: issuedAt + 3600,
+    expires_in: expiresIn,
+    expires_at: issuedAt + expiresIn,
     refresh_token: `fake-refresh-token-${email}`,
     user: fakeUser(email),
   };
@@ -75,10 +76,10 @@ export async function createSigningKey(kid = "plantetary-e2e-key") {
   };
 }
 
-export function fakeSession(email = TEST_EMAIL) {
+export function fakeSession(email = TEST_EMAIL, expiresIn = 3600) {
   // HS256 with no key ID, so the app checks the token by asking /user, which these tests answer.
-  const accessToken = `${base64url({ alg: "HS256", typ: "JWT" })}.${base64url(tokenClaims(email))}.fake-signature`;
-  return sessionFor(email, accessToken);
+  const accessToken = `${base64url({ alg: "HS256", typ: "JWT" })}.${base64url(tokenClaims(email, expiresIn))}.fake-signature`;
+  return sessionFor(email, accessToken, expiresIn);
 }
 
 type Reply = { status: number; body?: unknown } | "network-error";
@@ -145,6 +146,18 @@ export function authRequests(fake: FakeAuth, endpoint: string) {
     const path = new URL(request.url()).pathname.replace(/^\/auth\/v1/, "");
     return `${request.method()} ${path}` === endpoint;
   });
+}
+
+/** The access token supabase-js has stored in this browser's session cookie, or null if there is none. */
+export async function storedAccessToken(page: Page) {
+  const cookies = await page.context().cookies();
+  const chunks = cookies
+    .filter((cookie) => /^sb-.+-auth-token(\.\d+)?$/.test(cookie.name))
+    .sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
+  if (chunks.length === 0) return null;
+  const raw = chunks.map((cookie) => cookie.value).join("");
+  const json = Buffer.from(raw.replace(/^base64-/, ""), "base64url").toString("utf8");
+  return (JSON.parse(json) as { access_token?: string }).access_token ?? null;
 }
 
 /** Every Plantetary game key in localStorage, to prove sign-in leaves them untouched. */

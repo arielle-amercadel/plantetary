@@ -16,9 +16,11 @@ After that:
 - **Sessions** are stored in `sb-…` cookies, not in `localStorage`, so they're kept apart from game saves.
 - **On each visit** the saved session is checked:
   - **How:** tokens signed with an asymmetric key are verified locally against the project's public keys. Older HS256 tokens are checked with Supabase's `/auth/v1/user`. Neither check can change the stored session.
-  - **Rejected,** for example because the account was deleted: the session is cleared and the player becomes a guest.
+  - **Rejected,** for example because the account was deleted: Settings says the sign-in has ended, and the player plays as a guest. The session isn't deleted automatically. The player can sign in again, or press **Remove it from this browser**.
   - **Unreachable:** the session is kept and checked again on the next visit.
-- **A newer change always wins.** If the player signs in or out, here or in another tab, while that check is still running, the check's result is dropped. A rejected session is cleared only if it's still the current one, never a session that replaced it. Finishing a sign-in waits briefly for the check, so the two never overlap in one tab.
+  - **Expired:** supabase-js refreshes it. If the refresh is refused, supabase-js removes it, and the player becomes a guest.
+- **A newer change always wins.** If the player signs in or out, here or in another tab, while that check is still running, the check's result is dropped. Finishing a sign-in waits briefly for the check, so the two never overlap in one tab.
+- **Why nothing is deleted automatically:** supabase-js can't remove a session "only if it's still this one". Every tab shares the same cookie, and a new sign-in is saved without any lock. So a check that compared the session and then signed out could delete a session another tab had saved a moment earlier. Only the player's own sign-out removes a session.
 - **Sign out** affects this browser only. If the server can't be reached, the player is still signed out here, and the server session expires on its own.
 
 | Problem | What the player sees |
@@ -100,8 +102,8 @@ Replace `https://your-site.example` with the address Plantetary is served from.
 
 | Command | What it checks |
 | --- | --- |
-| `npm test` | `tests/auth.test.ts` covers the config checks, link parsing, error messages and sign-out. `tests/auth-restore.test.ts` covers token checks, including real ES256 signatures, and sign-ins and sign-outs during a session check. `tests/privileged-key-guard.test.ts` covers secret-key detection and `next.config.ts`. All use fakes and dummy keys. |
-| `npm run test:e2e` | `e2e/auth-race.spec.ts` covers signing in, and signing out in another tab, while a session check is pending, and asymmetric-key sessions. `e2e/auth.spec.ts` covers guest mode, requesting a link, finishing sign-in, expired and invalid links, restoring after a refresh, rejected sessions, sign-out and its failures, and proof that game saves don't change |
+| `npm test` | `tests/auth.test.ts` covers the config checks, link parsing, error messages and sign-out. `tests/auth-restore.test.ts` covers token checks (including real ES256 signatures), sign-ins and sign-outs during a session check, and a new session arriving after the final comparison. `tests/privileged-key-guard.test.ts` covers secret-key detection and `next.config.ts`. All use fakes and dummy keys. |
+| `npm run test:e2e` | `e2e/auth-race.spec.ts` covers signing in here or in another tab, and signing out in another tab, while a session check is pending. It also covers expired sessions and asymmetric-key sessions. `e2e/auth.spec.ts` covers guest mode, requesting a link, finishing sign-in, expired and invalid links, restoring after a refresh, rejected sessions, sign-out and its failures, and proof that game saves don't change |
 
 The browser tests point the app at a fake project on a closed local port, set in `playwright.config.ts`. They answer its Auth requests themselves, so no real project is used and nothing leaves the computer.
 

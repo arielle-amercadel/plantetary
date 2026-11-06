@@ -7,7 +7,9 @@ import {
   fakeSession,
   fakeUser,
   readGameStorage,
+  storedAccessToken,
   useFakeAuth,
+  type FakeAuth,
 } from "./auth-support";
 import { completeQuest, expect, openApp, reloadApp, test } from "./support";
 
@@ -22,18 +24,6 @@ function deferred() {
   let release: () => void = () => {};
   const released = new Promise<void>((resolve) => { release = resolve; });
   return { released, release };
-}
-
-/** The access token stored in this browser's session cookie, or null. */
-async function storedAccessToken(page: Page) {
-  const cookies = await page.context().cookies();
-  const chunks = cookies
-    .filter((cookie) => /^sb-.+-auth-token(\.\d+)?$/.test(cookie.name))
-    .sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
-  if (chunks.length === 0) return null;
-  const raw = chunks.map((cookie) => cookie.value).join("");
-  const json = Buffer.from(raw.replace(/^base64-/, ""), "base64url").toString("utf8");
-  return (JSON.parse(json) as { access_token?: string }).access_token ?? null;
 }
 
 test.describe("Signing in while an old session is still being checked", () => {
@@ -68,10 +58,8 @@ test.describe("Signing in while an old session is still being checked", () => {
     await expect(page).toHaveURL(/\/settings$/);
     await expect(accountSection(page)).toContainText(`Signed in as ${NEW_EMAIL}`);
     expect(await storedAccessToken(page)).toBe(newSession.access_token);
-    // Only the rejected session was ever revoked.
-    for (const logout of authRequests(auth, "POST /logout")) {
-      expect(logout.headers()["authorization"]).toBe(`Bearer ${oldSession.access_token}`);
-    }
+    // Nothing was signed out automatically: the new session simply replaced the old one.
+    expect(authRequests(auth, "POST /logout")).toHaveLength(0);
 
     await reloadApp(page);
     await expect(accountSection(page)).toContainText(`Signed in as ${NEW_EMAIL}`);
@@ -129,7 +117,7 @@ test.describe("Projects that sign tokens with an asymmetric key", () => {
     expect(authRequests(auth, "GET /user")).toHaveLength(0);
   });
 
-  test("a token the project's key didn't sign is cleared", async ({ page }) => {
+  test("a token the project's key didn't sign is shown as ended, and left for the player to remove", async ({ page }) => {
     const projectKey = await createSigningKey();
     const otherKey = await createSigningKey();
     const auth = await useFakeAuth(page);
@@ -141,9 +129,10 @@ test.describe("Projects that sign tokens with an asymmetric key", () => {
     await expect(page).toHaveURL(/\/settings$/);
     await reloadApp(page);
 
-    await expect(accountSection(page)).toContainText("Your sign-in had ended");
+    await expect(accountSection(page)).toContainText(`Your sign-in for ${TEST_EMAIL} has ended`);
     expect(authRequests(auth, "GET /user")).toHaveLength(0);
-    expect(await storedAccessToken(page)).toBeNull();
+    expect(authRequests(auth, "POST /logout")).toHaveLength(0);
+    expect(await storedAccessToken(page)).not.toBeNull();
   });
 
   test("an outage fetching the public keys keeps the player signed in", async ({ page }) => {
@@ -159,5 +148,86 @@ test.describe("Projects that sign tokens with an asymmetric key", () => {
 
     await expect(accountSection(page)).toContainText(`Signed in as ${TEST_EMAIL}`);
     expect(authRequests(auth, "GET /user")).toHaveLength(0);
+  });
+});
+
+test.describe("Signing in from another tab while this tab is checking an old session", () => {
+  test("the other tab's new session survives this tab's late rejection, and this tab shows it", async ({ page }) => {
+    const auth = await useFakeAuth(page);
+    const oldSession = fakeSession(TEST_EMAIL);
+    const newSession = fakeSession(NEW_EMAIL);
+    auth.reply("POST /verify", { status: 200, body: oldSession });
+    await openApp(page, SIGN_IN_LINK);
+    await page.getByRole("button", { name: "Finish signing in" }).click();
+    await expect(accountSection(page)).toContainText(`Signed in as ${TEST_EMAIL}`);
+
+    // This tab reloads; its check of the old session is held open and will be rejected.
+    const gate = deferred();
+    auth.reply("GET /user", async (request) => {
+      if (request.headers()["authorization"] !== `Bearer ${oldSession.access_token}`) {
+        return { status: 200, body: fakeUser(NEW_EMAIL) };
+      }
+      await gate.released;
+      return { status: 403, body: authError("session_not_found", "Session from session_id claim in JWT does not exist") };
+    });
+    await openApp(page, "/settings");
+    await expect(accountSection(page)).toContainText("Checking whether you're signed in");
+
+    // Meanwhile another tab finishes a new sign-in.
+    const otherTab = await page.context().newPage();
+    const otherAuth = await useFakeAuth(otherTab);
+    otherAuth.reply("POST /verify", { status: 200, body: newSession });
+    otherAuth.reply("GET /user", { status: 200, body: fakeUser(NEW_EMAIL) });
+    await openApp(otherTab, SIGN_IN_LINK);
+    await otherTab.getByRole("button", { name: "Finish signing in" }).click();
+    await expect(accountSection(otherTab)).toContainText(`Signed in as ${NEW_EMAIL}`);
+    await expect(accountSection(page)).toContainText(`Signed in as ${NEW_EMAIL}`);
+
+    // Now the old session's rejection arrives in the first tab.
+    gate.release();
+    await expect.poll(() => authRequests(auth, "GET /user").length).toBeGreaterThan(0);
+    await page.waitForTimeout(500);
+
+    expect(await storedAccessToken(page)).toBe(newSession.access_token);
+    await expect(accountSection(page)).toContainText(`Signed in as ${NEW_EMAIL}`);
+    await expect(accountSection(otherTab)).toContainText(`Signed in as ${NEW_EMAIL}`);
+    expect(authRequests(auth, "POST /logout")).toHaveLength(0);
+    expect(authRequests(otherAuth, "POST /logout")).toHaveLength(0);
+    await otherTab.close();
+  });
+});
+
+test.describe("Expired sessions", () => {
+  async function signInWithExpiredToken(page: Page, auth: FakeAuth) {
+    // Accepted now, but already past its expiry by the next page load.
+    auth.reply("POST /verify", { status: 200, body: fakeSession(TEST_EMAIL, -60) });
+    await openApp(page, SIGN_IN_LINK);
+    await page.getByRole("button", { name: "Finish signing in" }).click();
+    await expect(page).toHaveURL(/\/settings$/);
+  }
+
+  test("an expired session whose refresh is refused ends, and the app itself signs nothing out", async ({ page }) => {
+    const auth = await useFakeAuth(page);
+    await signInWithExpiredToken(page, auth);
+    auth.reply("POST /token", { status: 400, body: authError("refresh_token_not_found", "Invalid Refresh Token: Refresh Token Not Found") });
+
+    await reloadApp(page);
+
+    await expect(accountSection(page)).toContainText("You're playing as a guest");
+    // supabase-js removed the session it couldn't refresh; Plantetary never called sign-out.
+    expect(await storedAccessToken(page)).toBeNull();
+    expect(authRequests(auth, "POST /logout")).toHaveLength(0);
+  });
+
+  test("an expired session that refreshes stays signed in", async ({ page }) => {
+    const auth = await useFakeAuth(page);
+    await signInWithExpiredToken(page, auth);
+    const refreshed = fakeSession(TEST_EMAIL);
+    auth.reply("POST /token", { status: 200, body: refreshed });
+
+    await reloadApp(page);
+
+    await expect(accountSection(page)).toContainText(`Signed in as ${TEST_EMAIL}`);
+    expect(await storedAccessToken(page)).toBe(refreshed.access_token);
   });
 });

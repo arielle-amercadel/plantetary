@@ -285,7 +285,7 @@ export type StoredSessionCheck =
   | { status: "ended" }
   | { status: "valid"; user: SignedInUser; token: string }
   | { status: "unreachable"; user: SignedInUser; token: string }
-  | { status: "rejected"; token: string }
+  | { status: "rejected"; user: SignedInUser; token: string }
   | { status: "superseded" };
 
 async function readCurrentAccessToken(client: Pick<AuthClient, "getSession">): Promise<string | null> {
@@ -301,7 +301,9 @@ async function readCurrentAccessToken(client: Pick<AuthClient, "getSession">): P
  * Checks the session saved in this browser without changing it.
  * - Valid: signed in.
  * - Unreachable (offline): kept, so a brief outage doesn't sign anyone out; it's checked again next load.
- * - Rejected: reported with its token, so only that exact session is ever cleared.
+ * - Rejected: reported, but left in place. Nothing here ever clears a session: supabase-js has no way to
+ *   clear one only if it is still current, so a "check, then sign out" could delete a newer session
+ *   another tab had just saved. Only an explicit sign-out by the player clears it.
  */
 export async function checkStoredSession(
   client: Pick<AuthClient, "getSession">,
@@ -324,26 +326,7 @@ export async function checkStoredSession(
   const user = { email: check.status === "valid" && check.email ? check.email : session.user.email ?? null };
   if (check.status === "valid") return { status: "valid", user, token };
   if (check.status === "unreachable") return { status: "unreachable", user, token };
-  return { status: "rejected", token };
-}
-
-/**
- * Signs this browser out of a rejected session, but only if it is still the current one. If a newer
- * session has replaced it, nothing is touched.
- */
-export async function clearRejectedSession(
-  client: Pick<AuthClient, "getSession" | "signOut">,
-  rejectedToken: string,
-): Promise<"cleared" | "superseded"> {
-  const current = await readCurrentAccessToken(client);
-  if (current === null) return "cleared";
-  if (current !== rejectedToken) return "superseded";
-  try {
-    await client.signOut({ scope: "local" });
-  } catch {
-    // The session was already rejected; clearing it is best effort.
-  }
-  return "cleared";
+  return { status: "rejected", user, token };
 }
 
 export type SignOutResult =

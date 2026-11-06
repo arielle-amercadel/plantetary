@@ -5,7 +5,6 @@ import { createAuthController, type AuthState, type ControllerClient } from "../
 import {
   canVerifyLocally,
   checkStoredSession,
-  clearRejectedSession,
   createTokenVerifier,
   type TokenCheck,
 } from "../src/app/auth/auth-session";
@@ -107,7 +106,7 @@ describe("restoring while a sign-in or sign-out happens", () => {
 
     check.resolve({ status: "rejected" });
     await controller.restored;
-    expect(states.last()).toEqual({ status: "signed-out", sessionEnded: true });
+    expect(states.last()).toEqual({ status: "session-ended", user: { email: "old@example.com" } });
   });
 
   it("a sign-in during the check wins, and the old session's rejection signs nothing out", async () => {
@@ -177,19 +176,153 @@ describe("restoring while a sign-in or sign-out happens", () => {
     expect(states.last()).toEqual({ status: "signed-in", user: { email: "other@example.com" } });
   });
 
-  it("clears a rejected session that is still current, and its own sign-out keeps the 'ended' notice", async () => {
+  it("never signs out a rejected session: it is reported as ended and left for the player to remove", async () => {
     const fake = createFakeAuth(session("old-token", "old@example.com"));
     const states = track();
     const controller = createAuthController(fake.client, async () => ({ status: "rejected" }), states.onChange);
     fake.emit("INITIAL_SESSION", fake.current);
     await controller.restored;
 
-    expect(fake.client.signOut).toHaveBeenCalledTimes(1);
-    expect(fake.client.signOut).toHaveBeenCalledWith({ scope: "local" });
-    expect(states.states).toEqual([{ status: "signed-out", sessionEnded: true }]);
+    expect(fake.client.signOut).not.toHaveBeenCalled();
+    expect(fake.current?.access_token).toBe("old-token");
+    expect(states.states).toEqual([{ status: "session-ended", user: { email: "old@example.com" } }]);
   });
 
-  it("finishing a sign-in waits for the check, so the old session is cleared before the new one exists", async () => {
+  it("Codex's exact race: another tab's session saved between the final comparison and any cleanup survives", async () => {
+    const fake = createFakeAuth(session("old-token", "old@example.com"));
+    const states: AuthState[] = [];
+    let raced = false;
+    // Another tab signs in at the last possible moment: when cleanup would start (signOut), or when the
+    // controller has made its decision, whichever comes first.
+    const otherTabSignsIn = () => {
+      if (raced) return;
+      raced = true;
+      fake.signInElsewhere("other-tab-token", "other@example.com");
+    };
+    const signOut = fake.client.signOut.getMockImplementation()!;
+    fake.client.signOut.mockImplementation(async (...args) => {
+      otherTabSignsIn();
+      return signOut(...args);
+    });
+    const controller = createAuthController(fake.client, async () => ({ status: "rejected" }), (state) => {
+      states.push(state);
+      queueMicrotask(otherTabSignsIn);
+    });
+    fake.emit("INITIAL_SESSION", fake.current);
+    await controller.restored;
+    await settle();
+
+    expect(raced).toBe(true);
+    expect(fake.current?.access_token).toBe("other-tab-token");
+    expect(states.at(-1)).toEqual({ status: "signed-in", user: { email: "other@example.com" } });
+  });
+
+  it("Codex's race: a new session saved after the final comparison survives, and the UI follows it", async () => {
+    const fake = createFakeAuth(session("old-token", "old@example.com"));
+    const states = track();
+    let reads = 0;
+    const getSession = fake.client.getSession.getMockImplementation()!;
+    fake.client.getSession.mockImplementation(async () => {
+      const result = await getSession();
+      reads += 1;
+      // Read 2 is the comparison after the check. Right after it, another tab signs in.
+      if (reads === 2) queueMicrotask(() => fake.signInElsewhere("other-tab-token", "other@example.com"));
+      return result;
+    });
+    const controller = createAuthController(fake.client, async () => ({ status: "rejected" }), states.onChange);
+    fake.emit("INITIAL_SESSION", fake.current);
+    await controller.restored;
+    await settle();
+
+    expect(reads).toBeGreaterThanOrEqual(2);
+    expect(fake.client.signOut).not.toHaveBeenCalled();
+    expect(fake.current?.access_token).toBe("other-tab-token");
+    // The UI matches what supabase-js actually holds.
+    expect(states.last()).toEqual({ status: "signed-in", user: { email: fake.current?.user.email } });
+  });
+
+  it("Codex's race without an event: a session written quietly after the comparison still survives", async () => {
+    const fake = createFakeAuth(session("old-token", "old@example.com"));
+    let reads = 0;
+    const getSession = fake.client.getSession.getMockImplementation()!;
+    fake.client.getSession.mockImplementation(async () => {
+      const result = await getSession();
+      reads += 1;
+      if (reads === 2) queueMicrotask(() => fake.replaceQuietly(session("other-tab-token", "other@example.com")));
+      return result;
+    });
+    const controller = createAuthController(fake.client, async () => ({ status: "rejected" }), track().onChange);
+    fake.emit("INITIAL_SESSION", fake.current);
+    await controller.restored;
+    await settle();
+
+    expect(fake.client.signOut).not.toHaveBeenCalled();
+    expect(fake.current?.access_token).toBe("other-tab-token");
+  });
+
+  it("follows several changes from other tabs during one check, ending on the last", async () => {
+    const fake = createFakeAuth(session("old-token", "old@example.com"));
+    const check = deferred<TokenCheck>();
+    const states = track();
+    const controller = createAuthController(fake.client, () => check.promise, states.onChange);
+    fake.emit("INITIAL_SESSION", fake.current);
+
+    fake.signInElsewhere("tab-b-token", "b@example.com");
+    fake.signOutElsewhere();
+    fake.signInElsewhere("tab-c-token", "c@example.com");
+    check.resolve({ status: "rejected" });
+    await controller.restored;
+
+    expect(fake.client.signOut).not.toHaveBeenCalled();
+    expect(fake.current?.access_token).toBe("tab-c-token");
+    expect(states.last()).toEqual({ status: "signed-in", user: { email: "c@example.com" } });
+  });
+
+  it.each([
+    ["valid", { status: "valid", email: "old@example.com" }],
+    ["unreachable", { status: "unreachable" }],
+    ["rejected", { status: "rejected" }],
+  ] as const)("never signs anything out when the check is %s", async (_label, result) => {
+    const fake = createFakeAuth(session("old-token", "old@example.com"));
+    const controller = createAuthController(fake.client, async () => result, track().onChange);
+    fake.emit("INITIAL_SESSION", fake.current);
+    await controller.restored;
+
+    expect(fake.client.signOut).not.toHaveBeenCalled();
+    expect(fake.current?.access_token).toBe("old-token");
+  });
+
+  it("an expired session supabase-js couldn't refresh is reported as ended, without signing anything out", async () => {
+    const fake = createFakeAuth(null);
+    fake.client.getSession.mockResolvedValueOnce({
+      data: { session: null },
+      error: new AuthApiError("Invalid Refresh Token: Refresh Token Not Found", 400, "refresh_token_not_found"),
+    } as never);
+    const states = track();
+    const controller = createAuthController(fake.client, vi.fn(), states.onChange);
+    fake.emit("INITIAL_SESSION", null);
+    await controller.restored;
+
+    expect(states.last()).toEqual({ status: "signed-out", sessionEnded: true });
+    expect(fake.client.signOut).not.toHaveBeenCalled();
+  });
+
+  it("an explicit sign-out still clears the session, including an ended one", async () => {
+    const fake = createFakeAuth(session("old-token", "old@example.com"));
+    const states = track();
+    const controller = createAuthController(fake.client, async () => ({ status: "rejected" }), states.onChange);
+    fake.emit("INITIAL_SESSION", fake.current);
+    await controller.restored;
+    expect(states.last()?.status).toBe("session-ended");
+
+    expect(await controller.signOut()).toEqual({ ok: true });
+
+    expect(fake.client.signOut).toHaveBeenCalledWith({ scope: "local" });
+    expect(fake.current).toBeNull();
+    expect(states.last()).toEqual({ status: "signed-out" });
+  });
+
+  it("finishing a sign-in waits for the check, then replaces the old session without signing anything out", async () => {
     const fake = createFakeAuth(session("old-token", "old@example.com"));
     const check = deferred<TokenCheck>();
     const states = track();
@@ -203,7 +336,7 @@ describe("restoring while a sign-in or sign-out happens", () => {
     check.resolve({ status: "rejected" });
     expect(await signingIn).toEqual({ ok: true, user: { email: "new@example.com" } });
 
-    expect(fake.client.signOut.mock.invocationCallOrder[0]).toBeLessThan(fake.client.verifyOtp.mock.invocationCallOrder[0]);
+    expect(fake.client.signOut).not.toHaveBeenCalled();
     expect(fake.current?.access_token).toBe("new-token");
     expect(states.last()).toEqual({ status: "signed-in", user: { email: "new@example.com" } });
   });
@@ -263,7 +396,11 @@ describe("checking the stored session", () => {
       user: { email: "mira@example.com" },
       token: "token-1",
     });
-    expect(await checkStoredSession(fake.client, async () => ({ status: "rejected" }))).toEqual({ status: "rejected", token: "token-1" });
+    expect(await checkStoredSession(fake.client, async () => ({ status: "rejected" }))).toEqual({
+      status: "rejected",
+      user: { email: "mira@example.com" },
+      token: "token-1",
+    });
     expect(fake.client.signOut).not.toHaveBeenCalled();
   });
 
@@ -275,20 +412,6 @@ describe("checking the stored session", () => {
     };
 
     expect(await checkStoredSession(fake.client, verify)).toEqual({ status: "superseded" });
-  });
-
-  it("clears only the exact session it rejected", async () => {
-    const same = createFakeAuth(session("token-1", "mira@example.com"));
-    expect(await clearRejectedSession(same.client, "token-1")).toBe("cleared");
-    expect(same.client.signOut).toHaveBeenCalledWith({ scope: "local" });
-
-    const replaced = createFakeAuth(session("token-2", "new@example.com"));
-    expect(await clearRejectedSession(replaced.client, "token-1")).toBe("superseded");
-    expect(replaced.client.signOut).not.toHaveBeenCalled();
-
-    const gone = createFakeAuth(null);
-    expect(await clearRejectedSession(gone.client, "token-1")).toBe("cleared");
-    expect(gone.client.signOut).not.toHaveBeenCalled();
   });
 });
 

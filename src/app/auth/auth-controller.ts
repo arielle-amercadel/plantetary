@@ -1,7 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import {
   checkStoredSession,
-  clearRejectedSession,
   finishSignIn,
   requestMagicLink,
   signOutOfThisDevice,
@@ -19,12 +18,19 @@ import {
  * - `loading`: checking for a saved session.
  * - `signed-out`: playing as a guest.
  * - `signed-in`: signed in. Game progress is still saved only in this browser, exactly as for a guest.
+ * - `session-ended`: Supabase rejected the saved session (for example, the account was removed), but it
+ *   is still stored in this browser. It's never cleared automatically (see checkStoredSession); the
+ *   player can sign in again, or remove it with an explicit sign-out.
+ *
+ * `signed-out` with `sessionEnded` means supabase-js itself has already removed a session it couldn't
+ * refresh, so nothing is stored any more.
  */
 export type AuthState =
   | { status: "unavailable" }
   | { status: "loading" }
   | { status: "signed-out"; sessionEnded?: boolean }
-  | { status: "signed-in"; user: SignedInUser };
+  | { status: "signed-in"; user: SignedInUser }
+  | { status: "session-ended"; user: SignedInUser };
 
 export type ControllerClient = AuthClient & Pick<SupabaseClient["auth"], "onAuthStateChange">;
 
@@ -46,8 +52,10 @@ const defaultRestoreWaitMs = 8_000;
  *
  * Every sign-in, sign-out or refresh after startup bumps a generation number. The saved-session check
  * that runs on load notes the generation when it starts, and its result is dropped if anything changed
- * since: an outdated check can never overwrite a newer sign-in or sign-out. When it rejects a session,
- * it clears only that exact session, never one that replaced it.
+ * since: an outdated check can never overwrite a newer sign-in or sign-out.
+ *
+ * The check never deletes anything. Only the player's own sign-out clears a session, so a check that
+ * finishes late can't remove a session another tab has just saved.
  */
 export function createAuthController(
   client: ControllerClient,
@@ -60,8 +68,6 @@ export function createAuthController(
   // supabase-js announces the stored session as SIGNED_IN while it starts up, before anyone has checked
   // it. Those announcements end with INITIAL_SESSION, and the check below decides instead.
   let startedUp = false;
-  // True while this controller signs out a session it rejected, so that sign-out isn't mistaken for a new one.
-  let clearingRejected = false;
 
   const set = (state: AuthState) => {
     if (!disposed) onChange(state);
@@ -74,7 +80,6 @@ export function createAuthController(
       return;
     }
     if (!startedUp) return;
-    if (event === "SIGNED_OUT" && clearingRejected) return;
 
     if (event === "SIGNED_OUT" || !session) {
       generation += 1;
@@ -107,19 +112,10 @@ export function createAuthController(
         case "unreachable":
           set({ status: "signed-in", user: result.user });
           return;
-        case "rejected": {
-          clearingRejected = true;
-          let outcome: "cleared" | "superseded";
-          try {
-            outcome = await clearRejectedSession(client, result.token);
-          } finally {
-            clearingRejected = false;
-          }
-          if (disposed || generation !== startedAt) return;
-          if (outcome === "superseded") continue;
-          set({ status: "signed-out", sessionEnded: true });
+        case "rejected":
+          // Left in place on purpose: clearing it here could delete a newer session (see above).
+          set({ status: "session-ended", user: result.user });
           return;
-        }
       }
     }
     // Still changing after several checks: the most recent auth event has already set the state.

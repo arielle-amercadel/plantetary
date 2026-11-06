@@ -59,12 +59,19 @@ export default function AccountSection() {
         <p className="settings-description" role="status">Checking whether you&apos;re signed in…</p>
       )}
 
-      {auth.status === "signed-out" && (
+      {(auth.status === "signed-out" || auth.status === "session-ended") && (
         <>
-          <p className="settings-description">
-            You&apos;re playing as a guest. An account is optional: enter your email and we&apos;ll send you a sign-in link, with no password needed. {progressNote}
-          </p>
-          {auth.sessionEnded && (
+          {auth.status === "session-ended" ? (
+            <p className="settings-description">
+              Your sign-in for <strong className="account-email">{auth.user.email ?? "your account"}</strong> has ended, so
+              you&apos;re playing as a guest. It&apos;s still stored in this browser until you sign in again or remove it. {progressNote}
+            </p>
+          ) : (
+            <p className="settings-description">
+              You&apos;re playing as a guest. An account is optional: enter your email and we&apos;ll send you a sign-in link, with no password needed. {progressNote}
+            </p>
+          )}
+          {auth.status === "signed-out" && auth.sessionEnded && (
             <p className="settings-message is-error" role="status">Your sign-in had ended, so you&apos;re playing as a guest. Sign in again any time.</p>
           )}
           <form onSubmit={submitEmail} noValidate>
@@ -89,6 +96,14 @@ export default function AccountSection() {
               </div>
             </fieldset>
           </form>
+          {auth.status === "session-ended" && (
+            <div className="settings-form-row">
+              <span />
+              <button className="settings-reset-button" type="button" disabled={busy} onClick={submitSignOut}>
+                Remove it from this browser
+              </button>
+            </div>
+          )}
         </>
       )}
 
