@@ -1,5 +1,6 @@
 import type { AuthState } from "./auth/auth-controller";
-import type { VerifiedSignIn } from "./cloud-game-storage";
+import { inspectBrowserGarden, type BrowserGardenSummary, type BrowserSavePreview } from "./browser-save-preview";
+import type { CloudGameStorage, CloudImportResult, VerifiedSignIn } from "./cloud-game-storage";
 import type { GameDataSession, ReloadOutcome, SaveRequestOutcome, SaveSnapshot } from "./game-data-session";
 import type { GameStorageProblem } from "./game-storage";
 import type { StoredQuestData } from "./quest-types";
@@ -26,8 +27,12 @@ export type StorageTarget =
  *   chooses to start a fresh cloud garden or to keep playing on this device.
  * - `cloud-failed`: the cloud save couldn't be loaded. Nothing is shown or written: never starter data
  *   in its place. `problem` says why.
+ * - `importing`: this browser's garden is being imported into the account (see `importBrowserGarden`).
+ *   Nothing is shown or written meanwhile.
+ * - `import-unresolved`: an import was sent, and whether it happened isn't known yet (`unresolvedImport`).
+ *   Nothing is shown or written until it's verified, retried or left (see `verifyBrowserImport`).
  */
-export type StoragePhase = "waiting" | "loading" | "ready" | "choose" | "cloud-failed";
+export type StoragePhase = "waiting" | "loading" | "ready" | "choose" | "cloud-failed" | "importing" | "import-unresolved";
 
 export type StorageControllerSnapshot = {
   /**
@@ -45,6 +50,12 @@ export type StorageControllerSnapshot = {
   problem: GameStorageProblem | null;
   /** Where saving stands, for the current storage. */
   save: SaveSnapshot | null;
+  /**
+   * `import-unresolved` only: why the import's outcome isn't known, and whether `retryBrowserImport` may
+   * send the same import again (the cloud was read and still holds the garden it would replace).
+   * Otherwise null.
+   */
+  unresolvedImport: { problem: GameStorageProblem; canRetry: boolean } | null;
   /**
    * Changes that couldn't be saved and that the player hasn't agreed to leave behind, oldest first:
    * one entry per session closed because the storage changed (for example, the account changed in another
@@ -122,12 +133,79 @@ export function maskEmail(email: string | null): string | null {
   return `${email.slice(0, Math.min(2, at))}•••${email.slice(at)}`;
 }
 
+/** What the controller needs from a cloud storage to import into it. The same storage as the session's. */
+export type CloudImporter = Pick<CloudGameStorage, "importSave" | "verifyImport" | "getLoadedRevision" | "hasUnresolvedImport">;
+
+/** A cloud session together with its storage's import methods (the same storage instance). */
+export type CloudSessionHandle = { session: GameDataSession; importer: CloudImporter | null };
+
+/**
+ * What the player is asked to confirm before importing. Opaque: the browser garden itself stays inside
+ * the controller, exactly as read, so what's imported is exactly what was previewed.
+ */
+export type BrowserImportPlan = {
+  readonly planId: number;
+  /** null: the account has no cloud garden yet. Otherwise the cloud revision the import replaces. */
+  readonly expectedRevision: number | null;
+  /** The browser garden, summarized for the confirmation. */
+  readonly summary: BrowserGardenSummary;
+  /** Whether the browser save is in an older format, upgraded in memory only for the import. */
+  readonly upgraded: boolean;
+};
+
+/**
+ * Why an import can't be prepared or go ahead:
+ * - `busy`: an import is already running.
+ * - `not-cloud`: no verified cloud account is playing here (guests, this-device gardens, unverified sign-ins).
+ * - `not-loaded`: the cloud garden isn't loaded (still loading, failed, or an import is unresolved).
+ * - `unsaved`: cloud changes couldn't be saved (an error or a conflict). Resolve that first.
+ * - `stale`: the plan no longer matches: the cloud garden, the session or the account changed since it
+ *   was prepared (including this tab's own saves). Prepare again, so the player confirms what's current.
+ * - `browser-changed`: the browser garden changed since the plan was prepared.
+ * - `browser-empty`, `browser-unreadable`, `browser-newer-version`: no browser garden that can be imported.
+ * - `no-progress`: the browser garden is only the starter quests.
+ */
+export type BrowserImportRefusal =
+  | "busy" | "not-cloud" | "not-loaded" | "unsaved" | "stale" | "browser-changed"
+  | "browser-empty" | "browser-unreadable" | "browser-newer-version" | "no-progress";
+
+export type BrowserImportPreparation =
+  | { status: "ready"; plan: BrowserImportPlan }
+  | { status: "unavailable"; reason: BrowserImportRefusal; save?: SaveSnapshot | null };
+
+/**
+ * - `imported`: the cloud now holds the browser garden; a fresh session loads it.
+ * - `unchanged`: the cloud already held exactly that garden; nothing was written. A fresh session loads it.
+ * - `conflict`: the cloud changed meanwhile (another tab or device); nothing was imported. A fresh session
+ *   loads the latest.
+ * - `backup-failed`: the cloud garden couldn't be backed up, so it wasn't replaced. A fresh session loads it.
+ * - `failed`: nothing was imported, for certain. A fresh session loads the cloud garden.
+ * - `unresolved`: whether it was imported isn't known yet; the phase is `import-unresolved`.
+ * - `refused`: nothing was sent (see `BrowserImportRefusal`). The garden on screen is unchanged.
+ * - `cancelled`: the account or session changed while importing; nothing more applies here. Whatever the
+ *   import did, it did in the account that started it, never another.
+ */
+export type BrowserImportOutcome =
+  | { status: "imported"; revision: number }
+  | { status: "unchanged"; revision: number }
+  | { status: "conflict" }
+  | { status: "backup-failed" }
+  | { status: "failed"; problem: GameStorageProblem }
+  | { status: "unresolved"; problem: GameStorageProblem; canRetry: boolean }
+  | { status: "refused"; reason: BrowserImportRefusal; save?: SaveSnapshot | null }
+  | { status: "cancelled" };
+
 export type GameStorageControllerOptions = {
   /** Starter data, used before anything loads and for a fresh cloud garden. */
   fallbackData: StoredQuestData;
   createBrowserSession: () => GameDataSession;
-  /** A cloud session for this verified sign-in, or null if cloud saving isn't available. */
-  createCloudSession: (signIn: VerifiedSignIn, getAuth: () => AuthState) => GameDataSession | null;
+  /**
+   * A cloud session for this verified sign-in, or null if cloud saving isn't available. With its storage's
+   * import methods (a `CloudSessionHandle`), this browser's garden can be imported into the account.
+   */
+  createCloudSession: (signIn: VerifiedSignIn, getAuth: () => AuthState) => GameDataSession | CloudSessionHandle | null;
+  /** Reads this browser's garden for import, without writing anything. Defaults to `inspectBrowserGarden`. */
+  readBrowserGarden?: () => BrowserSavePreview;
   /** Accounts whose player chose to keep playing on this device instead of the cloud. */
   deviceChoices: { has: (userId: string) => boolean; add: (userId: string) => void; remove: (userId: string) => void };
   /**
@@ -189,6 +267,28 @@ export type GameStorageController = {
    */
   getRecoveryData: (id: string) => StoredQuestData | null;
   /**
+   * For a verified cloud account (with its garden loaded, or none yet): writes waiting changes, then reads
+   * this browser's garden (read-only) and returns a plan to confirm. Nothing is imported.
+   */
+  prepareBrowserImport: () => Promise<BrowserImportPreparation>;
+  /**
+   * Imports the plan's browser garden into the account: only if the plan is still current, the cloud
+   * revision it replaces hasn't moved, every cloud change is saved, and the browser garden is still
+   * exactly the one previewed. The garden is taken off the screen first, so nothing played meanwhile can
+   * be saved over the import, and afterwards loaded again in a fresh session. The browser garden is never
+   * changed. Only one import runs at a time.
+   */
+  importBrowserGarden: (plan: BrowserImportPlan) => Promise<BrowserImportOutcome>;
+  /** `import-unresolved` only: reads the cloud to settle the import's outcome. Sends no import. */
+  verifyBrowserImport: () => Promise<BrowserImportOutcome>;
+  /** `import-unresolved` with `canRetry` only: sends exactly the same import again (same garden, same revision). */
+  retryBrowserImport: () => Promise<BrowserImportOutcome>;
+  /**
+   * `import-unresolved` only: stops waiting and loads the cloud garden in a fresh session. If the earlier
+   * import does commit later, this tab's next save is refused as a conflict (never an overwrite).
+   */
+  leaveUnresolvedImport: () => boolean;
+  /**
    * Closes the session while the app isn't mounted (React may unmount and mount again, as it does in
    * development). `resume` picks the storage for the current auth state again.
    */
@@ -216,6 +316,8 @@ export function createGameStorageController(options: GameStorageControllerOption
   let auth: AuthState = { status: "loading" };
   let target: StorageTarget = { kind: "waiting" };
   let session: GameDataSession | null = null;
+  /** Retired adapters must never become valid again when the same account returns. */
+  let sessionLifetime: object | null = null;
   let unsubscribeSession: () => void = () => {};
   /** The unsaved changes the player agreed to leave behind: only these exact ones, in this exact session. */
   let acknowledgedLoss: { session: GameDataSession; data: StoredQuestData | null } | null = null;
@@ -231,11 +333,35 @@ export function createGameStorageController(options: GameStorageControllerOption
     loaded: null,
     problem: null,
     save: null,
+    unresolvedImport: null,
     unsavedRecoveries: [],
     recoveriesAtRisk: false,
   };
   const listeners = new Set<() => void>();
   const { recoveryStore } = options;
+  const readBrowserGarden = options.readBrowserGarden ?? (() => inspectBrowserGarden());
+  /** The current cloud session's storage, for imports. Null for browser sessions or without import support. */
+  let importer: CloudImporter | null = null;
+  /** Everything an import plan stands for, kept here so the garden imported is exactly the one previewed. */
+  type ImportRecord = {
+    plan: BrowserImportPlan;
+    /** Private confirmation revision; never read it back from the caller-visible plan. */
+    expectedRevision: number | null;
+    data: StoredQuestData;
+    rawText: string;
+    session: GameDataSession;
+    importer: CloudImporter;
+    accountId: string;
+    /** The generation the plan was made for, then the import's own generation once it's sent. */
+    generation: number;
+  };
+  let nextPlanId = 1;
+  /** The newest prepared plan. Preparing again, or anything that replaces the session, retires it. */
+  let currentPlan: ImportRecord | null = null;
+  /** `import-unresolved`: the import whose outcome isn't known, kept for verifying or retrying exactly it. */
+  let unresolved: ImportRecord | null = null;
+  /** The import, verification or retry running now. A replaced session or account makes it stale. */
+  let activeImport: object | null = null;
   const pageId = options.pageId ?? `page-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
   let pageHidden = false;
   /** Every kept entry, hidden or not. `snapshot.unsavedRecoveries` is the part that may be shown now. */
@@ -316,6 +442,7 @@ export function createGameStorageController(options: GameStorageControllerOption
 
   /** Closes the current session, keeping its unsaved changes unless the player agreed to leave them. */
   function closeSession() {
+    sessionLifetime = null;
     if (!session) return;
     const closing = session;
     session = null;
@@ -475,18 +602,34 @@ export function createGameStorageController(options: GameStorageControllerOption
   /** Replaces the session with a fresh one for the current target, and loads it. */
   function start() {
     closeSession();
+    // Any import belongs to the session being replaced: its plan, its unresolved state and its running
+    // request no longer apply to what's shown next.
+    importer = null;
+    currentPlan = null;
+    unresolved = null;
+    activeImport = null;
     const generation = snapshot.generation + 1;
     if (target.kind === "waiting") {
-      update({ generation, phase: "waiting", mode: null, account: null, loaded: null, problem: null, save: null });
+      update({ generation, phase: "waiting", mode: null, account: null, loaded: null, problem: null, save: null, unresolvedImport: null });
       return;
     }
 
-    const next = target.kind === "cloud"
-      ? options.createCloudSession(target.signIn, () => auth)
-      : options.createBrowserSession();
+    let next: GameDataSession | null;
+    if (target.kind === "cloud") {
+      const lifetime = {};
+      sessionLifetime = lifetime;
+      const created = options.createCloudSession(target.signIn, () =>
+        sessionLifetime === lifetime ? auth : { status: "loading" });
+      const handle = created && "session" in created ? created : null;
+      next = handle ? handle.session : (created as GameDataSession | null);
+      importer = handle?.importer ?? null;
+    } else {
+      next = options.createBrowserSession();
+    }
     const account = target.kind === "cloud" ? target.signIn.user : target.account;
     if (!next) {
-      update({ generation, phase: "cloud-failed", mode: "cloud", account, loaded: null, problem: "unknown", save: null });
+      sessionLifetime = null;
+      update({ generation, phase: "cloud-failed", mode: "cloud", account, loaded: null, problem: "unknown", save: null, unresolvedImport: null });
       syncPersistedRecoveries();
       return;
     }
@@ -509,8 +652,100 @@ export function createGameStorageController(options: GameStorageControllerOption
       loaded: null,
       problem: null,
       save: next.getSnapshot(),
+      unresolvedImport: null,
     });
     void next.load(fallbackData).then((outcome) => applyLoad(next, generation, outcome.data, outcome.problem));
+  }
+
+  /** The verified cloud account playing here now, or null. Checked again after every wait. */
+  function cloudAccountId(): string | null {
+    if (target.kind !== "cloud" || auth.status !== "signed-in" || auth.user.id !== target.signIn.user.id) return null;
+    if (snapshot.mode !== "cloud" || snapshot.account?.id !== target.signIn.user.id) return null;
+    return target.signIn.user.id;
+  }
+
+  /** Every cloud change is saved (or the account has no garden yet), so nothing would be lost by importing. */
+  function readyToImport(owner: GameDataSession): boolean {
+    const save = owner.getSnapshot();
+    return !save.hasUnsavedChanges && (save.status === "saved" || save.status === "empty");
+  }
+
+  function browserRefusal(preview: BrowserSavePreview): BrowserImportRefusal | null {
+    switch (preview.status) {
+      case "ready":
+        return preview.hasMeaningfulProgress ? null : "no-progress";
+      case "empty":
+        return "browser-empty";
+      case "newer-version":
+        return "browser-newer-version";
+      default:
+        return "browser-unreadable";
+    }
+  }
+
+  /** Whether the plan still describes the session, garden and account on screen. */
+  function isPlanCurrent(record: ImportRecord): boolean {
+    return session === record.session && importer === record.importer &&
+      snapshot.generation === record.generation && cloudAccountId() === record.accountId &&
+      (snapshot.phase === "ready" || snapshot.phase === "choose");
+  }
+
+  /** Whether a running import step still belongs to what's here now. */
+  function isImportCurrent(op: object, record: ImportRecord): boolean {
+    return activeImport === op && session === record.session && importer === record.importer &&
+      snapshot.generation === record.generation && cloudAccountId() === record.accountId;
+  }
+
+  /**
+   * Applies an import's result. Every settled result loads the cloud garden in a fresh session: the
+   * storage requires a load before saving after an import or a conflict, and a fresh load shows the
+   * player exactly what the account now holds. Only an unresolved import keeps its storage, which alone
+   * can verify or retry it.
+   */
+  function finishImport(op: object, record: ImportRecord, result: CloudImportResult | null): BrowserImportOutcome {
+    if (!isImportCurrent(op, record)) return { status: "cancelled" };
+    activeImport = null;
+    if (result && result.status === "failed" && record.importer.hasUnresolvedImport()) {
+      unresolved = record;
+      const state = { problem: result.problem, canRetry: !result.verificationRequired };
+      update({ phase: "import-unresolved", unresolvedImport: state });
+      return { status: "unresolved", ...state };
+    }
+    start();
+    switch (result?.status) {
+      case "imported":
+        return { status: "imported", revision: result.revision };
+      case "unchanged":
+        return { status: "unchanged", revision: result.revision };
+      case "conflict":
+        return { status: "conflict" };
+      case "backup_failed":
+        return { status: "backup-failed" };
+      case "failed":
+        return { status: "failed", problem: result.problem };
+      default:
+        return { status: "failed", problem: "unknown" };
+    }
+  }
+
+  /** Runs one import step (send, verify or retry) for an unresolved import. */
+  async function settleUnresolved(step: (record: ImportRecord) => Promise<CloudImportResult | null>): Promise<BrowserImportOutcome> {
+    const record = unresolved;
+    if (activeImport) return { status: "refused", reason: "busy" };
+    if (!record || snapshot.phase !== "import-unresolved" || session !== record.session || cloudAccountId() !== record.accountId) {
+      return { status: "refused", reason: "not-loaded" };
+    }
+    const op = {};
+    activeImport = op;
+    unresolved = null;
+    update({ phase: "importing", unresolvedImport: null });
+    let result: CloudImportResult | null;
+    try {
+      result = await step(record);
+    } catch {
+      result = { status: "failed", problem: "unknown", verificationRequired: true };
+    }
+    return finishImport(op, record, result);
   }
 
   function retarget(next: StorageTarget) {
@@ -625,6 +860,80 @@ export function createGameStorageController(options: GameStorageControllerOption
     },
     getRecoveryData(id) {
       return recoveries.find((entry) => entry.id === id && isRecoveryVisible(entry))?.data ?? null;
+    },
+    async prepareBrowserImport() {
+      const unavailable = (reason: BrowserImportRefusal, save?: SaveSnapshot | null): BrowserImportPreparation =>
+        ({ status: "unavailable", reason, ...(save !== undefined ? { save } : {}) });
+      if (activeImport) return unavailable("busy");
+      const owner = session;
+      const ownImporter = importer;
+      const accountId = cloudAccountId();
+      if (!owner || !ownImporter || !accountId) return unavailable("not-cloud");
+      if (snapshot.phase !== "ready" && snapshot.phase !== "choose") return unavailable("not-loaded");
+      const generation = snapshot.generation;
+      // Waiting changes are written first, so the revision in the plan is the one the cloud really has.
+      const save = await owner.flush();
+      if (activeImport || session !== owner || importer !== ownImporter || snapshot.generation !== generation || cloudAccountId() !== accountId) {
+        return unavailable("stale");
+      }
+      if (!readyToImport(owner)) return unavailable("unsaved", save);
+      const expectedRevision = ownImporter.getLoadedRevision();
+      if (expectedRevision === undefined || (expectedRevision === null) !== (snapshot.phase === "choose")) return unavailable("not-loaded");
+      const preview = readBrowserGarden();
+      const refusal = browserRefusal(preview);
+      if (refusal || preview.status !== "ready") return unavailable(refusal ?? "browser-unreadable");
+      const plan: BrowserImportPlan = Object.freeze({ planId: nextPlanId++, expectedRevision, summary: preview.summary, upgraded: preview.upgraded });
+      currentPlan = { plan, expectedRevision, data: preview.data, rawText: preview.rawText, session: owner, importer: ownImporter, accountId, generation };
+      return { status: "ready", plan };
+    },
+    async importBrowserGarden(plan) {
+      const refused = (reason: BrowserImportRefusal, save?: SaveSnapshot | null): BrowserImportOutcome =>
+        ({ status: "refused", reason, ...(save !== undefined ? { save } : {}) });
+      if (activeImport) return refused("busy");
+      const record = currentPlan;
+      if (!record || record.plan !== plan || !isPlanCurrent(record)) return refused("stale");
+      const op = {};
+      activeImport = op;
+      // Changes made while the player was reading the confirmation are written first.
+      const save = await record.session.flush();
+      if (activeImport !== op || currentPlan !== record || !isPlanCurrent(record)) {
+        if (activeImport === op) activeImport = null;
+        return refused("stale");
+      }
+      const refuse = (reason: BrowserImportRefusal, withSave?: SaveSnapshot | null) => {
+        activeImport = null;
+        return refused(reason, withSave);
+      };
+      if (!readyToImport(record.session)) return refuse("unsaved", save);
+      // The cloud garden the player agreed to replace must still be the one in the cloud (as far as this
+      // tab knows: the database checks the revision again, so another device's save is a conflict).
+      if (record.importer.getLoadedRevision() !== record.expectedRevision) return refuse("stale");
+      // And the browser garden must still be exactly the one previewed. Read again, still read-only.
+      const browser = readBrowserGarden();
+      if (browser.status !== "ready" || browser.rawText !== record.rawText) return refuse("browser-changed");
+
+      currentPlan = null;
+      // Off the screen in this same step, with no wait in between: nothing played from here on can be
+      // saved, and nothing from before is waiting to be (checked just above).
+      update({ generation: snapshot.generation + 1, phase: "importing", loaded: null, problem: null, unresolvedImport: null });
+      record.generation = snapshot.generation;
+      let result: CloudImportResult;
+      try {
+        result = await record.importer.importSave(record.data, record.expectedRevision);
+      } catch {
+        result = { status: "failed", problem: "unknown", verificationRequired: true };
+      }
+      return finishImport(op, record, result);
+    },
+    verifyBrowserImport: () => settleUnresolved((record) => record.importer.verifyImport()),
+    retryBrowserImport() {
+      if (!unresolved || !snapshot.unresolvedImport?.canRetry) return Promise.resolve({ status: "refused", reason: "not-loaded" });
+      return settleUnresolved((record) => record.importer.importSave(record.data, record.expectedRevision));
+    },
+    leaveUnresolvedImport() {
+      if (activeImport || snapshot.phase !== "import-unresolved") return false;
+      start();
+      return true;
     },
     suspend() {
       target = { kind: "waiting" };

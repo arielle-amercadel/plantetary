@@ -227,7 +227,7 @@ gate. Successful imports and conflicts require an explicit load before normal sa
 pre-import garden cannot overwrite imported progress. Duplicate successful attempts are refused.
 The queue and identity checks are shared with normal saves; an account change closes the adapter.
 
-The uncertainty/snapshot guard is in memory for this adapter. Later controller work must retain the
+The uncertainty/snapshot guard is in memory for this adapter (Step 3 keeps the storage while an import is unresolved; see below). Later controller work must retain the
 original expected revision for retries, handle unresolved imports and reset/reload the game session
 after success. A page reload must freshly inspect cloud state and obtain new confirmation before a
 different replacement. This adapter does not provide durable operation receipts: if newer different
@@ -237,7 +237,31 @@ committed briefly before that later save. Nothing is merged or written over that
 The migration has only been exercised locally at this step: by pgTAP, and by a round trip through the
 local stack's real PostgREST, which confirmed the RPC's `json` argument is stored byte-for-byte (so the
 exact-text verification above holds) and that RLS refuses other accounts and anonymous calls. It must be deployed through the normal
-migration process before enabling imports against a hosted project. Step 3 has not been implemented.
+migration process before enabling imports against a hosted project. Controller integration is described below.
+
+## Importing through the controller (Stage 8 Step 3)
+
+`game-storage-controller.ts` connects the browser preview (Step 1) and the adapter's import (Step 2) to the session lifecycle. There's no UI yet (Step 4). The quest store's cloud session factory now returns `{ session, importer }`, both the same `CloudGameStorage`, so an unresolved import also holds back that session's saves.
+
+1. **`prepareBrowserImport()`**, for a verified cloud account with its garden loaded (`ready`) or none yet (`choose`):
+   - Writes waiting changes (`flush`), then refuses with `unsaved` if anything is still unsaved, failing or in conflict.
+   - Captures the cloud revision the import would replace (`null` for an empty account).
+   - Reads the browser garden with `inspectBrowserGarden`, which is read-only. It refuses an empty, unreadable or newer-version browser save, and starter-only gardens (`no-progress`).
+   - Returns a frozen opaque **plan** with the summary for confirmation. The garden and expected revision are retained privately inside the controller, so caller-side mutations cannot retarget a confirmed plan. Preparing again retires the previous plan.
+2. **`importBrowserGarden(plan)`**, after confirmation:
+   - Refuses (sending nothing, changing nothing on screen) unless the plan is still current: same session, generation and verified account.
+   - Writes waiting changes again; anything unsaved is `unsaved`.
+   - Refuses as `stale` if this tab's cloud revision moved on since the plan (the player confirmed replacing what they saw), and as `browser-changed` if the browser garden's text changed.
+   - Then, in the same step with no wait in between, takes the garden off the screen: a new generation, phase `importing`, nothing loaded. Nothing played from there can be saved, and nothing earlier is waiting to be.
+   - Sends the plan's garden and expected revision through `importSave`. Only one import, verification or retry runs at a time (`busy`).
+3. **Results.** `imported`, `unchanged`, `conflict`, `backup-failed` and a definitive `failed` all load the cloud garden in a **fresh session**. The adapter requires a load before saving after these anyway, so the game is never playable with saves that would fail as `not-loaded`. A definitive failure while offline therefore shows **Your cloud garden couldn't be loaded** until it loads again.
+4. **Unresolved imports.** If the adapter still holds an unresolved import, its storage is kept and the phase is `import-unresolved`. Nothing is shown or saved. `unresolvedImport.canRetry` says whether the cloud was read and still holds the garden being replaced. Options:
+   - **`verifyBrowserImport()`** reads the cloud without sending anything.
+   - **`retryBrowserImport()`** (only when `canRetry`) sends exactly the same garden and expected revision. A late-committing original is still reported as `imported`.
+   - **`leaveUnresolvedImport()`** loads a fresh session without waiting. If the original commits later, this tab's next save is refused as a conflict (Stage 7), never an overwrite.
+5. **Account and session changes.** Any new session (another account, signing out, unmounting) retires the plan, the unresolved import and any running step. A step that finishes afterwards returns `cancelled` and changes nothing on screen. The factory's auth getter is bound to that session's lifetime: a retired adapter sees no verified sign-in, even if the same account returns before a delayed `getSession()` completes. The quest provider uses this getter for both normal saves and imports. An already-sent request can finish in its original account, but retired adapters cannot send further requests or verification reads. The token and RPC `p_user_id` checks also prevent imports reaching another account.
+
+The browser garden is never written, by preparation, import or any result. Tests: `tests/controller-import.test.ts` runs the real controller, session and adapter against `tests/support/fake-cloud.ts`, a multi-account fake with the RPC's semantics.
 
 ## Known limitations
 

@@ -359,4 +359,15 @@ describe("transactional browser imports", () => {
     expect(await env.storage.importSave(garden(), 1)).toEqual({ status: "imported", revision: 2, verified: true });
     expect(env.events).toEqual(["rpc", "read"]);
   });
+
+  it("reports whether an import is unresolved, so a controller keeps this storage to verify or retry it", async () => {
+    const env = setup(garden(40));
+    expect(env.storage.hasUnresolvedImport()).toBe(false);
+    env.rpc(() => lost());
+    await env.storage.importSave(garden(), 1);
+    expect(env.storage.hasUnresolvedImport()).toBe(true);
+    env.rpc();
+    expect(await env.storage.importSave(garden(), 1)).toMatchObject({ status: "imported" });
+    expect(env.storage.hasUnresolvedImport()).toBe(false);
+  });
 });

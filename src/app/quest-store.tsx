@@ -1,6 +1,6 @@
 "use client";
 
-import { createContext, useContext, useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { createContext, useContext, useEffect, useState, useSyncExternalStore } from "react";
 import { initialStoredQuestData } from "./quest-defaults";
 import type { ReactNode } from "react";
 import type {
@@ -183,6 +183,7 @@ const serverStorageSnapshot: StorageControllerSnapshot = {
   loaded: null,
   problem: null,
   save: null,
+  unresolvedImport: null,
   unsavedRecoveries: [],
   recoveriesAtRisk: false,
 };
@@ -215,7 +216,6 @@ export function QuestProvider({ children }: { children: ReactNode }) {
   /** The generation of the data now in React state. Saves are only sent for the controller's current one. */
   const [appliedGeneration, setAppliedGeneration] = useState(-1);
   const { auth, getSupabaseClient } = useAuth();
-  const authRef = useRef(auth);
   const [controller] = useState<GameStorageController>(() => {
     const deviceChoices = new Set<string>();
     let restoredChoices = false;
@@ -229,12 +229,14 @@ export function QuestProvider({ children }: { children: ReactNode }) {
     return createGameStorageController({
       fallbackData: initialStoredQuestData,
       createBrowserSession: () => createGameDataSession(createBrowserGameStorage()),
-      createCloudSession: (signIn) => {
+      createCloudSession: (signIn, getAuth) => {
         const client = getSupabaseClient();
         if (!client) return null;
-        // Reads the newest auth state on every request, so a changed account is never used.
-        const storage = createCloudGameStorage({ client, signIn, getAuth: () => authRef.current });
-        return createGameDataSession(storage, cloudSessionOptions);
+        // Reads current auth only while this session is current. A retired storage cannot resume
+        // delayed requests even if the same account signs back in before they finish.
+        const storage = createCloudGameStorage({ client, signIn, getAuth });
+        // The same storage serves the session and imports, so an unresolved import also holds back saves.
+        return { session: createGameDataSession(storage, cloudSessionOptions), importer: storage };
       },
       // Download-only copies of unsaved cloud changes, for this tab, if the page closes before they're saved.
       recoveryStore: createRecoveryStore(() => (typeof window === "undefined" ? null : window.sessionStorage)),
@@ -256,7 +258,6 @@ export function QuestProvider({ children }: { children: ReactNode }) {
   const canPlay = hasRestored && isGardenPlayable(storage, appliedGeneration);
 
   useEffect(() => {
-    authRef.current = auth;
     controller.setAuth(auth);
   }, [auth, controller]);
 

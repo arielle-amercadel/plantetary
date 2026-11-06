@@ -36,6 +36,12 @@ export type CloudGameStorage = GameStorage & {
   importSave: (data: StoredQuestData, expectedRevision: number | null) => Promise<CloudImportResult>;
   /** Read-only resolution of a lost response. null means there is no uncertain import. */
   verifyImport: () => Promise<CloudImportResult | null>;
+  /**
+   * Whether an import was sent whose outcome isn't known yet (or is known not to have happened, but only
+   * the same import may be retried). While true, normal saves are refused and only this storage may
+   * verify or retry it, so a controller must keep this storage rather than start a fresh one.
+   */
+  hasUnresolvedImport: () => boolean;
 };
 
 type SaveRow = { data: unknown; schema_version: unknown; revision: unknown };
@@ -481,6 +487,7 @@ export function createCloudGameStorage({ client, signIn, getAuth }: CloudGameSto
       return serialize(() => runImport(attempt));
     },
     verifyImport: () => serialize(reconcileImport),
+    hasUnresolvedImport: () => uncertainImport !== null,
     load: (fallbackData) => serialize(async () => {
       try {
         return await load(fallbackData);
