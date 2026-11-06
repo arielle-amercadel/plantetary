@@ -1,4 +1,5 @@
 import type { StoredQuestData } from "./quest-types";
+import { inspectBrowserGarden, type BrowserSavePreview } from "./browser-save-preview";
 import {
   questStorageKey,
   loadQuestData,
@@ -94,8 +95,16 @@ function getBrowserStorage(): QuestStorage | undefined {
 }
 
 /** Keeps the existing `localStorage` keys and save format, so current browser saves load unchanged. */
-export function createBrowserGameStorage(getStorage: GetQuestStorage = getBrowserStorage): GameStorage {
+export type BrowserGameStorage = GameStorage & {
+  /** Read-only preview: never runs the browser loader's backup/persistence path. */
+  inspect: () => Promise<BrowserSavePreview>;
+};
+
+export function createBrowserGameStorage(getStorage: GetQuestStorage = getBrowserStorage): BrowserGameStorage {
   return {
+    async inspect() {
+      return inspectBrowserGarden(getStorage);
+    },
     async load(fallbackData) {
       const { data, canPersist } = loadQuestData(fallbackData, getStorage);
       if (!canPersist) return { status: "failed", data };

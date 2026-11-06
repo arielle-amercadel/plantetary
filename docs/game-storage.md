@@ -148,6 +148,41 @@ The session publishes a save state (`getSnapshot` and `subscribe`, ready for Rea
   - Hidden entries are **kept**, never deleted, across sign-out and account switches, and listed again when their owner is back (A → B → A). An account's `account-changed` entries are also kept in the tab, like `page-left` ones, so a reload while they're hidden doesn't lose them; a guest's stay in memory only, so leaving the page warns. Whether any entry exists only on this page is worked out again after every write to the tab, from what the tab actually kept, so an entry evicted by the 5-entry limit still makes leaving warn.
   - A write that finishes late (after the account changed) and turns out to have saved clears only its own entry. Nothing is ever uploaded or restored to any garden.
 
+## Read-only browser preview (Stage 8 Step 1)
+
+`createBrowserGameStorage().inspect()` returns a browser garden preview without loading a playable
+session. The underlying `inspectBrowserGarden()` also accepts a storage reader with only `getItem`.
+Both read only `plantetary-quest-data`: they never seed defaults, write migration or invalid-save
+backups, update the original save, or touch preferences, reminders, authentication or cloud storage.
+
+Results distinguish `empty`, `unavailable` (missing or blocked storage), `invalid`,
+`unsupported-version` (a malformed version tag), `newer-version`, and `failed` (an unexpected
+validation/migration failure). A future version is blocked before its contents are interpreted.
+Supported legacy saves, including ones without a version, use the existing pure validator and
+migrations in memory. A `ready` result includes the exact original `rawText`, detached migrated
+`data`, an `upgraded` flag, a summary, and `hasMeaningfulProgress`. Inspection does not authorize an
+import or guarantee that the browser save will still match these bytes later.
+
+The summary contains level, total ledger XP, daily/personal/total quest counts, discovered catalog plants,
+pending gifts, and `lastActivityDate`. That date is the latest recorded daily or personal completion
+date, **not** a last-edit timestamp. Due dates and automatically created empty daily snapshots aren't
+activity. Legacy completions without dates have an unknown (`null`) date.
+
+Meaningful progress includes earned XP, completions, retained deleted-completion counts, quest or
+category customizations (including removals), and plant progress. The default unopened Fern gift
+and the free starter Fern don't qualify on their own, even in a current-format save: a previous visit
+may already have persisted a legacy migration's automatically granted Fern, with no way to tell it
+apart from a manually opened starter gift. Reordering quests/categories alone doesn't qualify.
+Starter-only saves and passive daily history aren't offered as progress to import. Legacy recurrence
+is compared by the days a Daily Quest actually runs, so an older representation of the starter
+schedule isn't treated as customization. Unused recurrence fields on Personal Quests don't count.
+Unknown plant discoveries remain preserved in `data`, but don't inflate the journal's plant count.
+
+`quest-defaults.ts` shares the existing starter data between the provider and this comparison. No UI,
+cloud import, replacement, or database changes are part of Step 1. Tests in
+`tests/browser-save-preview.test.ts` assert that inspection performs one garden-key read and zero
+writes/removals, including legacy and invalid saves with existing safety backups.
+
 ## Known limitations
 
 - **One device's changes at a time.** There's no merging: after a conflict, the player keeps one version (the latest, after downloading their own if they want). Synchronizing or merging changes is Stage 9.

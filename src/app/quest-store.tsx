@@ -1,6 +1,7 @@
 "use client";
 
 import { createContext, useContext, useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { initialStoredQuestData } from "./quest-defaults";
 import type { ReactNode } from "react";
 import type {
   CategoryLists,
@@ -27,7 +28,6 @@ import {
   getStreakValues,
   hasQuestScheduleChanged,
   isDailyQuestScheduledForToggle,
-  migrateStoredData,
   clearPersonalCompletionDate,
   preserveDeletedLegacyPersonalCompletionCount,
   recordPersonalCompletionDate,
@@ -42,12 +42,10 @@ import {
   toggleDailyQuestCompletionWithDetails,
   updateQuestInLists,
   weekdayNames,
-  weekdays,
 } from "./quest-logic";
 import {
   mergeDiscoveredPlantIds,
   mergePendingPlantGiftIds,
-  migratePlantDiscoveries,
   unwrapPlantGift as unwrapPlantGiftState,
 } from "./plant-journal-logic";
 import { useAuth } from "./auth/auth-provider";
@@ -84,80 +82,7 @@ export {
   getLevelProgress,
 } from "./quest-logic";
 
-const initialCategoryLists: CategoryLists = {
-  daily: ["Wellness", "Self-care", "Personal growth"],
-  personal: ["Study", "Projects", "Chores", "Personal"],
-};
-
-export const initialQuestLists: QuestLists = {
-  daily: [
-    {
-      id: "water",
-      title: "Drink a glass of water",
-      category: "Wellness",
-      repeatSchedule: "Every day",
-      selectedDays: [...weekdays],
-      difficulty: "Easy",
-      completed: false,
-    },
-    {
-      id: "skincare",
-      title: "Morning skincare",
-      category: "Self-care",
-      repeatSchedule: "Every day",
-      selectedDays: [...weekdays],
-      difficulty: "Easy",
-      completed: false,
-    },
-    {
-      id: "reading",
-      title: "Read for 20 minutes",
-      category: "Personal growth",
-      repeatSchedule: "Every day",
-      selectedDays: [...weekdays],
-      difficulty: "Medium",
-      completed: false,
-    },
-    {
-      id: "stretch",
-      title: "Evening stretch",
-      category: "Wellness",
-      repeatSchedule: "Every day",
-      selectedDays: [...weekdays],
-      difficulty: "Easy",
-      completed: false,
-    },
-  ],
-  personal: [
-    {
-      id: "biology",
-      title: "Review biology notes",
-      category: "Study",
-      difficulty: "Medium",
-      completed: false,
-    },
-    {
-      id: "moodboard",
-      title: "Finish portfolio moodboard",
-      category: "Projects",
-      difficulty: "Hard",
-      completed: false,
-    },
-    {
-      id: "desk",
-      title: "Tidy the desk",
-      category: "Chores",
-      difficulty: "Easy",
-      completed: false,
-    },
-  ],
-};
-
-const initialStoredQuestData = migratePlantDiscoveries(migrateStoredData({
-  questLists: initialQuestLists,
-  categoryLists: initialCategoryLists,
-  starterPlantGiftPending: true,
-}));
+export { initialQuestLists } from "./quest-defaults";
 
 type QuestStoreValue = {
   questLists: QuestLists;
