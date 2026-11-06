@@ -115,6 +115,82 @@ function isStoredQuestData(value: unknown): value is StoredQuestData {
   );
 }
 
+/** The save format this version of Plantetary writes: what the upgrades below produce for any save. */
+export const latestQuestSaveVersion = migratePlantDiscoveries(migrateStoredData({
+  questLists: { daily: [], personal: [] },
+  categoryLists: { daily: [], personal: [] },
+})).schemaVersion ?? 0;
+
+/**
+ * - `valid`: the save can be played. `data` is in the current format.
+ *   - `upgraded`: `data` differs from what was stored (an older format, or bad fields were recovered),
+ *     so the stored original should be backed up before anything replaces it.
+ *   - `newerVersion`: the save's format is newer than this version of Plantetary. It is still read,
+ *     and its version number is kept, as browser storage always has.
+ * - `invalid`: not a save this app can use. It must be kept, never replaced by defaults unseen.
+ */
+export type QuestSaveReadResult =
+  | { status: "valid"; data: StoredQuestData; upgraded: boolean; newerVersion: boolean }
+  | { status: "invalid" };
+
+/**
+ * Validates a save and upgrades it to the current format, without reading or writing any storage, so
+ * browser and cloud saves follow exactly the same rules. The value given is never modified.
+ *
+ * It only throws because of a bug. Callers must treat that as a failed load, never as an invalid save,
+ * so a save that couldn't be checked is never replaced.
+ */
+export function readQuestSave(value: unknown): QuestSaveReadResult {
+  if (!isStoredQuestData(value)) return { status: "invalid" };
+
+  const validHistory = value.completionHistory === undefined ||
+    isCompletionHistory(value.completionHistory);
+  const normalizedCompletionHistory = validHistory && value.completionHistory
+    ? normalizeCompletionHistoryDetails(value.completionHistory)
+    : value.completionHistory;
+  const validPersonalCompletionDates = normalizePersonalCompletionDates(
+    value.personalCompletedOnByQuestId,
+  );
+  const validDeletedLegacyCount = value.deletedLegacyPersonalCompletionCount === undefined ||
+    isValidDeletedLegacyPersonalCompletionCount(value.deletedLegacyPersonalCompletionCount)
+    ? value.deletedLegacyPersonalCompletionCount
+    : undefined;
+  const validQuestLists = normalizeSavedQuestLists(value.questLists);
+  const optionalFieldsUnchanged =
+    validQuestLists === value.questLists &&
+    normalizedCompletionHistory === value.completionHistory &&
+    validPersonalCompletionDates === value.personalCompletedOnByQuestId &&
+    validDeletedLegacyCount === value.deletedLegacyPersonalCompletionCount;
+  const validatedData: StoredQuestData = validHistory && optionalFieldsUnchanged
+    ? value
+    : {
+      ...value,
+      questLists: validQuestLists,
+      completionHistory: validHistory ? normalizedCompletionHistory : undefined,
+      personalCompletedOnByQuestId: validPersonalCompletionDates,
+      deletedLegacyPersonalCompletionCount: validDeletedLegacyCount,
+    };
+  const migratedData = migratePlantDiscoveries(migrateStoredData(validatedData));
+
+  return {
+    status: "valid",
+    data: migratedData,
+    upgraded: migratedData !== validatedData || validatedData !== value,
+    newerVersion: typeof value.schemaVersion === "number" && value.schemaVersion > latestQuestSaveVersion,
+  };
+}
+
+/** `readQuestSave` for saved text. Text that isn't JSON is an invalid save. */
+export function readQuestSaveText(text: string): QuestSaveReadResult {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    return { status: "invalid" };
+  }
+  return readQuestSave(parsed);
+}
+
 /**
  * Reads the save and upgrades it to the current format. The original text is backed up before
  * anything would replace it; if that backup fails, `canPersist` is false so it is never overwritten.
@@ -131,50 +207,13 @@ export function loadQuestData(
     if (storage) {
       const rawData = storage.getItem(questStorageKey);
       if (rawData !== null) {
-        let parsedData: unknown;
-        try {
-          parsedData = JSON.parse(rawData);
-        } catch {
-          parsedData = undefined;
-        }
-
-        if (isStoredQuestData(parsedData)) {
-          const validHistory = parsedData.completionHistory === undefined ||
-            isCompletionHistory(parsedData.completionHistory);
-          const normalizedCompletionHistory = validHistory && parsedData.completionHistory
-            ? normalizeCompletionHistoryDetails(parsedData.completionHistory)
-            : parsedData.completionHistory;
-          const validPersonalCompletionDates = normalizePersonalCompletionDates(
-            parsedData.personalCompletedOnByQuestId,
-          );
-          const validDeletedLegacyCount = parsedData.deletedLegacyPersonalCompletionCount === undefined ||
-            isValidDeletedLegacyPersonalCompletionCount(parsedData.deletedLegacyPersonalCompletionCount)
-            ? parsedData.deletedLegacyPersonalCompletionCount
-            : undefined;
-          const validQuestLists = normalizeSavedQuestLists(parsedData.questLists);
-          const optionalFieldsUnchanged =
-            validQuestLists === parsedData.questLists &&
-            normalizedCompletionHistory === parsedData.completionHistory &&
-            validPersonalCompletionDates === parsedData.personalCompletedOnByQuestId &&
-            validDeletedLegacyCount === parsedData.deletedLegacyPersonalCompletionCount;
-          const validatedData: StoredQuestData = validHistory && optionalFieldsUnchanged
-            ? parsedData
-            : {
-              ...parsedData,
-              questLists: validQuestLists,
-              completionHistory: validHistory ? normalizedCompletionHistory : undefined,
-              personalCompletedOnByQuestId: validPersonalCompletionDates,
-              deletedLegacyPersonalCompletionCount: validDeletedLegacyCount,
-            };
-          const migratedData = migratePlantDiscoveries(migrateStoredData(validatedData));
-          if (
-            (migratedData !== validatedData || validatedData !== parsedData) &&
-            !preserveRawValueIfAbsent(storage, validBackupStorageKey, rawData)
-          ) {
+        const save = readQuestSaveText(rawData);
+        if (save.status === "valid") {
+          if (save.upgraded && !preserveRawValueIfAbsent(storage, validBackupStorageKey, rawData)) {
             canPersist = false;
             console.error("Plantetary could not back up saved data before migrating it. Changes will not be saved this session.");
           }
-          restoredData = migratedData;
+          restoredData = save.data;
         } else if (!preserveRawValueIfAbsent(storage, invalidBackupStorageKey, rawData)) {
           canPersist = false;
           console.error("Plantetary could not back up invalid saved data. Defaults will not overwrite it this session.");

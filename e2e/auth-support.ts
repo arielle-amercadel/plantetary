@@ -21,9 +21,15 @@ function nowSeconds() {
   return Math.floor(Date.parse(MONDAY) / 1000);
 }
 
+/** Each email gets its own stable user ID, so tests can tell accounts apart, as the database does. */
+function fakeUserId(email: string) {
+  const hex = Buffer.from(email).toString("hex").padEnd(12, "0").slice(-12);
+  return `6f1d4c58-0000-4000-8000-${hex}`;
+}
+
 export function fakeUser(email = TEST_EMAIL) {
   return {
-    id: "6f1d4c58-0000-4000-8000-000000000001",
+    id: fakeUserId(email),
     aud: "authenticated",
     role: "authenticated",
     email,
@@ -83,6 +89,17 @@ export function fakeSession(email = TEST_EMAIL, expiresIn = 3600) {
 }
 
 type Reply = { status: number; body?: unknown } | "network-error";
+
+/** The email a fake token was issued for, read from the request's bearer token. */
+function emailFromBearer(request: Request): string | null {
+  const token = request.headers()["authorization"]?.replace(/^Bearer /, "") ?? "";
+  try {
+    const claims = JSON.parse(Buffer.from(token.split(".")[1] ?? "", "base64url").toString("utf8")) as { email?: unknown };
+    return typeof claims.email === "string" ? claims.email : null;
+  } catch {
+    return null;
+  }
+}
 type Handler = (request: Request) => Reply | Promise<Reply>;
 
 export type FakeAuth = {
@@ -102,7 +119,8 @@ export async function useFakeAuth(page: Page): Promise<FakeAuth> {
     ["POST /otp", () => ({ status: 200, body: {} })],
     ["POST /verify", () => ({ status: 200, body: fakeSession() })],
     ["POST /token", () => ({ status: 200, body: fakeSession() })],
-    ["GET /user", () => ({ status: 200, body: fakeUser() })],
+    // Like the real server, /user describes the account the token was issued for.
+    ["GET /user", (request) => ({ status: 200, body: fakeUser(emailFromBearer(request) ?? TEST_EMAIL) })],
     ["POST /logout", () => ({ status: 204 })],
   ]);
 

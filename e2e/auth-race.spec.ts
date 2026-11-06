@@ -135,7 +135,7 @@ test.describe("Projects that sign tokens with an asymmetric key", () => {
     expect(await storedAccessToken(page)).not.toBeNull();
   });
 
-  test("an outage fetching the public keys keeps the player signed in", async ({ page }) => {
+  test("an outage fetching the public keys keeps the session, unconfirmed", async ({ page }) => {
     const key = await createSigningKey();
     const auth = await useFakeAuth(page);
     auth.reply("POST /verify", { status: 200, body: await key.session() });
@@ -146,7 +146,8 @@ test.describe("Projects that sign tokens with an asymmetric key", () => {
     await expect(page).toHaveURL(/\/settings$/);
     await reloadApp(page);
 
-    await expect(accountSection(page)).toContainText(`Signed in as ${TEST_EMAIL}`);
+    await expect(accountSection(page)).toContainText(`couldn't confirm your sign-in for ${TEST_EMAIL}`);
+    await expect(accountSection(page)).not.toContainText("Signed in as");
     expect(authRequests(auth, "GET /user")).toHaveLength(0);
   });
 });
@@ -198,18 +199,23 @@ test.describe("Signing in from another tab while this tab is checking an old ses
 });
 
 test.describe("Expired sessions", () => {
-  async function signInWithExpiredToken(page: Page, auth: FakeAuth) {
-    // Accepted now, but already past its expiry by the next page load.
-    auth.reply("POST /verify", { status: 200, body: fakeSession(TEST_EMAIL, -60) });
+  /**
+   * Signs in, then lets the token expire, as if the player came back two hours later. `refresh` is how the
+   * server answers supabase-js's refresh, which may happen as soon as the clock moves or on the next load.
+   */
+  async function signInWithExpiredToken(page: Page, auth: FakeAuth, refresh: { status: number; body?: unknown }) {
+    auth.reply("POST /verify", { status: 200, body: fakeSession(TEST_EMAIL) });
     await openApp(page, SIGN_IN_LINK);
     await page.getByRole("button", { name: "Finish signing in" }).click();
     await expect(page).toHaveURL(/\/settings$/);
+    await expect(accountSection(page)).toContainText(`Signed in as ${TEST_EMAIL}`);
+    auth.reply("POST /token", refresh);
+    await page.clock.fastForward("02:00:00");
   }
 
   test("an expired session whose refresh is refused ends, and the app itself signs nothing out", async ({ page }) => {
     const auth = await useFakeAuth(page);
-    await signInWithExpiredToken(page, auth);
-    auth.reply("POST /token", { status: 400, body: authError("refresh_token_not_found", "Invalid Refresh Token: Refresh Token Not Found") });
+    await signInWithExpiredToken(page, auth, { status: 400, body: authError("refresh_token_not_found", "Invalid Refresh Token: Refresh Token Not Found") });
 
     await reloadApp(page);
 
@@ -221,9 +227,10 @@ test.describe("Expired sessions", () => {
 
   test("an expired session that refreshes stays signed in", async ({ page }) => {
     const auth = await useFakeAuth(page);
-    await signInWithExpiredToken(page, auth);
-    const refreshed = fakeSession(TEST_EMAIL);
-    auth.reply("POST /token", { status: 200, body: refreshed });
+    // Valid until three hours after the start, so it's still good after the clock moves on two hours. Its
+    // token also differs from the original's, so the refresh is visible.
+    const refreshed = fakeSession(TEST_EMAIL, 3 * 3600);
+    await signInWithExpiredToken(page, auth, { status: 200, body: refreshed });
 
     await reloadApp(page);
 
@@ -298,6 +305,11 @@ test.describe("Returning to a tab after a sign-in has ended", () => {
     const newSession = fakeSession(NEW_EMAIL);
     otherAuth.reply("POST /verify", { status: 200, body: newSession });
     otherAuth.reply("GET /user", { status: 200, body: fakeUser(NEW_EMAIL) });
+    // This tab checks the new session itself before showing it. The server still rejects the old token,
+    // but accepts the one it has just issued.
+    auth.reply("GET /user", (request) => request.headers()["authorization"] === `Bearer ${newSession.access_token}`
+      ? { status: 200, body: fakeUser(NEW_EMAIL) }
+      : { status: 403, body: authError("user_not_found", "User from sub claim in JWT does not exist") });
     await openApp(otherTab, SIGN_IN_LINK);
     await otherTab.getByRole("button", { name: "Finish signing in" }).click();
     await expect(accountSection(otherTab)).toContainText(`Signed in as ${NEW_EMAIL}`);

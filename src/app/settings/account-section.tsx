@@ -107,6 +107,21 @@ export default function AccountSection() {
         </>
       )}
 
+      {auth.status === "unverified" && (
+        <>
+          <p className="settings-description">
+            Plantetary couldn&apos;t confirm your sign-in for <strong className="account-email">{auth.user.email ?? "your account"}</strong> right
+            now, usually because it can&apos;t reach the sign-in service. It will check again when you come back to this page or reload. {progressNote}
+          </p>
+          <div className="settings-form-row">
+            <span />
+            <button className="settings-reset-button" type="button" disabled={busy} onClick={submitSignOut}>
+              {busy ? "Signing out…" : "Sign out"}
+            </button>
+          </div>
+        </>
+      )}
+
       {auth.status === "signed-in" && (
         <>
           <p className="settings-description">

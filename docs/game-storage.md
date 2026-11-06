@@ -8,7 +8,7 @@ The game save loads and saves through an asynchronous storage interface, so a cl
 | --- | --- |
 | `src/app/game-storage.ts` | The `GameStorage` interface (`load` and `save`, both async) and the browser adapter |
 | `src/app/game-data-session.ts` | Tracks the load status, blocks unsafe writes, skips unchanged saves and runs saves in order |
-| `src/app/quest-storage.ts` | Reads, validates, upgrades and backs up the browser save, unchanged from before |
+| `src/app/quest-storage.ts` | Reads, validates, upgrades and backs up the browser save, unchanged from before. The checks and upgrades themselves are in `readQuestSave`, which touches no storage, so cloud saves can use the same rules |
 | `src/app/quest-store.tsx` | Loads through the session once, then asks it to save after every change |
 
 ## Loading states

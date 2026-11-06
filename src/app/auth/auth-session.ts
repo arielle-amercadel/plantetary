@@ -21,7 +21,30 @@ export const authConfirmPath = "/auth/confirm";
 /** Where a finished sign-in goes. Fixed, so a link can never send players to another site. */
 export const afterSignInPath = "/settings";
 
-export type SignedInUser = { email: string | null };
+/**
+ * `id` is the Supabase user ID: the same value as `auth.uid()` in the database's access rules, and the
+ * `sub` claim of the access token. Cloud saves are tied to it, so it is never empty.
+ */
+export type SignedInUser = { id: string; email: string | null };
+
+/**
+ * Who a session claims to belong to, for display only, when that claim hasn't been verified: the session
+ * was rejected, or couldn't be checked. It carries no ID on purpose: nothing may be read or saved for an
+ * account that hasn't been verified.
+ */
+export type UnverifiedUser = { email: string | null };
+
+/** A usable user ID, or null. Stored sessions come from cookies, so their contents aren't trusted blindly. */
+export function readUserId(value: unknown): string | null {
+  return typeof value === "string" && value.trim().length > 0 ? value : null;
+}
+
+/** The signed-in user from a Supabase session, or null if it has no usable ID. */
+export function signedInUserFromSession(session: { user?: { id?: unknown; email?: unknown } | null }): SignedInUser | null {
+  const id = readUserId(session.user?.id);
+  if (!id) return null;
+  return { id, email: typeof session.user?.email === "string" ? session.user.email : null };
+}
 
 export type AuthProblem =
   | "network"
@@ -166,7 +189,10 @@ export async function finishSignIn(
       : await client.exchangeCodeForSession(link.code);
     if (error) return { ok: false, problem: describeAuthError(error) };
     if (!data.session) return { ok: false, problem: "invalid-link" };
-    return { ok: true, user: { email: data.session.user.email ?? null } };
+    const user = signedInUserFromSession(data.session);
+    // Supabase always sends a user ID; without one, nothing could be tied to this account.
+    if (!user) return { ok: false, problem: "unknown" };
+    return { ok: true, user };
   } catch (error) {
     return { ok: false, problem: describeAuthError(error) };
   }
@@ -176,21 +202,35 @@ export async function finishSignIn(
 export type TokenCheckConfig = { url: string; key: string };
 
 export type TokenCheck =
-  | { status: "valid"; email: string | null }
+  /** `userId` is the verified token's own user ID, or null if the reply didn't include one. */
+  | { status: "valid"; userId: string | null; email: string | null }
   | { status: "rejected" }
   | { status: "unreachable" };
 
 export type VerifyToken = (accessToken: string) => Promise<TokenCheck>;
 
-function readJwtHeader(token: string): { alg?: unknown; kid?: unknown } | undefined {
-  const [header] = token.split(".");
-  if (!header) return undefined;
+function readJwtPart(token: string, index: 0 | 1): Record<string, unknown> | undefined {
+  const part = token.split(".")[index];
+  if (!part) return undefined;
   try {
-    const base64 = header.replace(/-/g, "+").replace(/_/g, "/");
-    return JSON.parse(atob(base64.padEnd(Math.ceil(base64.length / 4) * 4, "=")));
+    const base64 = part.replace(/-/g, "+").replace(/_/g, "/");
+    const value: unknown = JSON.parse(atob(base64.padEnd(Math.ceil(base64.length / 4) * 4, "=")));
+    return value && typeof value === "object" ? value as Record<string, unknown> : undefined;
   } catch {
     return undefined;
   }
+}
+
+function readJwtHeader(token: string): { alg?: unknown; kid?: unknown } | undefined {
+  return readJwtPart(token, 0);
+}
+
+/**
+ * The user ID an access token claims (`sub`), read WITHOUT checking its signature. Only for telling
+ * whether two claims agree; never a reason to trust either of them.
+ */
+export function readUnverifiedTokenSubject(token: string): string | null {
+  return readUserId(readJwtPart(token, 1)?.sub);
 }
 
 /** True for a token signed with an asymmetric key that can be checked locally against the project's public keys. */
@@ -244,7 +284,13 @@ export function createTokenVerifier(
 
     try {
       const { data, error } = await client.getClaims(accessToken, { keys: [key as never] });
-      if (data?.claims) return { status: "valid", email: typeof data.claims.email === "string" ? data.claims.email : null };
+      if (data?.claims) {
+        return {
+          status: "valid",
+          userId: readUserId(data.claims.sub),
+          email: typeof data.claims.email === "string" ? data.claims.email : null,
+        };
+      }
       return describeAuthError(error) === "network" ? unreachable : rejected;
     } catch (error) {
       return describeAuthError(error) === "network" ? unreachable : rejected;
@@ -263,10 +309,12 @@ export function createTokenVerifier(
       });
       if (response.ok) {
         const body: unknown = await response.json().catch(() => ({}));
-        const email = body && typeof body === "object" && typeof (body as { email?: unknown }).email === "string"
-          ? (body as { email: string }).email
-          : null;
-        return { status: "valid", email };
+        const fields = body && typeof body === "object" ? body as { id?: unknown; email?: unknown } : {};
+        return {
+          status: "valid",
+          userId: readUserId(fields.id),
+          email: typeof fields.email === "string" ? fields.email : null,
+        };
       }
       // 401 and 403 mean the token or its user is no longer accepted; anything else is an outage.
       return response.status === 401 || response.status === 403 ? { status: "rejected" } : { status: "unreachable" };
@@ -284,8 +332,13 @@ export type StoredSessionCheck =
   | { status: "none" }
   | { status: "ended" }
   | { status: "valid"; user: SignedInUser; token: string }
-  | { status: "unreachable"; user: SignedInUser; token: string }
-  | { status: "rejected"; user: SignedInUser; token: string }
+  /**
+   * Couldn't be checked, so nothing about it is verified. `claimedUserId` is the ID that both the stored
+   * user and the token claim, or null if they disagree or either is missing. It's only good for keeping an
+   * account that was already verified in this tab; it must never establish an identity by itself.
+   */
+  | { status: "unreachable"; user: UnverifiedUser; claimedUserId: string | null; token: string }
+  | { status: "rejected"; user: UnverifiedUser; token: string }
   | { status: "superseded" };
 
 async function readCurrentAccessToken(client: Pick<AuthClient, "getSession">): Promise<string | null> {
@@ -299,8 +352,9 @@ async function readCurrentAccessToken(client: Pick<AuthClient, "getSession">): P
 
 /**
  * Checks the session saved in this browser without changing it.
- * - Valid: signed in.
- * - Unreachable (offline): kept, so a brief outage doesn't sign anyone out; it's checked again next load.
+ * - Valid: signed in, as the user the verifier vouched for.
+ * - Unreachable (offline): kept, so a brief outage doesn't sign anyone out, but nothing about it is
+ *   verified. It's checked again when the tab is shown again, when supabase-js refreshes it, or next load.
  * - Rejected: reported, but left in place. Nothing here ever clears a session: supabase-js has no way to
  *   clear one only if it is still current, so a "check, then sign out" could delete a newer session
  *   another tab had just saved. Only an explicit sign-out by the player clears it.
@@ -323,13 +377,32 @@ export async function checkStoredSession(
 
   const token = session.access_token;
   onChecking?.(token);
-  const check = await verify(token);
+  let check: TokenCheck;
+  try {
+    check = await verify(token);
+  } catch {
+    check = { status: "unreachable" };
+  }
   if ((await readCurrentAccessToken(client)) !== token) return { status: "superseded" };
 
-  const user = { email: check.status === "valid" && check.email ? check.email : session.user.email ?? null };
-  if (check.status === "valid") return { status: "valid", user, token };
-  if (check.status === "unreachable") return { status: "unreachable", user, token };
-  return { status: "rejected", user, token };
+  const storedUser = signedInUserFromSession(session);
+  const storedEmail = typeof session.user?.email === "string" ? session.user.email : null;
+
+  if (check.status === "valid") {
+    const email = check.email || storedEmail;
+    // Only the verifier's own answer establishes who this is; the stored user record is never trusted for
+    // that. A verified reply without an ID, or a stored user that disagrees with it, is inconsistent, so
+    // it's reported as rejected (which removes nothing).
+    if (!check.userId || (storedUser && storedUser.id !== check.userId)) return { status: "rejected", user: { email }, token };
+    return { status: "valid", user: { id: check.userId, email }, token };
+  }
+
+  if (check.status === "unreachable") {
+    const tokenSubject = readUnverifiedTokenSubject(token);
+    const claimedUserId = storedUser && storedUser.id === tokenSubject ? storedUser.id : null;
+    return { status: "unreachable", user: { email: storedEmail }, claimedUserId, token };
+  }
+  return { status: "rejected", user: { email: storedEmail }, token };
 }
 
 export type SignOutResult =

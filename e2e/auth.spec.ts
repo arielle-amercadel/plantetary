@@ -5,6 +5,7 @@ import {
   authError,
   authRequests,
   fakeSession,
+  fakeUser,
   readGameStorage,
   storedAccessToken,
   useFakeAuth,
@@ -245,11 +246,22 @@ test.describe("Staying signed in", () => {
     await expect(accountSection(page)).toContainText("You're playing as a guest");
   });
 
-  test("stays signed in through a brief outage", async ({ page }) => {
+  test("keeps the session through a brief outage, unconfirmed, and confirms it once back online", async ({ page }) => {
     const auth = await useFakeAuth(page);
     await signIn(page);
+    const token = await storedAccessToken(page);
     auth.reply("GET /user", "network-error");
 
+    await reloadApp(page);
+
+    // Kept, but not shown as signed in: nothing about it could be verified.
+    await expect(accountSection(page)).toContainText(`couldn't confirm your sign-in for ${TEST_EMAIL}`);
+    await expect(accountSection(page)).not.toContainText("Signed in as");
+    await expect(accountSection(page).getByRole("button", { name: "Sign out" })).toBeVisible();
+    expect(await storedAccessToken(page)).toBe(token);
+    expect(authRequests(auth, "POST /logout")).toHaveLength(0);
+
+    auth.reply("GET /user", { status: 200, body: fakeUser(TEST_EMAIL) });
     await reloadApp(page);
 
     await expect(accountSection(page)).toContainText(`Signed in as ${TEST_EMAIL}`);

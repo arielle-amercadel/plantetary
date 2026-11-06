@@ -23,7 +23,8 @@ function jwtWithRole(role: string) {
   return `${encode({ alg: "HS256", typ: "JWT" })}.${encode({ role, iss: "supabase" })}.signature`;
 }
 
-const session = { user: { email: "mira@example.com" } };
+const userId = "6f1d4c58-0000-4000-8000-000000000001";
+const session = { user: { id: userId, email: "mira@example.com" } };
 
 /** A fake Auth client: each method returns what the test sets, and records its calls. */
 function createClient(overrides: Partial<Record<keyof AuthClient, (...args: never[]) => unknown>> = {}) {
@@ -272,9 +273,32 @@ describe("finishing sign-in", () => {
 
     expect(await finishSignIn(client, { kind: "token-hash", tokenHash: "abc123def456", type: "email" })).toEqual({
       ok: true,
-      user: { email: "mira@example.com" },
+      user: { id: userId, email: "mira@example.com" },
     });
     expect(client.verifyOtp).toHaveBeenCalledWith({ token_hash: "abc123def456", type: "email" });
+  });
+
+  it("returns the account's user ID with a code link too", async () => {
+    const client = createClient();
+
+    expect(await finishSignIn(client, { kind: "code", code: "abc123def456" })).toEqual({
+      ok: true,
+      user: { id: userId, email: "mira@example.com" },
+    });
+  });
+
+  it.each([
+    ["no user", { access_token: "token" }],
+    ["no user ID", { access_token: "token", user: { email: "mira@example.com" } }],
+    ["a blank user ID", { access_token: "token", user: { id: "  ", email: "mira@example.com" } }],
+    ["a user ID that isn't text", { access_token: "token", user: { id: 42, email: "mira@example.com" } }],
+  ])("doesn't count a session with %s as signed in", async (_, badSession) => {
+    const client = createClient({ verifyOtp: async () => ({ data: { session: badSession, user: null }, error: null }) });
+
+    expect(await finishSignIn(client, { kind: "token-hash", tokenHash: "abc123def456", type: "email" })).toEqual({
+      ok: false,
+      problem: "unknown",
+    });
   });
 
   it("exchanges a code link", async () => {
