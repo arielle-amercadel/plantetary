@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import legacyFixture from "../e2e/fixtures/main-legacy-save.json";
 import { createGameDataSession } from "../src/app/game-data-session";
-import { createBrowserGameStorage, type GameStorage, type GameStorageLoadResult } from "../src/app/game-storage";
+import { createBrowserGameStorage, type GameSaveResult, type GameStorage, type GameStorageLoadResult } from "../src/app/game-storage";
 import { getCompletedOverallCounts, getLevelProgress, getStreakValues, getXpLedgerTotal } from "../src/app/quest-logic";
 import {
   invalidBackupStorageKey,
@@ -50,7 +50,7 @@ function createCurrentSave(): StoredQuestData {
 /** A storage adapter whose load and save finish only when the test says so. */
 function createControlledStorage() {
   const saves: StoredQuestData[] = [];
-  const pendingSaves: Array<(saved: boolean) => void> = [];
+  const pendingSaves: Array<(result: GameSaveResult) => void> = [];
   let finishLoad: (result: GameStorageLoadResult) => void = () => {};
   let failLoad: (error: Error) => void = () => {};
   const storage: GameStorage = {
@@ -60,7 +60,7 @@ function createControlledStorage() {
     })),
     save: vi.fn((data: StoredQuestData) => {
       saves.push(data);
-      return new Promise<boolean>((resolve) => pendingSaves.push(resolve));
+      return new Promise<GameSaveResult>((resolve) => pendingSaves.push(resolve));
     }),
   };
   return {
@@ -69,7 +69,7 @@ function createControlledStorage() {
     finishLoad: (result: GameStorageLoadResult) => finishLoad(result),
     failLoad: (error: Error) => failLoad(error),
     finishNextSave: async (saved = true) => {
-      pendingSaves.shift()?.(saved);
+      pendingSaves.shift()?.(saved ? { status: "saved" } : { status: "failed", problem: "storage" });
       await Promise.resolve();
       await Promise.resolve();
     },
@@ -167,11 +167,11 @@ describe("browser game storage", () => {
     const storage = createStorage();
     const gameStorage = createBrowserGameStorage(() => storage);
 
-    await expect(gameStorage.save(createCurrentSave())).resolves.toBe(true);
+    await expect(gameStorage.save(createCurrentSave())).resolves.toEqual({ status: "saved" });
     expect(storage.values.get(questStorageKey)).toBe(JSON.stringify(createCurrentSave()));
 
     const fullStorage = createStorage({}, () => true);
-    await expect(createBrowserGameStorage(() => fullStorage).save(createCurrentSave())).resolves.toBe(false);
+    await expect(createBrowserGameStorage(() => fullStorage).save(createCurrentSave())).resolves.toEqual({ status: "failed", problem: "storage" });
   });
 });
 
@@ -375,7 +375,7 @@ describe("game data session: adapters that throw synchronously", () => {
       save: vi.fn((data: StoredQuestData) => {
         saves.push(data);
         if (throwOnCalls.includes(saves.length)) throw new Error("SecurityError");
-        return Promise.resolve(true);
+        return Promise.resolve<GameSaveResult>({ status: "saved" });
       }),
     };
     return { storage, saves };

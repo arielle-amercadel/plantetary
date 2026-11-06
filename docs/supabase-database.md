@@ -12,7 +12,8 @@ This stage adds Plantetary's database tables, access rules and tests, and nothin
 | `supabase/migrations/20261105220200_create_quest_saves.sql` | `quest_saves` table, its triggers and access rules |
 | `supabase/migrations/20261105220300_create_save_backups.sql` | `save_backups` table, backup limits, the daily backup trigger and access rules |
 | `supabase/migrations/20261105223950_fix_revision_reuse_and_backup_retention.sql` | Review fixes: revisions never repeat, and backup limits hold under concurrent inserts |
-| `supabase/tests/database/*.test.sql` | 125 pgTAP tests across 7 files |
+| `supabase/migrations/20261106090000_add_upgrade_backups.sql` | Stage 7: the `upgrade` backup reason, one per user and source revision, with its own limit |
+| `supabase/tests/database/*.test.sql` | 143 pgTAP tests across 8 files |
 
 Migrations run in filename order. Never edit one after it has been applied to your hosted project; add a new migration instead.
 
@@ -24,7 +25,7 @@ All three tables belong to a user through `user_id`, which points at Supabase's 
 | --- | --- | --- |
 | `quest_saves` | One per user | The whole game save as JSON (`StoredQuestData`), plus `schema_version` and `revision` |
 | `profiles` | One per user | Display name, avatar and reminder preferences |
-| `save_backups` | Many per user | Read-only copies of saves, with a reason: `browser_import`, `conflict` or `daily` |
+| `save_backups` | Many per user | Read-only copies of saves, with a reason: `browser_import`, `conflict`, `daily` or `upgrade` |
 
 ## Who can do what
 
@@ -48,11 +49,15 @@ RLS doesn't stop people from editing their own data, including XP. That's fine f
 | Format guard | `quest_saves` | `schema_version` can't go down, so an old open tab can't overwrite a save made by a newer version of the app. |
 | `updated_at` | `profiles` | Set on every update. |
 | Daily backup | `quest_saves` | When a save's content changes, the copy being replaced is backed up, at most once per user per UTC day. |
-| Backup limits | `save_backups` | Keeps the newest 14 `daily`, 20 `conflict` and 5 `browser_import` backups per user, and removes older ones. Backups added at the same time for one user and reason take turns, so the limits hold. |
+| Backup limits | `save_backups` | Keeps the newest 14 `daily`, 20 `conflict`, 5 `browser_import` and 5 `upgrade` backups per user, and removes older ones. Each reason is limited on its own, so one never removes another's. Backups added at the same time for one user and reason take turns, so the limits hold. |
 
 The UTC day only spaces out backups. Game days still come from the player's own device, as before.
 
 To save without overwriting another device's change, the app will send `where revision = <the revision it loaded>`. If no row changes, another device saved first, or the save was deleted and recreated, which is a conflict. That's Stage 7's job; the tests here prove the database supports it.
+
+**Upgrade backups (Stage 7).** When the app loads a cloud save in an older format, it keeps the original as an `upgrade` backup before saving the upgraded version. There's at most one per user and source revision (the unique index `save_backups_upgrade_once`), so loading the same old save again never adds another, and they must name their source revision. They have their own limit, so they never use up or remove daily history.
+
+The app tells some errors apart by name, so these are pinned by `07_upgrade_backups.test.sql`: the format guard's message (`quest_saves.schema_version cannot decrease…`), the save check `quest_saves_data_check` (over 10 MB, or not an object), and the index `save_backups_upgrade_once`. If you rename any of them, update `src/app/cloud-game-storage.ts` too.
 
 Two small private tables support this, and users can't reach either:
 

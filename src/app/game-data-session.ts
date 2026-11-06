@@ -43,6 +43,8 @@ export function createGameDataSession(storage: GameStorage): GameDataSession {
         status = "ready";
         return { status: "ready", data: result.data };
       }
+      // `empty` (an account with no cloud save yet) is treated as failed until the player chooses to
+      // start a cloud save, so nothing is created automatically.
       status = "failed";
       return { status: "failed", data: result.data };
     } catch {
@@ -62,7 +64,9 @@ export function createGameDataSession(storage: GameStorage): GameDataSession {
     save.done = (async () => {
       let saved = false;
       try {
-        saved = await storage.save(data);
+        // Only "saved" counts. A conflict is reported like a failure here, and the cloud adapter refuses
+        // every later write after one, so retrying can never overwrite the other change.
+        saved = (await storage.save(data))?.status === "saved";
       } catch {
         saved = false;
       }

@@ -7,6 +7,7 @@ The game save loads and saves through an asynchronous storage interface, so a cl
 | File | Role |
 | --- | --- |
 | `src/app/game-storage.ts` | The `GameStorage` interface (`load` and `save`, both async) and the browser adapter |
+| `src/app/cloud-game-storage.ts` | The cloud adapter (Stage 7): the signed-in player's `quest_saves` row. Not connected to the app yet |
 | `src/app/game-data-session.ts` | Tracks the load status, blocks unsafe writes, skips unchanged saves and runs saves in order |
 | `src/app/quest-storage.ts` | Reads, validates, upgrades and backs up the browser save, unchanged from before. The checks and upgrades themselves are in `readQuestSave`, which touches no storage, so cloud saves can use the same rules |
 | `src/app/quest-store.tsx` | Loads through the session once, then asks it to save after every change |
@@ -31,6 +32,19 @@ After a failed load the app still shows what it could load, or the starter quest
 - If a write is refused, for example because storage is full, the data isn't treated as saved. An error is logged, and the next change tries again. An adapter that throws, even before returning a promise, counts as a refused write, and later saves still run.
 
 The browser adapter writes synchronously inside `save`, so a change is in `localStorage` before the next reload, as before.
+
+## Cloud saves (Stage 7, in progress)
+
+`createCloudGameStorage` implements the same interface for one verified account (`signed-in` only; no other auth state has a user ID). It isn't used by the app yet.
+
+- **Loading:** no row means `empty`, and nothing is created until the player chooses to. A save is checked with `readQuestSave`, like a browser save. An invalid save, or one from a newer version of Plantetary, is never replaced. An older save is kept as an `upgrade` backup (once per revision, separate from daily history) before it's upgraded, and isn't replaced if that backup fails.
+- **Saving:** the first save inserts the row. Every later save updates only `where user_id = <this account> and revision = <the revision last loaded or saved here>`.
+- **Conflicts:** if nothing matches, or the insert finds a row already there, another tab or device saved first. Nothing is overwritten. The unsaved data is stored as a `conflict` backup, and the result says whether that worked. Every later save reports the same conflict, without writing, until the save is loaded again.
+- **Failures** (network, server, sign-in, access rules) leave the save unchanged, so trying again is safe. A save whose reply was lost may have reached the database; if so, the next save is a conflict, never an overwrite.
+- **Identity:** before every request and after every reply, the auth state and the browser session's token must both still belong to the account. If either changes, the adapter closes for good: a reply that arrives afterwards is never returned as data and causes no further writes (no backup, no next save). A write that did succeed is still reported as saved, because RLS only lets it reach the original account. RLS checks the token on the server either way.
+- **Check failures (23514)** are told apart by the check named in the error: the format guard means `newer-version` (saving stops), `quest_saves_data_check` means `too-large`, and anything else is `rejected`. Neither of the last two stops later saves.
+
+Save results are `saved`, `failed` (with a reason) or `conflict` (with whether the backup worked). The session still treats anything but `saved` as a failed write; Step 4 adds the statuses.
 
 ## Not covered yet
 
