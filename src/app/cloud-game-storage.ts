@@ -6,7 +6,15 @@ import { latestQuestSaveVersion, readQuestSave } from "./quest-storage";
 import type { StoredQuestData } from "./quest-types";
 
 /** The parts of the Supabase client this adapter uses, so tests can supply a fake. */
-export type CloudSaveClient = Pick<SupabaseClient, "from"> & { auth: Pick<SupabaseClient["auth"], "getSession"> };
+export type CloudSaveClient = Pick<SupabaseClient, "from"> & Partial<Pick<SupabaseClient, "rpc">> & { auth: Pick<SupabaseClient["auth"], "getSession"> };
+
+export type CloudImportResult =
+  | { status: "imported"; revision: number; verified: boolean }
+  /** The cloud already held exactly this garden at the expected revision: nothing was written or backed up. */
+  | { status: "unchanged"; revision: number }
+  | { status: "conflict" }
+  | { status: "backup_failed" }
+  | { status: "failed"; problem: GameStorageProblem; verificationRequired: boolean };
 
 /** Only a verified sign-in has a user ID (see AuthState), so only it can own cloud storage. */
 export type VerifiedSignIn = Extract<AuthState, { status: "signed-in" }>;
@@ -22,6 +30,12 @@ export type CloudGameStorageOptions = {
 export type CloudGameStorage = GameStorage & {
   /** The account this storage belongs to. It never changes; a different account needs new storage. */
   readonly userId: string;
+  /** null means loaded empty; undefined means no usable loaded revision. */
+  getLoadedRevision: () => number | null | undefined;
+  /** Explicit import only. null expects an empty account. Success requires a fresh load before saves. */
+  importSave: (data: StoredQuestData, expectedRevision: number | null) => Promise<CloudImportResult>;
+  /** Read-only resolution of a lost response. null means there is no uncertain import. */
+  verifyImport: () => Promise<CloudImportResult | null>;
 };
 
 type SaveRow = { data: unknown; schema_version: unknown; revision: unknown };
@@ -129,6 +143,120 @@ export function createCloudGameStorage({ client, signIn, getAuth }: CloudGameSto
 
   let state: CloudState = { phase: "unloaded" };
   let queue: Promise<unknown> = Promise.resolve();
+  type ImportAttempt = { data: StoredQuestData; text: string; expected: number | null; key: string; problem: GameStorageProblem };
+  let uncertainImport: ImportAttempt | null = null;
+  const completedImports = new Set<string>();
+  const importTimeoutMs = 15_000;
+
+  const importFailure = (problem: GameStorageProblem, verificationRequired = false): CloudImportResult =>
+    ({ status: "failed", problem, verificationRequired });
+
+  function imported(attempt: ImportAttempt, revision: number, verified: boolean): CloudImportResult {
+    uncertainImport = null;
+    completedImports.add(attempt.key);
+    // The game session may still hold the pre-import garden. Require an explicit reload, rather
+    // than allowing a queued normal save to write that old garden over the import.
+    state = { phase: "unloaded" };
+    return { status: "imported", revision, verified };
+  }
+
+  /** Never treats a failed verification read as proof that an uncertain write didn't happen. */
+  async function reconcileImport(): Promise<CloudImportResult | null> {
+    const attempt = uncertainImport;
+    if (!attempt) return null;
+    const before = await checkIdentity();
+    if (before) return importFailure(before, true);
+    try {
+      const { data: row, error, status } = await client.from("quest_saves")
+        .select("data, schema_version, revision").eq("user_id", userId)
+        .abortSignal(AbortSignal.timeout(importTimeoutMs)).maybeSingle<SaveRow>();
+      const after = await checkIdentity();
+      if (after) return importFailure(after, true);
+      if (error) return importFailure(describeCloudError(error, status), true);
+      const revision = row ? readPositiveInteger(row.revision) : null;
+      if (row && revision === null) return importFailure("unknown", true);
+      if (row && (attempt.expected === null || revision! > attempt.expected) && row.schema_version === readSchemaVersion(attempt.data) &&
+        JSON.stringify(row.data) === attempt.text) return imported(attempt, revision!, true);
+      if (revision !== attempt.expected) {
+        uncertainImport = null;
+        completedImports.add(attempt.key);
+        state = { phase: "unloaded" };
+        return { status: "conflict" };
+      }
+      // The expected state still exists. An explicit retry with the SAME revision is safe even if
+      // the original transaction is still running: the row lock/PK allows at most one to commit.
+      // Keep the gate until that retry resolves; normal saves and different imports stay blocked.
+      return importFailure(attempt.problem, false);
+    } catch {
+      return importFailure("network", true);
+    }
+  }
+
+  async function runImport(attempt: ImportAttempt): Promise<CloudImportResult> {
+    const before = await checkIdentity();
+    if (before) return importFailure(before, uncertainImport !== null);
+    let retryingUncertain = false;
+    if (uncertainImport) {
+      const same = uncertainImport.key === attempt.key;
+      const resolved = await reconcileImport();
+      if (!same) return importFailure("not-loaded", uncertainImport !== null);
+      if (!resolved || resolved.status !== "failed" || resolved.verificationRequired) return resolved ?? importFailure("unknown", true);
+      retryingUncertain = true;
+    }
+    if (completedImports.has(attempt.key)) return { status: "conflict" };
+    if (!client.rpc) return importFailure("unknown");
+    // Set before sending: throws, timeouts, malformed responses and even post-write identity-check
+    // failures must leave a verification gate. No retry happens inside this call.
+    uncertainImport = attempt;
+    try {
+      const { data, error, status } = await client.rpc("import_browser_save", {
+        p_user_id: userId, p_expected_revision: attempt.expected,
+        p_data: attempt.data, p_schema_version: readSchemaVersion(attempt.data),
+      }).abortSignal(AbortSignal.timeout(importTimeoutMs));
+      const after = await checkIdentity();
+      if (after) return importFailure(after, true);
+      const reply = Array.isArray(data) && data.length === 1 ? data[0] as { outcome?: unknown; revision?: unknown } : null;
+      const importedRevision = readPositiveInteger(reply?.revision);
+      if (!error && reply?.outcome === "imported" && importedRevision !== null &&
+        (attempt.expected === null || importedRevision > attempt.expected)) {
+        return imported(attempt, importedRevision, false);
+      }
+      if (!error && reply?.outcome === "unchanged" && importedRevision !== null && importedRevision === attempt.expected) {
+        // Nothing was written, so nothing is uncertain. Like an import, it needs a load before saving.
+        uncertainImport = null;
+        completedImports.add(attempt.key);
+        state = { phase: "unloaded" };
+        return { status: "unchanged", revision: importedRevision };
+      }
+      if (!error && (reply?.outcome === "conflict" || reply?.outcome === "backup_failed")) {
+        // A retry's refusal says nothing about the earlier uncertain request, which may have committed
+        // after the verification read (a conflict is then exactly what the retry sees). Check the cloud
+        // again rather than reporting a conflict for an import that actually happened.
+        if (retryingUncertain) {
+          return (await reconcileImport()) ?? importFailure("unknown", true);
+        }
+        uncertainImport = null;
+        if (reply.outcome === "conflict") {
+          completedImports.add(attempt.key);
+          state = { phase: "unloaded" };
+        }
+        return { status: reply.outcome };
+      }
+      attempt.problem = error ? describeCloudError(error, status) : "unknown";
+      // An explicit PostgreSQL statement error guarantees rollback. Unlike a transport error, it
+      // doesn't need a verification gate (unless an earlier request was already uncertain).
+      // Only an answer from PostgREST itself (an HTTP error status) carries a PostgreSQL SQLSTATE; a
+      // transport error can also have a short code (for example from the network stack), so the
+      // status is checked too.
+      if (!retryingUncertain && error?.code && /^[A-Z0-9]{5}$/.test(error.code) && status >= 400 && status < 600) {
+        uncertainImport = null;
+        return importFailure(attempt.problem);
+      }
+    } catch {
+      attempt.problem = "network";
+    }
+    return (await reconcileImport()) ?? importFailure("unknown", true);
+  }
 
   /** Runs requests one at a time, so two saves can never race each other's revisions. */
   function serialize<T>(task: () => Promise<T>): Promise<T> {
@@ -267,6 +395,7 @@ export function createCloudGameStorage({ client, signIn, getAuth }: CloudGameSto
   }
 
   async function save(data: StoredQuestData): Promise<GameSaveResult> {
+    if (uncertainImport) return { status: "failed", problem: "not-loaded" };
     switch (state.phase) {
       case "unloaded":
         return { status: "failed", problem: "not-loaded" };
@@ -330,6 +459,28 @@ export function createCloudGameStorage({ client, signIn, getAuth }: CloudGameSto
 
   return {
     userId,
+    getLoadedRevision: () => state.phase === "ready" ? state.revision : undefined,
+    importSave(data, expectedRevision) {
+      // Snapshot and validate before queueing, so caller edits cannot change the operation mid-flight.
+      let attempt: ImportAttempt;
+      try {
+        if (expectedRevision !== null && readPositiveInteger(expectedRevision) === null) return Promise.resolve(importFailure("rejected"));
+        const snapshot = JSON.parse(JSON.stringify(data)) as StoredQuestData;
+        if (snapshot.schemaVersion !== undefined &&
+          (!Number.isSafeInteger(snapshot.schemaVersion) || snapshot.schemaVersion < 0)) return Promise.resolve(importFailure("invalid-save"));
+        const valid = readQuestSave(snapshot);
+        if (valid.status !== "valid") return Promise.resolve(importFailure("invalid-save"));
+        if (valid.newerVersion) return Promise.resolve(importFailure("newer-version"));
+        const text = JSON.stringify(valid.data);
+        if (new TextEncoder().encode(text).length > 10485760) return Promise.resolve(importFailure("too-large"));
+        attempt = { data: valid.data, text, expected: expectedRevision,
+          key: JSON.stringify([expectedRevision, text]), problem: "unknown" };
+      } catch {
+        return Promise.resolve(importFailure("invalid-save"));
+      }
+      return serialize(() => runImport(attempt));
+    },
+    verifyImport: () => serialize(reconcileImport),
     load: (fallbackData) => serialize(async () => {
       try {
         return await load(fallbackData);

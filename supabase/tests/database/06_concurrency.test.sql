@@ -13,7 +13,7 @@
 begin;
 create extension if not exists pgtap with schema extensions;
 create extension if not exists dblink with schema extensions;
-select plan(10);
+select plan(22);
 
 -- Try to open the setup session, on the local stack only. inet_server_addr() is this server's own
 -- address on the Docker network, where logins need a password.
@@ -263,6 +263,73 @@ select is(
   'The first tab''s save is kept at revision 5'
 );
 
+-- 5. An import waits for a normal save, then rejects its stale expected revision.
+select pg_temp.begin_as('s1', 'ffffffff-0000-4000-8000-000000000006');
+select pg_temp.run('s1', $sql$
+ update public.quest_saves set data = '{"from":"normal before import"}'
+ where user_id = 'ffffffff-0000-4000-8000-000000000006' and revision = 5 $sql$);
+select pg_temp.begin_as('s2', 'ffffffff-0000-4000-8000-000000000006');
+select extensions.dblink_send_query('s2', $sql$
+ select outcome from public.import_browser_save('ffffffff-0000-4000-8000-000000000006', 5, '{"import":"stale"}', 3) $sql$);
+select pg_sleep(0.2);
+select is(extensions.dblink_is_busy('s2'), 1, 'Import waits for the normal save row lock');
+select pg_temp.run('s1', 'commit');
+select is(pg_temp.finish_query('s2'), 'conflict', 'Import rechecks revision after the normal save commits');
+select pg_temp.run('s2', 'commit');
+
+-- 6. A normal save waits for an import, then cannot overwrite its new revision.
+select pg_temp.begin_as('s1', 'ffffffff-0000-4000-8000-000000000006');
+select extensions.dblink_send_query('s1', $sql$
+ select outcome from public.import_browser_save('ffffffff-0000-4000-8000-000000000006', 6, '{"from":"import"}', 3) $sql$);
+select is(pg_temp.finish_query('s1'), 'imported', 'Import wins the row lock');
+select pg_temp.begin_as('s2', 'ffffffff-0000-4000-8000-000000000006');
+select extensions.dblink_send_query('s2', $sql$
+ update public.quest_saves set data = '{"normal":"stale"}'
+ where user_id = 'ffffffff-0000-4000-8000-000000000006' and revision = 6 $sql$);
+select pg_sleep(0.2);
+select pg_temp.run('s1', 'commit');
+select is(pg_temp.finish_query('s2'), 'UPDATE 0', 'Normal save cannot overwrite a committed import');
+select pg_temp.run('s2', 'commit');
+select is(pg_temp.committed_count($sql$
+ select count(*)::int from public.save_backups
+ where user_id = 'ffffffff-0000-4000-8000-000000000006' and reason = 'browser_import'
+ and source_revision = 6 and raw_data = '{"from":"normal before import"}' $sql$), 1,
+ 'Import backs up exactly the locked revision, not an earlier snapshot');
+
+-- 7. Two concurrent first imports: the primary key admits exactly one.
+select pg_temp.begin_as('s1', 'eeeeeeee-0000-4000-8000-000000000005');
+select extensions.dblink_send_query('s1', $sql$
+ select outcome from public.import_browser_save('eeeeeeee-0000-4000-8000-000000000005', null, '{"first":"winner"}', 3) $sql$);
+select is(pg_temp.finish_query('s1'), 'imported', 'First import creates its garden');
+select pg_temp.begin_as('s2', 'eeeeeeee-0000-4000-8000-000000000005');
+select extensions.dblink_send_query('s2', $sql$
+ select outcome from public.import_browser_save('eeeeeeee-0000-4000-8000-000000000005', null, '{"first":"loser"}', 3) $sql$);
+select pg_sleep(0.2);
+select is(extensions.dblink_is_busy('s2'), 1, 'Competing first import waits for the uncommitted row');
+select pg_temp.run('s1', 'commit');
+select is(pg_temp.finish_query('s2'), 'conflict', 'Competing first import never overwrites the winner');
+select pg_temp.run('s2', 'commit');
+select is(pg_temp.committed_count($sql$
+ select count(*)::int from public.quest_saves where user_id = 'eeeeeeee-0000-4000-8000-000000000005'
+ and revision = 1 and data::text = '{"first":"winner"}' $sql$), 1, 'Winning first garden is unchanged');
+
+-- 8. Two imports from the same existing revision only back up/replace once.
+select pg_temp.begin_as('s1', 'ffffffff-0000-4000-8000-000000000006');
+select extensions.dblink_send_query('s1', $sql$
+ select outcome from public.import_browser_save('ffffffff-0000-4000-8000-000000000006', 7, '{"import":"second"}', 3) $sql$);
+select is(pg_temp.finish_query('s1'), 'imported', 'Replacement import wins');
+select pg_temp.begin_as('s2', 'ffffffff-0000-4000-8000-000000000006');
+select extensions.dblink_send_query('s2', $sql$
+ select outcome from public.import_browser_save('ffffffff-0000-4000-8000-000000000006', 7, '{"import":"loser"}', 3) $sql$);
+select pg_sleep(0.2);
+select pg_temp.run('s1', 'commit');
+select is(pg_temp.finish_query('s2'), 'conflict', 'Concurrent replacement import rejects the old revision');
+select pg_temp.run('s2', 'commit');
+select is(pg_temp.committed_count($sql$
+ select count(*)::int from public.save_backups
+ where user_id = 'ffffffff-0000-4000-8000-000000000006' and reason = 'browser_import' $sql$), 2,
+ 'Only the two successful replacements created import backups');
+
 -- Clean up the committed test data ------------------------------------------------
 select pg_temp.run('setup', $sql$
   delete from auth.users where id in (
@@ -275,7 +342,7 @@ select extensions.dblink_disconnect('setup');
 
 \else
 
-select skip('Concurrency tests run only on the local Supabase stack', 10);
+select skip('Concurrency tests run only on the local Supabase stack', 22);
 
 \endif
 

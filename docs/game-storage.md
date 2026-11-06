@@ -183,6 +183,62 @@ cloud import, replacement, or database changes are part of Step 1. Tests in
 `tests/browser-save-preview.test.ts` assert that inspection performs one garden-key read and zero
 writes/removals, including legacy and invalid saves with existing safety backups.
 
+## Transactional cloud import adapter (Stage 8 Step 2)
+
+`CloudGameStorage.importSave(data, expectedRevision)` is explicit and has no UI/controller wiring yet.
+The caller supplies a validated browser garden and either the revision being replaced or `null` for
+an empty account. `getLoadedRevision()` exposes a successfully loaded revision (`undefined` before
+a usable load). The adapter snapshots and revalidates the input, migrates legacy data in memory,
+rejects newer/invalid/oversized saves, and never reads or writes browser storage or preferences.
+
+Migration `20261107090000_add_browser_import_rpc.sql` adds `import_browser_save`, with no new tables
+or backup reasons. Its account argument must equal `auth.uid()`. It uses `SECURITY INVOKER`, an empty
+`search_path`, fully qualified relations, existing column grants and RLS. Only `authenticated` gets
+execution permission; it grants no additional data privileges.
+
+For replacement, the RPC locks the current save, checks its revision, and inserts its **exact stored
+JSON text** as a `browser_import` backup, with source revision and schema version. It verifies that
+retention kept the new backup before updating the garden. Backup creation, pruning, replacement,
+daily-backup triggers and revision-counter changes are in one transaction. A failed update rolls
+them all back. Backup failures return `backup_failed` without replacement. Existing limits (five
+`browser_import` backups, other reasons independent) remain unchanged. An empty-account import is
+an insert; a primary-key race returns `conflict` and rolls back counter side effects.
+
+Outcomes are `imported` (with revision and `verified`: true when recovered by a verification read),
+`unchanged` (the cloud already held exactly this garden at the expected revision, compared as jsonb:
+nothing is written or backed up, so repeated imports can't push the original pre-import backup out of
+retention), `conflict`, `backup_failed`, or `failed` (with a storage problem and `verificationRequired`). RPCs
+and verification reads have 15-second abort signals. Aborting a request doesn't prove a rollback.
+On a transport error or malformed response the adapter reads the actual cloud state, under the same
+identity checks. Matching imported content/schema at a newer revision resolves success. Another
+revision with different data resolves conflict. If the original expected state still exists, an
+explicit retry of the **same snapshot and expected revision** may proceed, after another verification
+read; a late original transaction can only win once because of the row lock/primary key. If that
+retry is refused (`conflict` or `backup_failed`), the cloud is read again, so an original that committed
+late is reported as `imported`, not as a conflict. There is
+no automatic import retry. If verification itself fails, no import can be resent. Explicit PostgreSQL
+statement errors (a SQLSTATE code in an HTTP 4xx/5xx reply from PostgREST) guarantee rollback and need
+no verification unless a prior request was uncertain; a transport error is always treated as uncertain.
+
+`verifyImport()` performs that read without sending another import. An unresolved attempt blocks
+normal writes and different import attempts, even if `load()` is called. `verificationRequired: false`
+after an unchanged-state read permits retrying that exact import; it does not release the normal-save
+gate. Successful imports and conflicts require an explicit load before normal saving, so a queued
+pre-import garden cannot overwrite imported progress. Duplicate successful attempts are refused.
+The queue and identity checks are shared with normal saves; an account change closes the adapter.
+
+The uncertainty/snapshot guard is in memory for this adapter. Later controller work must retain the
+original expected revision for retries, handle unresolved imports and reset/reload the game session
+after success. A page reload must freshly inspect cloud state and obtain new confirmation before a
+different replacement. This adapter does not provide durable operation receipts: if newer different
+progress is observed after a lost response, it conservatively reports conflict, even if the import
+committed briefly before that later save. Nothing is merged or written over that later progress.
+
+The migration has only been exercised locally at this step: by pgTAP, and by a round trip through the
+local stack's real PostgREST, which confirmed the RPC's `json` argument is stored byte-for-byte (so the
+exact-text verification above holds) and that RLS refuses other accounts and anonymous calls. It must be deployed through the normal
+migration process before enabling imports against a hosted project. Step 3 has not been implemented.
+
 ## Known limitations
 
 - **One device's changes at a time.** There's no merging: after a conflict, the player keeps one version (the latest, after downloading their own if they want). Synchronizing or merging changes is Stage 9.
