@@ -4,16 +4,15 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import AppShell from "../../app-shell";
+import { useAuth } from "../auth-provider";
 import {
   afterSignInPath,
   authConfirmPath,
   authProblemMessages,
-  finishSignIn,
   parseConfirmLink,
   type AuthProblem,
   type ConfirmLink,
 } from "../auth-session";
-import { getSupabaseBrowserClient } from "../supabase-client";
 
 type PageState =
   | { step: "reading" }
@@ -32,17 +31,15 @@ const unavailableMessage = "Sign-in isn't set up for this version of Plantetary.
 
 export default function AuthConfirmPage() {
   const router = useRouter();
+  const { auth, completeSignIn } = useAuth();
+  const signInAvailable = auth.status !== "unavailable";
   const [state, setState] = useState<PageState>({ step: "reading" });
   const started = useRef(false);
 
   async function finish(link: Extract<ConfirmLink, { kind: "token-hash" | "code" }>) {
-    const client = getSupabaseBrowserClient();
-    if (!client) {
-      setState({ step: "failed", problem: "unavailable" });
-      return;
-    }
     setState({ step: "verifying" });
-    const result = await finishSignIn(client.auth, link);
+    // Waits for any check of an older saved session to finish first, so the two can't overlap.
+    const result = await completeSignIn(link);
     if (result.ok) {
       setState({ step: "done" });
       router.replace(afterSignInPath);
@@ -61,7 +58,7 @@ export default function AuthConfirmPage() {
     window.history.replaceState(null, "", authConfirmPath);
 
     queueMicrotask(() => {
-      if (!getSupabaseBrowserClient()) setState({ step: "failed", problem: "unavailable" });
+      if (!signInAvailable) setState({ step: "failed", problem: "unavailable" });
       else if (link.kind === "token-hash") setState({ step: "ready", link });
       // Supabase's default email has already used the token by the time the browser arrives here.
       else if (link.kind === "code") void finish(link);

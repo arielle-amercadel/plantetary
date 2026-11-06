@@ -23,10 +23,6 @@ export const afterSignInPath = "/settings";
 
 export type SignedInUser = { email: string | null };
 
-export type RestoredSession =
-  | { status: "signed-in"; user: SignedInUser }
-  | { status: "signed-out"; ended?: boolean };
-
 export type AuthProblem =
   | "network"
   | "rate-limited"
@@ -176,43 +172,178 @@ export async function finishSignIn(
   }
 }
 
-/**
- * Restores the session saved in this browser, checking it with the Auth server's keys.
- * - Valid: signed in.
- * - Rejected (expired, revoked or deleted user): cleared from this browser, then signed out.
- * - Unreachable (offline): kept, so a brief outage doesn't sign anyone out. It's checked again next load.
- */
-export async function restoreSession(client: AuthClient): Promise<RestoredSession> {
-  let claimsError: unknown;
+/** The project settings the token check needs: the same public URL and key the browser client uses. */
+export type TokenCheckConfig = { url: string; key: string };
+
+export type TokenCheck =
+  | { status: "valid"; email: string | null }
+  | { status: "rejected" }
+  | { status: "unreachable" };
+
+export type VerifyToken = (accessToken: string) => Promise<TokenCheck>;
+
+function readJwtHeader(token: string): { alg?: unknown; kid?: unknown } | undefined {
+  const [header] = token.split(".");
+  if (!header) return undefined;
   try {
-    const { data, error } = await client.getClaims();
-    if (data?.claims) {
-      const email = typeof data.claims.email === "string" ? data.claims.email : null;
-      return { status: "signed-in", user: { email } };
-    }
-    if (!error) return { status: "signed-out" };
-    claimsError = error;
-  } catch (error) {
-    claimsError = error;
+    const base64 = header.replace(/-/g, "+").replace(/_/g, "/");
+    return JSON.parse(atob(base64.padEnd(Math.ceil(base64.length / 4) * 4, "=")));
+  } catch {
+    return undefined;
   }
+}
 
-  if (describeAuthError(claimsError) === "network") {
+/** True for a token signed with an asymmetric key that can be checked locally against the project's public keys. */
+export function canVerifyLocally(token: string): boolean {
+  const header = readJwtHeader(token);
+  const hasWebCrypto = typeof globalThis.crypto !== "undefined" && Boolean(globalThis.crypto.subtle);
+  return Boolean(
+    header && typeof header.alg === "string" && !header.alg.startsWith("HS") && typeof header.kid === "string" && hasWebCrypto,
+  );
+}
+
+/**
+ * Checks one specific access token, and never changes the stored session.
+ *
+ * supabase-js's `getUser` isn't used, directly or through `getClaims`: when the server answers
+ * `session_not_found`, it clears whichever session is current, which could be newer than the token
+ * being checked. `getClaims` falls back to `getUser` whenever it has no matching key, so it's only
+ * ever given the exact key to use.
+ *
+ * - Asymmetric tokens: the project's public keys are fetched here, and the token is verified locally
+ *   against its own key. A key the project no longer publishes means the token is rejected.
+ * - Other tokens: Supabase's `/auth/v1/user` is asked directly.
+ */
+export function createTokenVerifier(
+  client: Pick<AuthClient, "getClaims">,
+  config: TokenCheckConfig,
+  options: { fetch?: typeof fetch; timeoutMs?: number } = {},
+): VerifyToken {
+  const fetchImpl = options.fetch ?? ((input, init) => fetch(input, init));
+  const timeoutMs = options.timeoutMs ?? 10_000;
+  const unreachable: TokenCheck = { status: "unreachable" };
+  const rejected: TokenCheck = { status: "rejected" };
+
+  async function verifyLocally(accessToken: string, kid: string): Promise<TokenCheck> {
+    let keys: unknown;
     try {
-      const { data: stored } = await client.getSession();
-      return stored.session
-        ? { status: "signed-in", user: { email: stored.session.user.email ?? null } }
-        : { status: "signed-out" };
+      const response = await fetchImpl(`${config.url}/auth/v1/.well-known/jwks.json`, {
+        headers: { apikey: config.key },
+        signal: AbortSignal.timeout(timeoutMs),
+      });
+      if (!response.ok) return unreachable;
+      keys = ((await response.json()) as { keys?: unknown }).keys;
     } catch {
-      return { status: "signed-out" };
+      return unreachable;
+    }
+
+    const key = Array.isArray(keys)
+      ? keys.find((candidate): candidate is { kid: string } => Boolean(candidate) && (candidate as { kid?: unknown }).kid === kid)
+      : undefined;
+    if (!key) return rejected;
+
+    try {
+      const { data, error } = await client.getClaims(accessToken, { keys: [key as never] });
+      if (data?.claims) return { status: "valid", email: typeof data.claims.email === "string" ? data.claims.email : null };
+      return describeAuthError(error) === "network" ? unreachable : rejected;
+    } catch (error) {
+      return describeAuthError(error) === "network" ? unreachable : rejected;
     }
   }
 
+  return async (accessToken) => {
+    if (canVerifyLocally(accessToken)) {
+      return verifyLocally(accessToken, readJwtHeader(accessToken)?.kid as string);
+    }
+
+    try {
+      const response = await fetchImpl(`${config.url}/auth/v1/user`, {
+        headers: { apikey: config.key, authorization: `Bearer ${accessToken}` },
+        signal: AbortSignal.timeout(timeoutMs),
+      });
+      if (response.ok) {
+        const body: unknown = await response.json().catch(() => ({}));
+        const email = body && typeof body === "object" && typeof (body as { email?: unknown }).email === "string"
+          ? (body as { email: string }).email
+          : null;
+        return { status: "valid", email };
+      }
+      // 401 and 403 mean the token or its user is no longer accepted; anything else is an outage.
+      return response.status === 401 || response.status === 403 ? { status: "rejected" } : { status: "unreachable" };
+    } catch {
+      return { status: "unreachable" };
+    }
+  };
+}
+
+/**
+ * The result of checking the session saved in this browser. `superseded` means it changed while it was
+ * being checked (a new sign-in, a sign-out, or another tab), so this result says nothing about it.
+ */
+export type StoredSessionCheck =
+  | { status: "none" }
+  | { status: "ended" }
+  | { status: "valid"; user: SignedInUser; token: string }
+  | { status: "unreachable"; user: SignedInUser; token: string }
+  | { status: "rejected"; token: string }
+  | { status: "superseded" };
+
+async function readCurrentAccessToken(client: Pick<AuthClient, "getSession">): Promise<string | null> {
+  try {
+    const { data } = await client.getSession();
+    return data.session?.access_token ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Checks the session saved in this browser without changing it.
+ * - Valid: signed in.
+ * - Unreachable (offline): kept, so a brief outage doesn't sign anyone out; it's checked again next load.
+ * - Rejected: reported with its token, so only that exact session is ever cleared.
+ */
+export async function checkStoredSession(
+  client: Pick<AuthClient, "getSession">,
+  verify: VerifyToken,
+): Promise<StoredSessionCheck> {
+  let session: Awaited<ReturnType<AuthClient["getSession"]>>["data"]["session"];
+  try {
+    const { data, error } = await client.getSession();
+    session = data.session;
+    // A refresh the server refused has already cleared the session.
+    if (!session) return error && describeAuthError(error) !== "network" ? { status: "ended" } : { status: "none" };
+  } catch {
+    return { status: "none" };
+  }
+
+  const token = session.access_token;
+  const check = await verify(token);
+  if ((await readCurrentAccessToken(client)) !== token) return { status: "superseded" };
+
+  const user = { email: check.status === "valid" && check.email ? check.email : session.user.email ?? null };
+  if (check.status === "valid") return { status: "valid", user, token };
+  if (check.status === "unreachable") return { status: "unreachable", user, token };
+  return { status: "rejected", token };
+}
+
+/**
+ * Signs this browser out of a rejected session, but only if it is still the current one. If a newer
+ * session has replaced it, nothing is touched.
+ */
+export async function clearRejectedSession(
+  client: Pick<AuthClient, "getSession" | "signOut">,
+  rejectedToken: string,
+): Promise<"cleared" | "superseded"> {
+  const current = await readCurrentAccessToken(client);
+  if (current === null) return "cleared";
+  if (current !== rejectedToken) return "superseded";
   try {
     await client.signOut({ scope: "local" });
   } catch {
     // The session was already rejected; clearing it is best effort.
   }
-  return { status: "signed-out", ended: true };
+  return "cleared";
 }
 
 export type SignOutResult =

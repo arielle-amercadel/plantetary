@@ -1,48 +1,53 @@
 "use client";
 
-import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from "react";
+import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from "react";
+import { createAuthController, type AuthController, type AuthState } from "./auth-controller";
 import {
+  createTokenVerifier,
   getMisplacedSignInLinkTarget,
-  requestMagicLink,
-  restoreSession,
-  signOutOfThisDevice,
+  type ConfirmLink,
+  type FinishSignInResult,
   type MagicLinkResult,
   type SignOutResult,
-  type SignedInUser,
 } from "./auth-session";
 import { getSupabaseBrowserClient } from "./supabase-client";
-import { getSupabaseBrowserConfig } from "./supabase-config";
+import type { SupabaseBrowserConfig } from "./supabase-config";
 
-/**
- * - `unavailable`: sign-in isn't configured for this build; everyone plays as a guest.
- * - `loading`: checking for a saved session.
- * - `signed-out`: playing as a guest.
- * - `signed-in`: signed in. Game progress is still saved only in this browser, exactly as for a guest.
- */
-export type AuthState =
-  | { status: "unavailable" }
-  | { status: "loading" }
-  | { status: "signed-out"; sessionEnded?: boolean }
-  | { status: "signed-in"; user: SignedInUser };
+export type { AuthState } from "./auth-controller";
 
 type AuthContextValue = {
   auth: AuthState;
   sendMagicLink: (email: string) => Promise<MagicLinkResult>;
+  completeSignIn: (link: Extract<ConfirmLink, { kind: "token-hash" | "code" }>) => Promise<FinishSignInResult>;
   signOut: () => Promise<SignOutResult>;
 };
 
 const AuthContext = createContext<AuthContextValue | null>(null);
 
-/** Kept apart from the quest store on purpose: nothing here reads, writes or resets game saves. */
-export function AuthProvider({ children }: { children: ReactNode }) {
-  // The config is fixed when the app is built, so the server and browser agree on this first state.
-  const [auth, setAuth] = useState<AuthState>(() =>
-    getSupabaseBrowserConfig() ? { status: "loading" } : { status: "unavailable" },
-  );
+function createReadySignal() {
+  let resolve: () => void = () => {};
+  const promise = new Promise<void>((done) => { resolve = done; });
+  return { promise, resolve };
+}
+
+/**
+ * Kept apart from the quest store on purpose: nothing here reads, writes or resets game saves.
+ *
+ * `config` comes from the root layout, which checks it on the server first (see server-config.ts).
+ */
+export function AuthProvider({ config, children }: { config: SupabaseBrowserConfig | null; children: ReactNode }) {
+  // The server and browser agree on this first state, because both see the same config prop.
+  const [auth, setAuth] = useState<AuthState>(() => (config ? { status: "loading" } : { status: "unavailable" }));
+  const controllerRef = useRef<AuthController | null>(null);
+  // Pages' effects run before this provider's, so their first calls wait until the controller exists.
+  const [ready] = useState(createReadySignal);
 
   useEffect(() => {
-    const client = getSupabaseBrowserClient();
-    if (!client) return;
+    const client = getSupabaseBrowserClient(config);
+    if (!client || !config) {
+      ready.resolve();
+      return;
+    }
 
     const misplacedLink = getMisplacedSignInLinkTarget(window.location.pathname, window.location.search, window.location.hash);
     if (misplacedLink) {
@@ -50,68 +55,38 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       return;
     }
 
-    let active = true;
-    // While starting up, supabase-js announces the stored session as SIGNED_IN before anyone has
-    // checked it. Those announcements end with INITIAL_SESSION and are ignored: restoreSession decides.
-    let startedUp = false;
-    let restoring = true;
-    // A real sign-in (such as from /auth/confirm) while the stored session is being checked wins over that check.
-    let signedInDuringRestore = false;
-
-    const { data: { subscription } } = client.auth.onAuthStateChange((event, session) => {
-      if (!active) return;
-      if (event === "INITIAL_SESSION") {
-        startedUp = true;
-        return;
-      }
-      if (!startedUp) return;
-
-      if (event === "SIGNED_OUT" || !session) {
-        // The check itself signs out a rejected session, and its result says why, so wait for it.
-        if (!restoring) setAuth({ status: "signed-out" });
-        return;
-      }
-      if (event === "SIGNED_IN") {
-        if (restoring) signedInDuringRestore = true;
-        setAuth({ status: "signed-in", user: { email: session.user.email ?? null } });
-        return;
-      }
-      // A refresh during the check is part of that check.
-      if (!restoring && (event === "TOKEN_REFRESHED" || event === "USER_UPDATED")) {
-        setAuth({ status: "signed-in", user: { email: session.user.email ?? null } });
-      }
-    });
-
-    void restoreSession(client.auth).then((restored) => {
-      restoring = false;
-      if (!active || signedInDuringRestore) return;
-      setAuth(restored.status === "signed-in"
-        ? { status: "signed-in", user: restored.user }
-        : { status: "signed-out", sessionEnded: restored.ended });
-    });
-
+    const controller = createAuthController(client.auth, createTokenVerifier(client.auth, config), setAuth);
+    controllerRef.current = controller;
+    ready.resolve();
     return () => {
-      active = false;
-      subscription.unsubscribe();
+      controller.dispose();
+      if (controllerRef.current === controller) controllerRef.current = null;
     };
-  }, []);
+  }, [config, ready]);
 
   const sendMagicLink = useCallback(async (email: string): Promise<MagicLinkResult> => {
-    const client = getSupabaseBrowserClient();
-    if (!client) return { ok: false, problem: "email-sign-in-disabled" };
-    return requestMagicLink(client.auth, email, window.location.origin);
-  }, []);
+    await ready.promise;
+    const controller = controllerRef.current;
+    if (!controller) return { ok: false, problem: "email-sign-in-disabled" };
+    return controller.sendMagicLink(email, window.location.origin);
+  }, [ready]);
+
+  const completeSignIn = useCallback(async (link: Extract<ConfirmLink, { kind: "token-hash" | "code" }>): Promise<FinishSignInResult> => {
+    await ready.promise;
+    const controller = controllerRef.current;
+    if (!controller) return { ok: false, problem: "email-sign-in-disabled" };
+    return controller.completeSignIn(link);
+  }, [ready]);
 
   const signOut = useCallback(async (): Promise<SignOutResult> => {
-    const client = getSupabaseBrowserClient();
-    if (!client) return { ok: true };
-    const result = await signOutOfThisDevice(client.auth);
-    if (result.ok) setAuth({ status: "signed-out" });
-    return result;
-  }, []);
+    await ready.promise;
+    const controller = controllerRef.current;
+    if (!controller) return { ok: true };
+    return controller.signOut();
+  }, [ready]);
 
   return (
-    <AuthContext.Provider value={{ auth, sendMagicLink, signOut }}>
+    <AuthContext.Provider value={{ auth, sendMagicLink, completeSignIn, signOut }}>
       {children}
     </AuthContext.Provider>
   );

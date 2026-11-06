@@ -14,7 +14,11 @@ Cloud saves, importing browser saves, and account deletion come in later stages.
 After that:
 
 - **Sessions** are stored in `sb-…` cookies, not in `localStorage`, so they're kept apart from game saves.
-- **On each visit** the saved session is checked with Supabase. If Supabase rejects it, for example because the account was deleted, it's cleared and the player becomes a guest. If Supabase can't be reached, the session is kept and checked again on the next visit.
+- **On each visit** the saved session is checked:
+  - **How:** tokens signed with an asymmetric key are verified locally against the project's public keys. Older HS256 tokens are checked with Supabase's `/auth/v1/user`. Neither check can change the stored session.
+  - **Rejected,** for example because the account was deleted: the session is cleared and the player becomes a guest.
+  - **Unreachable:** the session is kept and checked again on the next visit.
+- **A newer change always wins.** If the player signs in or out, here or in another tab, while that check is still running, the check's result is dropped. A rejected session is cleared only if it's still the current one, never a session that replaced it. Finishing a sign-in waits briefly for the check, so the two never overlap in one tab.
 - **Sign out** affects this browser only. If the server can't be reached, the player is still signed out here, and the server session expires on its own.
 
 | Problem | What the player sees |
@@ -31,9 +35,12 @@ A sign-in always ends on `/settings`. Links can't choose where they send people,
 
 | File | Role |
 | --- | --- |
-| `src/app/auth/supabase-config.ts` | Reads and checks the two environment variables. Refuses secret and service-role keys. |
+| `src/app/auth/privileged-key-guard.ts` | Detects secret and service-role keys in `NEXT_PUBLIC_` variables. Used by `next.config.ts` and the server. |
+| `src/app/auth/server-config.ts` | Server only: reads and checks the two variables on every render, and passes them to the browser |
+| `src/app/auth/supabase-config.ts` | Checks a URL and key, and the browser checks them again before use |
 | `src/app/auth/supabase-client.ts` | The browser's Supabase client |
-| `src/app/auth/auth-session.ts` | Requesting links, reading and finishing them, restoring sessions, signing out, error messages |
+| `src/app/auth/auth-session.ts` | Requesting links, reading and finishing them, checking tokens and stored sessions, signing out, error messages |
+| `src/app/auth/auth-controller.ts` | Tracks who's signed in, and makes sure an outdated session check can't override a newer sign-in or sign-out |
 | `src/app/auth/auth-provider.tsx` | `AuthProvider` and `useAuth()`, separate from the quest store |
 | `src/app/auth/confirm/page.tsx` | The `/auth/confirm` page |
 | `src/app/settings/account-section.tsx` | The Account card in Settings |
@@ -51,8 +58,9 @@ Copy `.env.example` to `.env.local` and fill in:
 | `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` | Dashboard → **Project Settings → API Keys** → Publishable key (`sb_publishable_…`). An older `anon` key also works. |
 
 - **Both values are public.** They're built into the browser app, and Row Level Security protects the data.
-- **Never use a secret key (`sb_secret_…`) or the `service_role` key.** Plantetary detects them and keeps sign-in off.
-- **Rebuild after changing them.** Next.js builds them in, so restart `npm run dev` or rebuild.
+- **Never use a secret key (`sb_secret_…`) or the `service_role` key.** If any `NEXT_PUBLIC_` variable holds one, `npm run dev` and `npm run build` stop with an error that names the variable but never shows its value. If one is added while the dev server is running, pages stop rendering instead.
+- **How the values reach the browser:** browser code never reads these variables itself, so Next.js never builds them into JavaScript. The server checks them and passes them to the page.
+- **Rebuild after changing them** for production, because static pages are rendered when the app is built. The dev server picks up changes on the next page load.
 - **Hosting:** set the same two variables in your hosting provider's environment settings.
 - **Without them:** the Account card says sign-in isn't set up, and guest mode works as usual.
 
@@ -92,8 +100,8 @@ Replace `https://your-site.example` with the address Plantetary is served from.
 
 | Command | What it checks |
 | --- | --- |
-| `npm test` | `tests/auth.test.ts` covers the config checks, link parsing, error messages, session restore and sign-out, with a fake Auth client |
-| `npm run test:e2e` | `e2e/auth.spec.ts` covers guest mode, requesting a link, finishing sign-in, expired and invalid links, restoring after a refresh, rejected sessions, sign-out and its failures, and proof that game saves don't change |
+| `npm test` | `tests/auth.test.ts` covers the config checks, link parsing, error messages and sign-out. `tests/auth-restore.test.ts` covers token checks, including real ES256 signatures, and sign-ins and sign-outs during a session check. `tests/privileged-key-guard.test.ts` covers secret-key detection and `next.config.ts`. All use fakes and dummy keys. |
+| `npm run test:e2e` | `e2e/auth-race.spec.ts` covers signing in, and signing out in another tab, while a session check is pending, and asymmetric-key sessions. `e2e/auth.spec.ts` covers guest mode, requesting a link, finishing sign-in, expired and invalid links, restoring after a refresh, rejected sessions, sign-out and its failures, and proof that game saves don't change |
 
 The browser tests point the app at a fake project on a closed local port, set in `playwright.config.ts`. They answer its Auth requests themselves, so no real project is used and nothing leaves the computer.
 

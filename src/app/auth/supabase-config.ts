@@ -1,26 +1,18 @@
 /**
  * Reads the Supabase project URL and browser key. Only the publishable key (or the older anon key)
- * belongs in the browser. A secret or service-role key bypasses every database rule, so one is
- * refused here, and sign-in stays off, rather than being shipped to players.
+ * belongs in the browser. A secret or service-role key bypasses every database rule.
+ *
+ * The main protection is next.config.ts, which stops `next dev` and `next build` before such a key
+ * is built into the app (see privileged-key-guard.ts). This check is a second line of defence: if one
+ * ever slips through, sign-in stays off instead of using it.
  */
+import { isPrivilegedSupabaseKey, readSupabaseJwtRole } from "./privileged-key-guard";
 
 export type SupabaseBrowserConfig = { url: string; key: string };
 
 export type SupabaseConfigResult =
   | { ok: true; config: SupabaseBrowserConfig }
   | { ok: false; reason: "missing" | "invalid-url" | "url-has-path" | "secret-key" | "invalid-key" };
-
-function decodeJwtRole(key: string): string | undefined {
-  const parts = key.split(".");
-  if (parts.length !== 3) return undefined;
-  try {
-    const base64 = parts[1].replace(/-/g, "+").replace(/_/g, "/");
-    const payload = JSON.parse(atob(base64.padEnd(Math.ceil(base64.length / 4) * 4, "="))) as { role?: unknown };
-    return typeof payload.role === "string" ? payload.role : undefined;
-  } catch {
-    return undefined;
-  }
-}
 
 /**
  * Accepts only a project's base URL, such as https://<ref>.supabase.co. The client adds /auth/v1 and
@@ -53,12 +45,12 @@ export function readSupabaseConfig(url: string | undefined, key: string | undefi
   const projectUrl = checkProjectUrl(trimmedUrl);
   if (!projectUrl.ok) return { ok: false, reason: projectUrl.reason };
 
-  if (trimmedKey.startsWith("sb_secret_")) return { ok: false, reason: "secret-key" };
+  if (isPrivilegedSupabaseKey(trimmedKey)) return { ok: false, reason: "secret-key" };
   if (trimmedKey.startsWith("sb_publishable_")) {
     return { ok: true, config: { url: projectUrl.url, key: trimmedKey } };
   }
 
-  const role = decodeJwtRole(trimmedKey);
+  const role = readSupabaseJwtRole(trimmedKey);
   if (role === "anon") return { ok: true, config: { url: projectUrl.url, key: trimmedKey } };
   if (role !== undefined) return { ok: false, reason: "secret-key" };
   return { ok: false, reason: "invalid-key" };
@@ -76,19 +68,7 @@ const configMessages: Record<Exclude<SupabaseConfigResult, { ok: true }>["reason
   "invalid-key": "Plantetary sign-in is off: NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY isn't a publishable or anon key.",
 };
 
-let cachedConfig: SupabaseConfigResult | undefined;
-
-/** The project's config, read once. Next.js inlines these two values when the app is built. */
-export function getSupabaseBrowserConfig(): SupabaseBrowserConfig | null {
-  if (!cachedConfig) {
-    cachedConfig = readSupabaseConfig(
-      process.env.NEXT_PUBLIC_SUPABASE_URL,
-      process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY,
-    );
-    if (!cachedConfig.ok) {
-      const message = configMessages[cachedConfig.reason];
-      if (message) console.error(message);
-    }
-  }
-  return cachedConfig.ok ? cachedConfig.config : null;
+/** A message for the developer, naming the setting but never including its value. */
+export function describeConfigProblem(reason: Exclude<SupabaseConfigResult, { ok: true }>["reason"]): string | undefined {
+  return configMessages[reason];
 }

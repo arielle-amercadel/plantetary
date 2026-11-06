@@ -33,31 +33,56 @@ export function fakeUser(email = TEST_EMAIL) {
   };
 }
 
-export function fakeSession(email = TEST_EMAIL) {
+function tokenClaims(email: string) {
   const issuedAt = nowSeconds();
-  const user = fakeUser(email);
-  // HS256 with no key ID, so supabase-js checks the token by asking /user, which these tests answer.
-  const accessToken = `${base64url({ alg: "HS256", typ: "JWT" })}.${base64url({
-    sub: user.id,
+  return {
+    sub: fakeUser(email).id,
     email,
     role: "authenticated",
     aud: "authenticated",
     iat: issuedAt,
     exp: issuedAt + 3600,
-    session_id: "session-1",
-  })}.fake-signature`;
+    session_id: `session-${email}`,
+  };
+}
+
+function sessionFor(email: string, accessToken: string) {
+  const issuedAt = nowSeconds();
   return {
     access_token: accessToken,
     token_type: "bearer",
     expires_in: 3600,
     expires_at: issuedAt + 3600,
-    refresh_token: "fake-refresh-token",
-    user,
+    refresh_token: `fake-refresh-token-${email}`,
+    user: fakeUser(email),
   };
 }
 
+/**
+ * An ES256 signing key like an asymmetric Supabase project's. `jwks` is what the project would publish
+ * at /auth/v1/.well-known/jwks.json, so the app can verify tokens locally.
+ */
+export async function createSigningKey(kid = "plantetary-e2e-key") {
+  const pair = await crypto.subtle.generateKey({ name: "ECDSA", namedCurve: "P-256" }, true, ["sign", "verify"]);
+  const publicJwk = { ...(await crypto.subtle.exportKey("jwk", pair.publicKey)), kid, alg: "ES256", use: "sig" };
+  return {
+    jwks: { keys: [publicJwk] },
+    async session(email = TEST_EMAIL) {
+      const input = `${base64url({ alg: "ES256", typ: "JWT", kid })}.${base64url(tokenClaims(email))}`;
+      const signature = await crypto.subtle.sign({ name: "ECDSA", hash: "SHA-256" }, pair.privateKey, new TextEncoder().encode(input));
+      return sessionFor(email, `${input}.${Buffer.from(signature).toString("base64url")}`);
+    },
+  };
+}
+
+export function fakeSession(email = TEST_EMAIL) {
+  // HS256 with no key ID, so the app checks the token by asking /user, which these tests answer.
+  const accessToken = `${base64url({ alg: "HS256", typ: "JWT" })}.${base64url(tokenClaims(email))}.fake-signature`;
+  return sessionFor(email, accessToken);
+}
+
 type Reply = { status: number; body?: unknown } | "network-error";
-type Handler = (request: Request) => Reply;
+type Handler = (request: Request) => Reply | Promise<Reply>;
 
 export type FakeAuth = {
   /** Every Auth request the app made, apart from CORS preflights. */
@@ -90,7 +115,7 @@ export async function useFakeAuth(page: Page): Promise<FakeAuth> {
 
     const path = new URL(request.url()).pathname.replace(/^\/auth\/v1/, "");
     const handler = handlers.get(`${request.method()} ${path}`);
-    const reply: Reply = handler ? handler(request) : { status: 404, body: { code: "not_found", msg: "Not mocked" } };
+    const reply: Reply = handler ? await handler(request) : { status: 404, body: { code: "not_found", msg: "Not mocked" } };
     if (reply === "network-error") {
       await route.abort("connectionrefused");
       return;

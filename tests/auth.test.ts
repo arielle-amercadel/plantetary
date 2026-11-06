@@ -13,7 +13,6 @@ import {
   getMisplacedSignInLinkTarget,
   parseConfirmLink,
   requestMagicLink,
-  restoreSession,
   signOutOfThisDevice,
   type AuthClient,
 } from "../src/app/auth/auth-session";
@@ -133,15 +132,14 @@ describe("Supabase project URL", () => {
     });
   });
 
-  it("explains the problem in the console without repeating the URL or key", async () => {
-    vi.resetModules();
+  it("explains the problem in the server log without repeating the URL or key", async () => {
     vi.stubEnv("NEXT_PUBLIC_SUPABASE_URL", "https://secretprojectref1234.supabase.co/rest/v1");
     vi.stubEnv("NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY", "sb_publishable_do-not-print-me");
     const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
     try {
-      const { getSupabaseBrowserConfig } = await import("../src/app/auth/supabase-config");
+      const { getSupabaseConfigForBrowser } = await import("../src/app/auth/server-config");
 
-      expect(getSupabaseBrowserConfig()).toBeNull();
+      expect(getSupabaseConfigForBrowser()).toBeNull();
       expect(consoleError).toHaveBeenCalledTimes(1);
       const message = String(consoleError.mock.calls[0][0]);
       expect(message).toContain("NEXT_PUBLIC_SUPABASE_URL should be just the project URL");
@@ -150,7 +148,6 @@ describe("Supabase project URL", () => {
       expect(message).not.toContain("do-not-print-me");
     } finally {
       vi.unstubAllEnvs();
-      vi.resetModules();
     }
   });
 });
@@ -310,56 +307,6 @@ describe("finishing sign-in", () => {
       ok: false,
       problem: "invalid-link",
     });
-  });
-});
-
-describe("restoring a session after a refresh", () => {
-  it("is signed out when there's no saved session", async () => {
-    const client = createClient();
-
-    expect(await restoreSession(client)).toEqual({ status: "signed-out" });
-    expect(client.signOut).not.toHaveBeenCalled();
-  });
-
-  it("is signed in when the saved session checks out", async () => {
-    const client = createClient({
-      getClaims: async () => ({ data: { claims: { sub: "user-1", email: "mira@example.com" } }, error: null }),
-    });
-
-    expect(await restoreSession(client)).toEqual({ status: "signed-in", user: { email: "mira@example.com" } });
-  });
-
-  it("clears a session the server rejects", async () => {
-    const client = createClient({ getClaims: async () => ({ data: null, error: apiError("user_not_found", 403) }) });
-
-    expect(await restoreSession(client)).toEqual({ status: "signed-out", ended: true });
-    expect(client.signOut).toHaveBeenCalledWith({ scope: "local" });
-  });
-
-  it("clears a session whose check throws unexpectedly", async () => {
-    const client = createClient({ getClaims: async () => { throw new Error("Invalid JWT signature"); } });
-
-    expect(await restoreSession(client)).toEqual({ status: "signed-out", ended: true });
-    expect(client.signOut).toHaveBeenCalledWith({ scope: "local" });
-  });
-
-  it("keeps the saved session through a network outage", async () => {
-    const client = createClient({
-      getClaims: async () => ({ data: null, error: networkError() }),
-      getSession: async () => ({ data: { session }, error: null }),
-    });
-
-    expect(await restoreSession(client)).toEqual({ status: "signed-in", user: { email: "mira@example.com" } });
-    expect(client.signOut).not.toHaveBeenCalled();
-  });
-
-  it("keeps the saved session when the check throws a fetch error", async () => {
-    const client = createClient({
-      getClaims: async () => { throw new TypeError("Failed to fetch"); },
-      getSession: async () => ({ data: { session }, error: null }),
-    });
-
-    expect(await restoreSession(client)).toEqual({ status: "signed-in", user: { email: "mira@example.com" } });
   });
 });
 

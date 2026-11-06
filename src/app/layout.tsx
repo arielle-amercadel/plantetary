@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { Inter, Silkscreen } from "next/font/google";
 import "./globals.css";
 import { AuthProvider } from "./auth/auth-provider";
+import { getSupabaseConfigForBrowser } from "./auth/server-config";
 import { QuestProvider } from "./quest-store";
 
 const inter = Inter({
@@ -28,7 +29,8 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
       className={`${inter.variable} ${silkscreen.variable} h-full antialiased`}
     >
       <body className="min-h-full">
-        <AuthProvider>
+        {/* Checked on the server, so a secret key never reaches the browser (see server-config.ts). */}
+        <AuthProvider config={getSupabaseConfigForBrowser()}>
           <QuestProvider>{children}</QuestProvider>
         </AuthProvider>
       </body>
