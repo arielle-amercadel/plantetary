@@ -53,11 +53,43 @@ function previewLevel(totalXp: number): number {
   // Invert the sum of the game's thresholds (100, 150, 200, …) without looping over huge
   // ledgers. Correct the estimate against exact thresholds: sqrt can round a value just below
   // 100 XP up to level 2. Fractional XP is supported by the existing save format.
-  let completedLevels = Math.floor((Math.sqrt(9 + 4 * totalXp / 25) - 3) / 2);
+  let completedLevels = Math.floor((Math.sqrt(9 + 4 * (totalXp / 25)) - 3) / 2);
+  // Cloud summaries may receive finite ledgers outside the browser preview's safe-integer limit.
+  // At this scale +/- 1 no longer changes the estimate; never enter a non-terminating correction loop.
+  if (completedLevels > Number.MAX_SAFE_INTEGER) return completedLevels;
   const threshold = (count: number) => count * (25 * count + 75);
   while (completedLevels > 0 && totalXp < threshold(completedLevels)) completedLevels -= 1;
   while (totalXp >= threshold(completedLevels + 1)) completedLevels += 1;
   return completedLevels + 1;
+}
+
+/**
+ * Summarizes any garden the same way, for side-by-side comparison (for example, the cloud garden on
+ * screen next to the browser garden). Reads nothing and changes nothing.
+ */
+export function summarizeGarden(data: StoredQuestData): BrowserGardenSummary {
+  const totalXp = getXpLedgerTotal(data.completionHistory, data.personalXpByQuestId, data.legacyXpBonus);
+  const safeXp = Number.isFinite(totalXp) && totalXp >= 0 ? totalXp : 0;
+  const discovered = data.discoveredPlantIds ?? [];
+  const catalogIds = new Set(plantCatalog.map((plant) => plant.id));
+  return {
+    level: previewLevel(safeXp),
+    totalXp: safeXp,
+    quests: { daily: data.questLists.daily.length, personal: data.questLists.personal.length,
+      total: data.questLists.daily.length + data.questLists.personal.length },
+    plants: { discovered: discovered.filter((id) => catalogIds.has(id)).length, pendingGifts: (data.pendingPlantGiftIds ?? []).length },
+    lastActivityDate: lastActivity(data),
+  };
+}
+
+function activeHistoryDates(data: StoredQuestData): string[] {
+  return Object.entries(data.completionHistory ?? {}).filter(([, snapshot]) => snapshot.completedQuestIds.length > 0 ||
+    Object.values(snapshot.xpAwardedByQuestId ?? {}).some((xp) => xp > 0)).map(([date]) => date);
+}
+
+function lastActivity(data: StoredQuestData): string | null {
+  const personalDates = Object.values(data.personalCompletedOnByQuestId ?? {});
+  return [...activeHistoryDates(data), ...personalDates].filter(isCompletionDateKey).sort().at(-1) ?? null;
 }
 
 /**
@@ -95,32 +127,18 @@ export function inspectBrowserGarden(
     const { data } = save;
     const totalXp = getXpLedgerTotal(data.completionHistory, data.personalXpByQuestId, data.legacyXpBonus);
     if (!Number.isFinite(totalXp) || totalXp < 0 || totalXp > Number.MAX_SAFE_INTEGER) return { status: "invalid" };
-    const history = Object.entries(data.completionHistory ?? {});
-    const activeDates = history.filter(([, snapshot]) => snapshot.completedQuestIds.length > 0 ||
-      Object.values(snapshot.xpAwardedByQuestId ?? {}).some((xp) => xp > 0)).map(([date]) => date);
+    const activeDates = activeHistoryDates(data);
     const personalDates = Object.values(data.personalCompletedOnByQuestId ?? {});
-    const lastActivityDate = [...activeDates, ...personalDates].filter(isCompletionDateKey).sort().at(-1) ?? null;
     const discovered = data.discoveredPlantIds ?? [];
     const pending = data.pendingPlantGiftIds ?? [];
-    const catalogIds = new Set(plantCatalog.map((plant) => plant.id));
     const hasMeaningfulProgress = totalXp > 0 || activeDates.length > 0 || personalDates.length > 0 ||
       (data.deletedLegacyPersonalCompletionCount ?? 0) > 0 ||
       discovered.some((id) => id !== "fern") || pending.some((id) => id !== "fern") ||
       // A prior visit can already have persisted the legacy migration's automatic Fern as version 5.
       // It is indistinguishable from a manually opened free Fern, so neither alone qualifies.
       customized(data);
-    return {
-      status: "ready", rawText, data, upgraded: save.upgraded, hasMeaningfulProgress,
-      summary: {
-        level: previewLevel(totalXp),
-        totalXp,
-        quests: { daily: data.questLists.daily.length, personal: data.questLists.personal.length,
-          total: data.questLists.daily.length + data.questLists.personal.length },
-        // Unknown discoveries stay in data for preservation, but aren't plants in this app's journal.
-        plants: { discovered: discovered.filter((id) => catalogIds.has(id)).length, pendingGifts: pending.length },
-        lastActivityDate,
-      },
-    };
+    // Unknown discoveries stay in data for preservation, but aren't counted as plants in the summary.
+    return { status: "ready", rawText, data, upgraded: save.upgraded, hasMeaningfulProgress, summary: summarizeGarden(data) };
   } catch {
     // An unexpected validator/migration failure is not permission to replace the original.
     return { status: "failed" };

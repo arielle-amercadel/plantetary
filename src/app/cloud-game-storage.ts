@@ -16,6 +16,10 @@ export type CloudImportResult =
   | { status: "backup_failed" }
   | { status: "failed"; problem: GameStorageProblem; verificationRequired: boolean };
 
+export type CloudGardenDownload =
+  | { status: "ready"; data: unknown; revision: number; schemaVersion: number }
+  | { status: "failed"; problem: GameStorageProblem };
+
 /** Only a verified sign-in has a user ID (see AuthState), so only it can own cloud storage. */
 export type VerifiedSignIn = Extract<AuthState, { status: "signed-in" }>;
 
@@ -28,6 +32,8 @@ export type CloudGameStorageOptions = {
 };
 
 export type CloudGameStorage = GameStorage & {
+  /** Fresh persisted JSON, without migrations, backups or changing the adapter's loaded revision. */
+  readForDownload: () => Promise<CloudGardenDownload>;
   /** The account this storage belongs to. It never changes; a different account needs new storage. */
   readonly userId: string;
   /** null means loaded empty; undefined means no usable loaded revision. */
@@ -465,6 +471,26 @@ export function createCloudGameStorage({ client, signIn, getAuth }: CloudGameSto
 
   return {
     userId,
+    readForDownload: () => serialize(async () => {
+      const before = await checkIdentity();
+      if (before) return { status: "failed", problem: before };
+      try {
+        const { data: row, error, status } = await client.from("quest_saves")
+          .select("data, schema_version, revision").eq("user_id", userId)
+          .abortSignal(AbortSignal.timeout(importTimeoutMs)).maybeSingle<SaveRow>();
+        const after = await checkIdentity();
+        if (after) return { status: "failed", problem: after };
+        if (error) return { status: "failed", problem: describeCloudError(error, status) };
+        const revision = readPositiveInteger(row?.revision);
+        const schemaVersion = readPositiveInteger(row?.schema_version);
+        if (!row || revision === null || schemaVersion === null) return { status: "failed", problem: "not-loaded" };
+        // Export even newer or damaged garden formats exactly as stored. This is a safety copy,
+        // not playable data, and must never run migrations or create upgrade backups.
+        return { status: "ready", data: row.data, revision, schemaVersion };
+      } catch {
+        return { status: "failed", problem: "network" };
+      }
+    }),
     getLoadedRevision: () => state.phase === "ready" ? state.revision : undefined,
     importSave(data, expectedRevision) {
       // Snapshot and validate before queueing, so caller edits cannot change the operation mid-flight.

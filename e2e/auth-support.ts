@@ -114,6 +114,8 @@ export type FakeAuth = {
    * such as "GET quest_saves" or "PATCH quest_saves".
    */
   reply: (endpoint: string, handler: Handler | Reply) => void;
+  /** Removes a database override so subsequent requests use the real fake-table rules again. */
+  restoreDatabaseReply: (endpoint: string) => void;
   /** The fake project's database, shared by every tab given the same one. */
   cloud: FakeCloud;
 };
@@ -168,6 +170,13 @@ function userIdFromBearer(request: Request): string | null {
   }
 }
 
+/** JSON text with object keys sorted, so equal gardens compare equal however their keys are ordered (as jsonb does). */
+function canonical(value: unknown): string {
+  return JSON.stringify(value, (_, inner: unknown) => inner && typeof inner === "object" && !Array.isArray(inner)
+    ? Object.fromEntries(Object.entries(inner).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)))
+    : inner);
+}
+
 /** Answers a PostgREST request against the fake tables, as Supabase would. */
 function answerDatabase(cloud: FakeCloud, request: Request, table: string): Reply {
   const userId = userIdFromBearer(request);
@@ -184,6 +193,26 @@ function answerDatabase(cloud: FakeCloud, request: Request, table: string): Repl
     if (backup.user_id !== userId) return { status: 403, body: { code: "42501", message: "new row violates row-level security policy" } };
     cloud.backups.push(backup);
     return { status: 201 };
+  }
+  if (table === "rpc/import_browser_save" && request.method() === "POST") {
+    // As supabase/migrations/20261107090000_add_browser_import_rpc.sql: account-bound, revision-checked,
+    // backs up the replaced garden in the same step, and leaves an identical garden alone.
+    const args = request.postDataJSON() as { p_user_id: string; p_expected_revision: number | null; p_data: unknown; p_schema_version: number };
+    if (args.p_user_id !== userId) return { status: 403, body: { code: "42501", message: "Import account does not match authenticated account" } };
+    const own = cloud.saves.get(userId);
+    const outcome = (name: string, revision: number | null): Reply => ({ status: 200, body: [{ outcome: name, revision }] });
+    if (args.p_expected_revision === null) {
+      if (own) return outcome("conflict", null);
+      const created = { data: args.p_data, schema_version: args.p_schema_version, revision: cloud.nextRevision(userId) };
+      cloud.saves.set(userId, created);
+      return outcome("imported", created.revision);
+    }
+    if (!own || own.revision !== args.p_expected_revision) return outcome("conflict", null);
+    if (canonical(own.data) === canonical(args.p_data) && own.schema_version === args.p_schema_version) return outcome("unchanged", own.revision);
+    cloud.backups.push({ user_id: userId, reason: "browser_import", raw_data: JSON.stringify(own.data), schema_version: own.schema_version, source_revision: own.revision });
+    const replaced = { data: args.p_data, schema_version: args.p_schema_version, revision: cloud.nextRevision(userId) };
+    cloud.saves.set(userId, replaced);
+    return outcome("imported", replaced.revision);
   }
   if (table !== "quest_saves") return { status: 404, body: { code: "PGRST205", message: "Not mocked" } };
 
@@ -257,6 +286,10 @@ export async function useFakeAuth(page: Page, cloud: FakeCloud = createFakeCloud
     requests,
     reply(endpoint, handler) {
       handlers.set(endpoint, typeof handler === "function" ? handler : () => handler);
+    },
+    restoreDatabaseReply(endpoint) {
+      if (!/ (quest_saves|save_backups|rpc\/import_browser_save)$/.test(endpoint)) throw new Error("Only database overrides can be restored");
+      handlers.delete(endpoint);
     },
     cloud,
   };

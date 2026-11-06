@@ -144,6 +144,32 @@ describe("importing into an account without a cloud garden", () => {
 });
 
 describe("replacing an existing cloud garden", () => {
+  it("a fresh download cannot advance the confirmed revision or authorize replacing newer data", async () => {
+    const env = await signedInAs(40);
+    const plan = await prepared(env);
+    env.cloud.saveElsewhere(A, garden(90));
+    expect(await env.controller.readCloudGardenForDownload()).toMatchObject({ status: "ready", data: { legacyXpBonus: 90 }, revision: 2 });
+    expect(await env.controller.importBrowserGarden(plan)).toEqual({ status: "conflict" });
+    await settle();
+    expect(xpOf(env.cloud.gardenOf(A))).toBe(90);
+    expect(env.cloud.backups).toEqual([]);
+    expect(env.browserItems.get(questStorageKey)).toBe(BROWSER_TEXT);
+  });
+
+  it("a download in flight is refused after the controller switches account", async () => {
+    const env = await signedInAs(40);
+    const held = gate();
+    env.cloud.onRead(async (apply) => { await held.released; return apply(); });
+    const pending = env.controller.readCloudGardenForDownload();
+    await vi.advanceTimersByTimeAsync(0);
+    env.signIn(B);
+    held.release();
+    expect(await pending).toMatchObject({ status: "failed", problem: "identity-changed" });
+    await settle();
+    expect(env.snap()).toMatchObject({ phase: "choose", account: { id: B } });
+    expect(env.cloud.rpcCalls).toEqual([]);
+  });
+
   it("backs up the exact cloud garden, imports, reloads, and saves normally afterwards", async () => {
     const env = await signedInAs(40);
     const before = env.cloud.rows.get(A)!.text;

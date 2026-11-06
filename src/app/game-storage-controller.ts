@@ -1,6 +1,6 @@
 import type { AuthState } from "./auth/auth-controller";
 import { inspectBrowserGarden, type BrowserGardenSummary, type BrowserSavePreview } from "./browser-save-preview";
-import type { CloudGameStorage, CloudImportResult, VerifiedSignIn } from "./cloud-game-storage";
+import type { CloudGameStorage, CloudGardenDownload, CloudImportResult, VerifiedSignIn } from "./cloud-game-storage";
 import type { GameDataSession, ReloadOutcome, SaveRequestOutcome, SaveSnapshot } from "./game-data-session";
 import type { GameStorageProblem } from "./game-storage";
 import type { StoredQuestData } from "./quest-types";
@@ -134,7 +134,7 @@ export function maskEmail(email: string | null): string | null {
 }
 
 /** What the controller needs from a cloud storage to import into it. The same storage as the session's. */
-export type CloudImporter = Pick<CloudGameStorage, "importSave" | "verifyImport" | "getLoadedRevision" | "hasUnresolvedImport">;
+export type CloudImporter = Pick<CloudGameStorage, "importSave" | "verifyImport" | "getLoadedRevision" | "hasUnresolvedImport" | "readForDownload">;
 
 /** A cloud session together with its storage's import methods (the same storage instance). */
 export type CloudSessionHandle = { session: GameDataSession; importer: CloudImporter | null };
@@ -218,6 +218,7 @@ export type GameStorageControllerOptions = {
 };
 
 export type GameStorageController = {
+  readCloudGardenForDownload: () => Promise<CloudGardenDownload>;
   getSnapshot: () => StorageControllerSnapshot;
   subscribe: (listener: () => void) => () => void;
   /** Tells the controller who's signed in now. Storage changes only when the target does. */
@@ -755,6 +756,18 @@ export function createGameStorageController(options: GameStorageControllerOption
   }
 
   return {
+    async readCloudGardenForDownload() {
+      const owner = session;
+      const ownImporter = importer;
+      const accountId = cloudAccountId();
+      const generation = snapshot.generation;
+      if (!owner || !ownImporter || !accountId || snapshot.phase !== "ready") return { status: "failed", problem: "not-loaded" };
+      const result = await ownImporter.readForDownload();
+      if (session !== owner || importer !== ownImporter || generation !== snapshot.generation || cloudAccountId() !== accountId) {
+        return { status: "failed", problem: "identity-changed" };
+      }
+      return result;
+    },
     getSnapshot: () => snapshot,
     subscribe(listener) {
       listeners.add(listener);

@@ -133,6 +133,7 @@ type QuestStoreValue = {
 };
 
 export type StorageActions = {
+  readCloudGardenForDownload: GameStorageController["readCloudGardenForDownload"];
   startFreshCloudGarden: () => boolean;
   keepPlayingOnDevice: () => boolean;
   useCloudGarden: () => boolean;
@@ -147,6 +148,12 @@ export type StorageActions = {
   dismissUnsavedRecovery: (id: string) => void;
   /** A listed recovery's changes, for download, or null if it can't be shown now. */
   getRecoveryData: (id: string) => StoredQuestData | null;
+  /** Importing this browser's garden into the account (see game-storage-controller.ts). */
+  prepareBrowserImport: GameStorageController["prepareBrowserImport"];
+  importBrowserGarden: GameStorageController["importBrowserGarden"];
+  verifyBrowserImport: GameStorageController["verifyBrowserImport"];
+  retryBrowserImport: GameStorageController["retryBrowserImport"];
+  leaveUnresolvedImport: GameStorageController["leaveUnresolvedImport"];
 };
 
 const QuestStoreContext = createContext<QuestStoreValue | null>(null);
@@ -597,6 +604,7 @@ export function QuestProvider({ children }: { children: ReactNode }) {
   }
 
   const storageActions: StorageActions = {
+    readCloudGardenForDownload: controller.readCloudGardenForDownload,
     startFreshCloudGarden: controller.startFreshCloudGarden,
     keepPlayingOnDevice: controller.keepPlayingOnDevice,
     useCloudGarden: controller.useCloudGarden,
@@ -609,6 +617,11 @@ export function QuestProvider({ children }: { children: ReactNode }) {
     acknowledgeUnsavedLoss: controller.acknowledgeUnsavedLoss,
     dismissUnsavedRecovery: controller.dismissUnsavedRecovery,
     getRecoveryData: controller.getRecoveryData,
+    prepareBrowserImport: controller.prepareBrowserImport,
+    importBrowserGarden: controller.importBrowserGarden,
+    verifyBrowserImport: controller.verifyBrowserImport,
+    retryBrowserImport: controller.retryBrowserImport,
+    leaveUnresolvedImport: controller.leaveUnresolvedImport,
   };
 
   function getDataForExport(): StoredQuestData {

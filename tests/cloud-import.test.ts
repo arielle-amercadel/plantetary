@@ -10,6 +10,11 @@ import { canonicalJson } from "../src/app/unsaved-recovery-store";
 const A = "aaaaaaaa-0000-4000-8000-000000000001";
 const B = "bbbbbbbb-0000-4000-8000-000000000002";
 const garden = (xp = 5) => ({ ...structuredClone(initialStoredQuestData), legacyXpBonus: xp });
+function currentGarden(xp: number) {
+  const valid = readQuestSave(garden(xp));
+  if (valid.status !== "valid") throw new Error("Invalid fixture");
+  return valid.data;
+}
 const signIn = (id = A): Extract<AuthState, { status: "signed-in" }> => ({ status: "signed-in", user: { id, email: `${id}@example.com` } });
 const token = (id: string) => `e30.${Buffer.from(JSON.stringify({ sub: id })).toString("base64url")}.sig`;
 type Reply = { data: unknown; error: { code?: string } | null; status: number };
@@ -86,6 +91,44 @@ function setup(existing?: StoredQuestData) {
 }
 
 describe("transactional browser imports", () => {
+  it("reads a fresh download without backups, migrations or changing the loaded revision", async () => {
+    const env = setup(currentGarden(40));
+    await env.storage.load(garden());
+    env.saveElsewhere(garden(90));
+    expect(await env.storage.readForDownload()).toMatchObject({ status: "ready", data: { legacyXpBonus: 90 }, revision: 2 });
+    expect(env.storage.getLoadedRevision()).toBe(1);
+    expect(env.backups).toEqual([]);
+    expect(env.calls).toEqual([]);
+  });
+
+  it("exports newer/unknown formats exactly as stored instead of migrating them", async () => {
+    const env = setup(garden(40));
+    const future = { schemaVersion: 99, unknownFutureGarden: [1, 2, 3] };
+    env.read(() => ok({ data: future, schema_version: 99, revision: 2 }));
+    expect(await env.storage.readForDownload()).toEqual({ status: "ready", data: future, schemaVersion: 99, revision: 2 });
+    expect(env.calls).toEqual([]);
+    expect(env.backups).toEqual([]);
+  });
+
+  it("drops download data if the account changes while the read is running", async () => {
+    const env = setup(garden(40));
+    env.read(() => {
+      env.setAuth(signIn(B));
+      env.setSession(B);
+      return ok({ data: garden(40), schema_version: 5, revision: 1 });
+    });
+    expect(await env.storage.readForDownload()).toEqual({ status: "failed", problem: "identity-changed" });
+    expect(env.calls).toEqual([]);
+  });
+
+  it("doesn't fall back to stale data if a download read fails", async () => {
+    const env = setup(currentGarden(40));
+    await env.storage.load(garden());
+    env.read(() => lost());
+    expect(await env.storage.readForDownload()).toEqual({ status: "failed", problem: "network" });
+    expect(env.storage.getLoadedRevision()).toBe(1);
+  });
+
   it("imports into an empty account, snapshots input and requires a reload before normal saves", async () => {
     const env = setup();
     const data = garden();

@@ -4,6 +4,7 @@ import "./globals.css";
 import { AuthProvider } from "./auth/auth-provider";
 import { getSupabaseConfigForBrowser } from "./auth/server-config";
 import { QuestProvider } from "./quest-store";
+import { ImportFlowProvider } from "./import-flow-provider";
 
 const inter = Inter({
   variable: "--font-inter",
@@ -31,7 +32,7 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
       <body className="min-h-full">
         {/* Checked on the server, so a secret key never reaches the browser (see server-config.ts). */}
         <AuthProvider config={getSupabaseConfigForBrowser()}>
-          <QuestProvider>{children}</QuestProvider>
+          <QuestProvider><ImportFlowProvider>{children}</ImportFlowProvider></QuestProvider>
         </AuthProvider>
       </body>
     </html>
