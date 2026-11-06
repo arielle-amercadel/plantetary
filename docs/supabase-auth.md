@@ -1,8 +1,8 @@
 # Optional sign-in (Stage 6)
 
-Players can sign in with an emailed link, with no password. Signing in is optional, and it doesn't change the game: progress is still saved only in the browser, exactly as for a guest. Signing in or out never reads, writes, uploads or resets a game save.
+Players can sign in with an emailed link, with no password. Signing in is optional. Since Stage 7, a verified sign-in can save the garden to the account (see `docs/game-storage.md`). Signing in or out never uploads, changes or resets the save in this browser.
 
-Cloud saves, importing browser saves, and account deletion come in later stages.
+Importing browser saves, and account deletion, come in later stages.
 
 ## How it works
 
@@ -17,8 +17,9 @@ After that:
 - **On each visit** the saved session is checked:
   - **How:** tokens signed with an asymmetric key are verified locally against the project's public keys. Older HS256 tokens are checked with Supabase's `/auth/v1/user`. Neither check can change the stored session.
   - **Rejected,** for example because the account was deleted: Settings says the sign-in has ended, and the player plays as a guest. The session isn't deleted automatically. The player can sign in again, or press **Remove it from this browser**.
-  - **Unreachable:** the session is kept and checked again on the next visit.
+  - **Unreachable:** the session is kept, but nothing about it is verified. Settings says the sign-in couldn't be confirmed, and offers sign-out. It has no user ID, so nothing can be loaded or saved for it. It's checked again when the tab is shown again, when supabase-js refreshes the token, or on the next visit. A token refresh for an account already verified in this tab keeps that account through an outage, because the new token claims the same account and nothing new is trusted.
   - **Expired:** supabase-js refreshes it. If the refresh is refused, supabase-js removes it, and the player becomes a guest.
+- **User ID:** only a session whose token Supabase has verified counts as signed in, and its user ID (the database's `auth.uid()`) comes from that verification, never from the user record stored with the session. This applies on each visit and to every session announced later: a sign-in, a token refresh, or another tab's session. While a new account's session is being checked, Settings shows "Checking…" rather than the previous account. A stored user record that doesn't match its verified token, or a verified reply without an ID, counts as rejected. Cloud saves (Stage 7) are tied to this ID.
 - **A newer change always wins.** If the player signs in or out, here or in another tab, while that check is still running, the check's result is dropped. Finishing a sign-in waits briefly for the check, so the two never overlap in one tab.
 - **Why nothing is deleted automatically:** supabase-js can't remove a session "only if it's still this one". Every tab shares the same cookie, and a new sign-in is saved without any lock. So a check that compared the session and then signed out could delete a session another tab had saved a moment earlier. Only the player's own sign-out removes a session.
 - **Sign out** affects this browser only. If the server can't be reached, the player is still signed out here, and the server session expires on its own.
@@ -115,4 +116,4 @@ npx supabase status    # copy API_URL and PUBLISHABLE_KEY into .env.local
 npm run dev            # on port 3000, which config.toml allows
 ```
 
-Request a link in Settings, then open the email in the local mail viewer at <http://127.0.0.1:55324>.
+Request a link in Settings, then open the email in the local mail viewer at <http://127.0.0.1:55324>. Once signed in, the local stack also stores your cloud garden, so you can try cloud saves without a hosted project (after `npx supabase db reset`, so every migration is applied).

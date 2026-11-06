@@ -1,17 +1,48 @@
 "use client";
 
-import { useState, type FormEvent } from "react";
-import { useAuth } from "../auth/auth-provider";
+import { useEffect, useRef, useState, type FormEvent } from "react";
+import { useAuth, type AuthState } from "../auth/auth-provider";
 import { authProblemMessages } from "../auth/auth-session";
+import type { SaveSnapshot } from "../game-data-session";
+import type { AccountChangeTicket } from "../game-storage-controller";
+import { useQuestStore } from "../quest-store";
+import { describeUnsavedChanges } from "../storage-messages";
 
 const progressNote = "Your quests, XP, streaks and plants stay saved in this browser, exactly as they are now. Signing in or out doesn't move, upload or reset them.";
+const cloudNote = "Your quests, XP, streaks and plants are saved to your account. The progress saved in this browser stays here, unchanged, and isn't uploaded.";
+const deviceNote = "You chose to keep playing with the progress saved in this browser, so nothing is saved to your account.";
+
+/** Who's signed in, as far as signing out is concerned. A different value means a different account or state. */
+function identityKey(auth: AuthState): string {
+  if (auth.status === "signed-in") return `signed-in:${auth.user.id}`;
+  if (auth.status === "unverified" || auth.status === "session-ended") return `${auth.status}:${auth.user.email ?? ""}`;
+  return auth.status;
+}
+
+/** A sign-out warning, tied to the session and identity whose unsaved changes it shows. */
+type SignOutWarning = { ticket: AccountChangeTicket | null; save: SaveSnapshot | null; identity: string };
+
+const accountChangedMessage = "Your account changed in the meantime, so signing out was cancelled. Nothing was signed out.";
 
 export default function AccountSection() {
   const { auth, sendMagicLink, signOut } = useAuth();
+  const { storage, storageActions } = useQuestStore();
   const [email, setEmail] = useState("");
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
   const [isError, setIsError] = useState(false);
+  /** Set when signing out would leave changes unsaved; the player decides what happens next. */
+  const [unsavedWarning, setUnsavedWarning] = useState<SignOutWarning | null>(null);
+  const identity = identityKey(auth);
+  // The newest identity, for async steps that must not act on an account that has changed since.
+  const identityRef = useRef(identity);
+  useEffect(() => {
+    identityRef.current = identity;
+  }, [identity]);
+  // Recomputed on every render: an account or session change anywhere invalidates the warning at once.
+  const warningIsCurrent = unsavedWarning !== null &&
+    unsavedWarning.identity === identity &&
+    storageActions.isTicketCurrent(unsavedWarning.ticket);
 
   function show(text: string, error: boolean) {
     setMessage(text);
@@ -31,9 +62,13 @@ export default function AccountSection() {
     }
   }
 
-  async function submitSignOut() {
-    setBusy(true);
-    show("", false);
+  /** Signs out only if `ticket` and `forIdentity` still describe what's signed in now. */
+  async function finishSignOut(ticket: AccountChangeTicket | null, forIdentity: string) {
+    if (identityRef.current !== forIdentity || !storageActions.isTicketCurrent(ticket)) {
+      setBusy(false);
+      show(accountChangedMessage, true);
+      return;
+    }
     const result = await signOut();
     setBusy(false);
     if (!result.ok) {
@@ -44,6 +79,92 @@ export default function AccountSection() {
       show("You're signed out. Your progress on this device is unchanged.", false);
     }
   }
+
+  /** Saves anything waiting first, and only signs out straight away if nothing is left unsaved. */
+  async function submitSignOut() {
+    const forIdentity = identityRef.current;
+    setBusy(true);
+    setUnsavedWarning(null);
+    show("", false);
+    const { outcome, ticket, save } = await storageActions.prepareForAccountChange();
+    // Saving took a moment; if the account or session changed meanwhile, this sign-out no longer applies.
+    if (outcome === "stale" || identityRef.current !== forIdentity) {
+      setBusy(false);
+      show(accountChangedMessage, true);
+      return;
+    }
+    if (outcome === "unsaved") {
+      setBusy(false);
+      setUnsavedWarning({ ticket, save, identity: forIdentity });
+      return;
+    }
+    await finishSignOut(ticket, forIdentity);
+  }
+
+  async function retryThenSignOut() {
+    if (!unsavedWarning || !warningIsCurrent) return;
+    storageActions.retrySave();
+    await submitSignOut();
+  }
+
+  async function signOutAnyway() {
+    const warning = unsavedWarning;
+    setUnsavedWarning(null);
+    // Only for the session and account whose unsaved changes the warning showed. The player chose to
+    // leave those exact changes behind, so they aren't offered again afterwards.
+    if (!warning || warning.identity !== identityRef.current || !storageActions.acknowledgeUnsavedLoss(warning.ticket)) {
+      show(accountChangedMessage, true);
+      return;
+    }
+    setBusy(true);
+    await finishSignOut(warning.ticket, warning.identity);
+  }
+
+  function cancelSignOut() {
+    setUnsavedWarning(null);
+    show("You're still signed in. Nothing was changed.", false);
+  }
+
+  const signOutButton = (
+    <div className="settings-form-row">
+      <span />
+      <button className="settings-reset-button" type="button" disabled={busy || warningIsCurrent} onClick={submitSignOut}>
+        {busy ? "Signing out…" : "Sign out"}
+      </button>
+    </div>
+  );
+
+  const unsavedPrompt = unsavedWarning && !warningIsCurrent ? (
+    <p className="settings-message is-error" role="alert">{accountChangedMessage}</p>
+  ) : unsavedWarning && (
+    <div
+      className="storage-sign-out-warning"
+      role="alertdialog"
+      aria-labelledby="unsaved-sign-out-heading"
+      aria-describedby="unsaved-sign-out-text"
+      data-save-status={unsavedWarning.save?.status}
+    >
+      <p className="settings-message is-error" id="unsaved-sign-out-heading"><strong>Sign out with unsaved changes?</strong></p>
+      <p className="settings-description" id="unsaved-sign-out-text">
+        {describeUnsavedChanges(unsavedWarning.save)} If you sign out now, they&apos;ll be lost from this screen.
+      </p>
+      <div className="storage-notice-actions">
+        {unsavedWarning.save?.status === "error" && (
+          <button className="settings-action-button" type="button" disabled={busy} onClick={retryThenSignOut}>
+            Try saving again
+          </button>
+        )}
+        <button className="settings-reset-button" type="button" disabled={busy} onClick={signOutAnyway}>
+          Sign out anyway
+        </button>
+        <button className="settings-action-button" type="button" disabled={busy} onClick={cancelSignOut}>
+          Cancel
+        </button>
+      </div>
+    </div>
+  );
+
+  const playingOnDevice = storage.mode === "browser" && storage.account !== null;
 
   return (
     <section className="settings-section" aria-labelledby="settings-account-heading">
@@ -107,19 +228,35 @@ export default function AccountSection() {
         </>
       )}
 
+      {auth.status === "unverified" && (
+        <>
+          <p className="settings-description">
+            Plantetary couldn&apos;t confirm your sign-in for <strong className="account-email">{auth.user.email ?? "your account"}</strong> right
+            now, usually because it can&apos;t reach the sign-in service. It will check again when you come back to this page or reload.
+            Until then, you&apos;re playing with the progress saved in this browser, and nothing is saved to your account.
+          </p>
+          {signOutButton}
+        </>
+      )}
+
       {auth.status === "signed-in" && (
         <>
           <p className="settings-description">
-            Signed in as <strong className="account-email">{auth.user.email ?? "your account"}</strong>. {progressNote}
+            Signed in as <strong className="account-email">{auth.user.email ?? "your account"}</strong>. {playingOnDevice ? deviceNote : cloudNote}
           </p>
-          <div className="settings-form-row">
-            <span />
-            <button className="settings-reset-button" type="button" disabled={busy} onClick={submitSignOut}>
-              {busy ? "Signing out…" : "Sign out"}
-            </button>
-          </div>
+          {playingOnDevice && (
+            <div className="settings-form-row">
+              <span />
+              <button className="settings-action-button" type="button" disabled={busy} onClick={storageActions.useCloudGarden}>
+                Use my cloud garden instead
+              </button>
+            </div>
+          )}
+          {signOutButton}
         </>
       )}
+
+      {unsavedPrompt}
 
       <p className={`settings-message${isError ? " is-error" : ""}`} role="status" aria-live="polite">{message}</p>
     </section>

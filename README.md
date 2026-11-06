@@ -13,7 +13,7 @@ A cozy, plant-themed gamified quest and habit tracker. Complete small daily and 
 - **Plant Journal:** browse all 16 collectible plants and see your progress toward the next one.
 - **Progress tracking:** today's and overall completion counts, plus a dated completion history.
 - **Settings:** set your display name and avatar, save reminder preferences, export your data as JSON, or reset your progress. Reminder preferences are only saved for now; Plantetary doesn't send notifications yet.
-- **Optional sign-in:** sign in with an emailed link, with no password. Guest mode works without an account, and signing in doesn't change your progress.
+- **Optional sign-in and cloud saves:** sign in with an emailed link, with no password, and keep your garden in your account. Guest mode works without an account, and signing in never changes or uploads your browser progress.
 
 ## Tech Stack
 
@@ -25,11 +25,11 @@ A cozy, plant-themed gamified quest and habit tracker. Complete small daily and 
 
 ## Data Storage
 
-Your progress is currently saved only in your browser's `localStorage`, so it stays on that browser and device. Accounts and database storage are planned for a future version.
+- **Guests** play with progress saved in this browser's `localStorage`, exactly as before accounts existed.
+- **Signed in,** a player can start a **cloud garden** saved to their account in Supabase, or keep playing with this browser's progress. Nothing is uploaded automatically: a new cloud garden starts fresh, and importing browser progress comes in a later version.
+- Cloud saves are protected against overwriting: if another tab or device saved first, Plantetary pauses saving, keeps a backup, and lets the player download their changes and load the latest garden. A small indicator in the top bar shows whether changes are saved.
 
-The database tables for that version are in `supabase/`, but the app doesn't use them yet. See [docs/supabase-database.md](docs/supabase-database.md) for how to set them up and test them.
-
-Signing in is optional, and it doesn't move your progress: it stays in this browser whether you're signed in or not. See [docs/supabase-auth.md](docs/supabase-auth.md) for how sign-in works and how to configure it.
+See [docs/game-storage.md](docs/game-storage.md) for how saving, conflicts and recovery work, [docs/supabase-auth.md](docs/supabase-auth.md) for sign-in, and [docs/supabase-database.md](docs/supabase-database.md) for the database, its migrations and its tests.
 
 ## Getting Started
 
@@ -73,8 +73,18 @@ npm run test:e2e
 
 Playwright starts a development server on port 3100 and stops it when the tests finish, so you don't need to start one yourself.
 
-Next.js allows only one development server per project. If Plantetary's is already running, either stop it first or point the tests at its port, replacing `3000` if yours is different:
+The browser tests never use a real Supabase project: Playwright's server points the app at a fake project that the tests answer themselves.
+
+Next.js allows only one development server per project, so stop yours (`npm run dev`) before running the tests. You can point the tests at a running server instead with `E2E_PORT=3000 npm run test:e2e`, but **only if that server has no Supabase values in `.env.local`**: a reused server keeps its own settings, so the tests would sign in to, and write to, your real project.
+
+## Database Tests
+
+The database's access rules and triggers have their own tests, which run in a throwaway local Supabase stack in Docker:
 
 ```bash
-E2E_PORT=3000 npm run test:e2e
+npx supabase start
+npx supabase test db
+npx supabase stop
 ```
+
+See [docs/supabase-database.md](docs/supabase-database.md), which also explains how to apply migrations to a hosted project.

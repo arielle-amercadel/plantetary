@@ -1,6 +1,6 @@
-# Supabase database (Stage 4)
+# Supabase database
 
-This stage adds Plantetary's database tables, access rules and tests, and nothing else. The app doesn't connect to Supabase yet. Guest mode and browser storage work exactly as before, and there's no login.
+Plantetary's database tables, access rules and tests (built in Stage 4, extended in Stage 7). Since Stage 7, a verified sign-in saves its garden in `quest_saves`, with `conflict` and `upgrade` copies in `save_backups` (see [game-storage.md](game-storage.md)). `profiles` isn't used by the app yet, and nothing writes `browser_import` or `daily`-on-import backups until Stage 8. Guests never touch the database.
 
 ## What's in this folder
 
@@ -12,7 +12,8 @@ This stage adds Plantetary's database tables, access rules and tests, and nothin
 | `supabase/migrations/20261105220200_create_quest_saves.sql` | `quest_saves` table, its triggers and access rules |
 | `supabase/migrations/20261105220300_create_save_backups.sql` | `save_backups` table, backup limits, the daily backup trigger and access rules |
 | `supabase/migrations/20261105223950_fix_revision_reuse_and_backup_retention.sql` | Review fixes: revisions never repeat, and backup limits hold under concurrent inserts |
-| `supabase/tests/database/*.test.sql` | 125 pgTAP tests across 7 files |
+| `supabase/migrations/20261106090000_add_upgrade_backups.sql` | Stage 7: the `upgrade` backup reason, one per user and source revision, with its own limit |
+| `supabase/tests/database/*.test.sql` | 143 pgTAP tests across 8 files |
 
 Migrations run in filename order. Never edit one after it has been applied to your hosted project; add a new migration instead.
 
@@ -24,7 +25,7 @@ All three tables belong to a user through `user_id`, which points at Supabase's 
 | --- | --- | --- |
 | `quest_saves` | One per user | The whole game save as JSON (`StoredQuestData`), plus `schema_version` and `revision` |
 | `profiles` | One per user | Display name, avatar and reminder preferences |
-| `save_backups` | Many per user | Read-only copies of saves, with a reason: `browser_import`, `conflict` or `daily` |
+| `save_backups` | Many per user | Read-only copies of saves, with a reason: `browser_import`, `conflict`, `daily` or `upgrade` |
 
 ## Who can do what
 
@@ -48,11 +49,15 @@ RLS doesn't stop people from editing their own data, including XP. That's fine f
 | Format guard | `quest_saves` | `schema_version` can't go down, so an old open tab can't overwrite a save made by a newer version of the app. |
 | `updated_at` | `profiles` | Set on every update. |
 | Daily backup | `quest_saves` | When a save's content changes, the copy being replaced is backed up, at most once per user per UTC day. |
-| Backup limits | `save_backups` | Keeps the newest 14 `daily`, 20 `conflict` and 5 `browser_import` backups per user, and removes older ones. Backups added at the same time for one user and reason take turns, so the limits hold. |
+| Backup limits | `save_backups` | Keeps the newest 14 `daily`, 20 `conflict`, 5 `browser_import` and 5 `upgrade` backups per user, and removes older ones. Each reason is limited on its own, so one never removes another's. Backups added at the same time for one user and reason take turns, so the limits hold. |
 
 The UTC day only spaces out backups. Game days still come from the player's own device, as before.
 
 To save without overwriting another device's change, the app will send `where revision = <the revision it loaded>`. If no row changes, another device saved first, or the save was deleted and recreated, which is a conflict. That's Stage 7's job; the tests here prove the database supports it.
+
+**Upgrade backups (Stage 7).** When the app loads a cloud save in an older format, it keeps the original as an `upgrade` backup before saving the upgraded version. There's at most one per user and source revision (the unique index `save_backups_upgrade_once`), so loading the same old save again never adds another, and they must name their source revision. They have their own limit, so they never use up or remove daily history.
+
+The app tells some errors apart by name, so these are pinned by `07_upgrade_backups.test.sql`: the format guard's message (`quest_saves.schema_version cannot decrease…`), the save check `quest_saves_data_check` (over 10 MB, or not an object), and the index `save_backups_upgrade_once`. If you rename any of them, update `src/app/cloud-game-storage.ts` too.
 
 Two small private tables support this, and users can't reach either:
 
@@ -164,11 +169,80 @@ If any test fails here but passes locally, don't connect the app until we've fou
 2. **Advisors → Security Advisor:** no warnings about these tables or the `private` functions.
 3. **Project Settings → Data API:** `public` is in the exposed schemas, and `private` isn't.
 
-You don't need the API keys yet. When Stage 6 connects the app, it will use the project URL and **publishable** key only. The secret key bypasses every rule here and must never be put in the app or committed.
+The app uses the project URL and **publishable** key only. The secret key bypasses every rule here and must never be put in the app or committed.
+
+## Stage 7: applying the new migration (not done yet)
+
+Stage 7 adds one migration: `20261106090000_add_upgrade_backups.sql`. It has been reviewed and passes the local tests, but hasn't been applied to the hosted project. Without it, a cloud save in an older format can't be backed up before it's upgraded, so it fails to load (safely: it's never replaced). The app should not be pointed at the hosted project for cloud saves until it's applied.
+
+Run these yourself, in order, from the project folder. Every hosted step has `--remote`; nothing here changes `.env.local`.
+
+1. **Check locally first.** Rebuild the local database from every migration and run the tests. They must end with `Result: PASS`.
+
+   ```bash
+   npx supabase start
+   npx supabase db reset
+   npx supabase test db
+   ```
+
+2. **See what the hosted project has (read-only).** Every migration up to `20261105223950_…` should be in both columns, and only `20261106090000_add_upgrade_backups` missing from Remote. If anything else differs, stop and find out why before going further.
+
+   ```bash
+   npx supabase migration list --remote
+   ```
+
+3. **Optional: keep a copy of the hosted data**, if it holds anything you care about. Save it outside the project folder so it's never committed.
+
+   ```bash
+   npx supabase db dump --remote --data-only -f ~/plantetary-hosted-data-before-stage7.sql
+   ```
+
+4. **Dry run.** It should list exactly one migration, `20261106090000_add_upgrade_backups.sql`, and apply nothing.
+
+   ```bash
+   npx supabase db push --remote --dry-run
+   ```
+
+5. **Apply it** (later, when you're ready for hosted testing). The CLI asks for confirmation.
+
+   ```bash
+   npx supabase db push --remote
+   ```
+
+6. **Confirm.** Every migration, including `20261106090000_add_upgrade_backups`, should now be in both columns.
+
+   ```bash
+   npx supabase migration list --remote
+   ```
+
+7. **Optional: run the database tests against the hosted project.** Each file is rolled back, and the concurrency file is skipped there.
+
+   ```bash
+   npx supabase test db --remote
+   ```
+
+If the project isn't linked on this computer yet, do steps 3–4 of **Apply the migrations to your hosted project** above first.
+
+## Controlled hosted testing (before inviting players)
+
+Once the migration is applied, you can try cloud saves against the hosted project on your own computer. Keep it controlled:
+
+1. **Use the hosted project only while it has no real players**, and sign in only with your own test addresses. Without custom SMTP, Supabase only emails members of your Supabase organization, a few times an hour (see [supabase-auth.md](supabase-auth.md)).
+2. **Point the dev server at it** by putting the project URL and **publishable** key in `.env.local` (copied from `.env.example`). Never the secret or `service_role` key: Plantetary refuses to start sign-in with one. Restart `npm run dev` after changing it. **Redirect URLs** must include `http://localhost:3000/auth/confirm`.
+3. **Don't run the browser tests against that server.** `npm run test:e2e` starts its own server with a fake project, which is safe. `E2E_PORT=3000 npm run test:e2e` would reuse your server, and the tests would sign in and write to the real project.
+4. **Try the flows by hand,** with two test addresses (A and B):
+   - Play as a guest, then sign in as A: **Start your cloud garden?** appears, and the guest progress is untouched.
+   - **Start a fresh cloud garden**, complete a quest, reload: it's still there, and the pill says **Saved**.
+   - Open a second tab, change something in each: the second save shows **Your garden changed somewhere else**; **Load latest garden** recovers.
+   - Sign in as B in another tab: A's garden disappears from the first tab; B gets the first-time choice. Sign in as A again: A's garden is back.
+   - Turn the network off (browser dev tools), make a change: **Retrying…**, then **Not saved**; turn it back on and **Try saving again**.
+   - Sign out with a change unsaved: the warning appears.
+5. **Check the dashboard:** **Table Editor → quest_saves** has one row per test account; **save_backups** has `conflict` rows from step 4. **Advisors → Security Advisor** has no new warnings.
+6. **Clean up** by deleting the test users in **Authentication → Users**. Their `quest_saves`, `save_backups` and `profiles` rows are deleted with them (`on delete cascade`).
 
 ## Not done yet
 
-- The app doesn't read or write these tables (Stages 5–7).
-- There's no login (Stage 6).
-- Nothing imports browser data or handles conflicts yet (Stages 8–9).
+- `profiles` isn't read or written by the app; profile and reminder preferences stay in the browser.
+- Nothing imports browser progress into an account (Stage 8), or merges changes between devices (Stage 9).
+- Account deletion and cloud reset from the app (Stage 10).
 - CI doesn't run these database tests. They need Docker, so they could be added as a separate CI job later.

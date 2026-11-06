@@ -45,7 +45,7 @@ export default function QuestPanel({
   const router = useRouter();
   const list = id === "daily-quests" ? "daily" : "personal";
   const defaultCategory = list === "daily" ? "Wellness" : "Personal";
-  const { categoryLists, addCategory, dailyScheduledQuestIds, todayKey } = useQuestStore();
+  const { categoryLists, addCategory, dailyScheduledQuestIds, todayKey, canPlay } = useQuestStore();
   const [newTitle, setNewTitle] = useState("");
   const [newDifficulty, setNewDifficulty] = useState<Difficulty>("Easy");
   const [categorySelection, setCategorySelection] = useState(defaultCategory);
@@ -77,6 +77,23 @@ export default function QuestPanel({
     setCategorySelection(defaultCategory);
     setCustomCategoryName("");
     onAddingChange(false);
+  }
+
+  // No quests to play until the garden has loaded: starter quests shown meanwhile must not be playable.
+  if (!canPlay) {
+    return (
+      <section className="quest-panel" id={id} aria-labelledby={`${id}-heading`} aria-busy="true">
+        <header className="quest-panel-header">
+          <div className="quest-panel-title-wrap">
+            <h2 className="quest-panel-title" id={`${id}-heading`}>
+              <Image src={icon} alt="" aria-hidden="true" width={20} height={20} />
+              <span>{title}</span>
+            </h2>
+          </div>
+        </header>
+        <p className="quest-panel-loading" role="status">Your quests will appear once your garden has loaded.</p>
+      </section>
+    );
   }
 
   return (

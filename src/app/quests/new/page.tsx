@@ -37,7 +37,14 @@ function CreateQuestRoute() {
   const editingQuest = editSelection?.quest;
   const editingList: QuestListKey | undefined = editSelection?.list;
 
-  if (!hasRestored) return null;
+  // Until the garden loads, only the shell: it shows any choice or error about where the garden is saved.
+  if (!hasRestored) {
+    return (
+      <AppShell page="create">
+        <main className="create-quest-content" aria-busy="true" />
+      </AppShell>
+    );
+  }
   if (editId !== null && (!editingQuest || !editingList)) {
     return (
       <AppShell page="create">

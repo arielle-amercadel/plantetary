@@ -2,8 +2,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { getStreakValues, getXpLedgerTotal } from "../src/app/quest-logic";
 import {
   invalidBackupStorageKey,
+  latestQuestSaveVersion,
   loadQuestData,
   questStorageKey,
+  readQuestSave,
+  readQuestSaveText,
   saveQuestData,
   validBackupStorageKey,
 } from "../src/app/quest-storage";
@@ -352,6 +355,175 @@ describe("loadQuestData with an unusable save", () => {
     expect(consoleError).toHaveBeenCalledWith(
       "Plantetary could not back up invalid saved data. Defaults will not overwrite it this session.",
     );
+  });
+});
+
+/** Freezes a value all the way down, so any attempt to modify it throws. */
+function deepFreeze<T>(value: T): T {
+  if (value && typeof value === "object") {
+    Object.values(value).forEach(deepFreeze);
+    Object.freeze(value);
+  }
+  return value;
+}
+
+describe("readQuestSave, the shared save check", () => {
+  it("knows the current save format", () => {
+    expect(latestQuestSaveVersion).toBe(5);
+    expect(createCurrentSave().schemaVersion).toBe(latestQuestSaveVersion);
+  });
+
+  it("accepts a current save as it is", () => {
+    const save = createCurrentSave();
+
+    expect(readQuestSave(save)).toEqual({ status: "valid", data: save, upgraded: false, newerVersion: false });
+    expect((readQuestSave(save) as { data: StoredQuestData }).data).toBe(save);
+  });
+
+  it("reads a current save from its saved text without changing it", () => {
+    const save = createCurrentSave();
+
+    const result = readQuestSaveText(JSON.stringify(save));
+
+    expect(result).toEqual({ status: "valid", data: save, upgraded: false, newerVersion: false });
+  });
+
+  it("upgrades a legacy save and keeps its progress", () => {
+    const result = readQuestSave(legacySave);
+
+    expect(result.status).toBe("valid");
+    if (result.status !== "valid") return;
+    expect(result.upgraded).toBe(true);
+    expect(result.newerVersion).toBe(false);
+    expect(result.data.schemaVersion).toBe(latestQuestSaveVersion);
+    expect(result.data.questLists).toEqual(legacySave.questLists);
+    expect(result.data.categoryLists).toEqual(legacySave.categoryLists);
+    expect(result.data.personalXpByQuestId).toEqual({ biology: 20 });
+    expect(getXpLedgerTotal(result.data.completionHistory, result.data.personalXpByQuestId, result.data.legacyXpBonus)).toBe(20);
+    expect(result.data.discoveredPlantIds).toContain("fern");
+  });
+
+  it("recovers bad fields, and reports that the save changed", () => {
+    const result = readQuestSave({
+      ...createCurrentSave(),
+      personalCompletedOnByQuestId: { biology: "2026-11-03", broken: "not a date" },
+    });
+
+    expect(result.status).toBe("valid");
+    if (result.status !== "valid") return;
+    expect(result.upgraded).toBe(true);
+    expect(result.data.personalCompletedOnByQuestId).toEqual({ biology: "2026-11-03" });
+    expect(result.data.questLists).toEqual(createCurrentSave().questLists);
+  });
+
+  it("reads a save from a newer version of Plantetary, keeping its version number", () => {
+    const save = { ...createCurrentSave(), schemaVersion: latestQuestSaveVersion + 1 };
+
+    const result = readQuestSave(save);
+
+    expect(result).toEqual({ status: "valid", data: save, upgraded: false, newerVersion: true });
+  });
+
+  it.each([
+    ["the current version", latestQuestSaveVersion, false],
+    ["an older version", 3, false],
+    ["no version", undefined, false],
+    ["a version that isn't a number", "99", false],
+    ["a much newer version", 1000, true],
+  ])("reports %s as newer: %s", (_, schemaVersion, expected) => {
+    const result = readQuestSave({ ...createCurrentSave(), schemaVersion });
+
+    expect(result.status).toBe("valid");
+    expect(result.status === "valid" && result.newerVersion).toBe(expected);
+  });
+
+  it.each([
+    ["nothing", undefined],
+    ["null", null],
+    ["a number", 42],
+    ["text", "a save"],
+    ["a list", [legacySave]],
+    ["an empty object", {}],
+    ["missing quest lists", { categoryLists: legacySave.categoryLists }],
+    ["missing category lists", { questLists: legacySave.questLists }],
+    ["a quest with an unknown difficulty", {
+      ...legacySave,
+      questLists: { daily: [{ ...dailyQuest, difficulty: "Impossible" }], personal: [] },
+    }],
+    ["a personal quest with invalid weekdays", {
+      ...legacySave,
+      questLists: { daily: [], personal: [{ ...personalQuest, selectedDays: ["Funday"] }] },
+    }],
+    ["a non-text category", { ...legacySave, categoryLists: { daily: [1], personal: [] } }],
+  ])("rejects %s as invalid", (_, value) => {
+    expect(readQuestSave(value)).toEqual({ status: "invalid" });
+  });
+
+  it.each([
+    ["text that isn't JSON", "{not json"],
+    ["empty text", ""],
+    ["JSON that isn't a save", "[1, 2, 3]"],
+  ])("rejects %s as invalid", (_, text) => {
+    expect(readQuestSaveText(text)).toEqual({ status: "invalid" });
+  });
+
+  it("never modifies the save it's given", () => {
+    const saves = [
+      legacySave,
+      createCurrentSave(),
+      { ...createCurrentSave(), completionHistory: { "not-a-date": { scheduledQuestIds: [], completedQuestIds: [] } } },
+      { ...createCurrentSave(), deletedLegacyPersonalCompletionCount: -1 },
+      { ...createCurrentSave(), schemaVersion: latestQuestSaveVersion + 1 },
+    ];
+
+    for (const save of saves) {
+      const original = structuredClone(save);
+      expect(() => readQuestSave(deepFreeze(structuredClone(save)))).not.toThrow();
+      readQuestSave(save);
+      expect(save).toEqual(original);
+    }
+  });
+
+  it("never touches browser storage", () => {
+    vi.stubGlobal("window", {
+      get localStorage(): Storage {
+        throw new Error("readQuestSave must not use storage");
+      },
+    });
+
+    expect(readQuestSaveText(JSON.stringify(legacySave)).status).toBe("valid");
+    expect(readQuestSave(createCurrentSave()).status).toBe("valid");
+  });
+
+  it("gives browser loading exactly the same data", () => {
+    const saves = [
+      legacySave,
+      createCurrentSave(),
+      { ...createCurrentSave(), personalCompletedOnByQuestId: { biology: "nope" } },
+      { ...createCurrentSave(), schemaVersion: latestQuestSaveVersion + 1 },
+    ];
+
+    for (const save of saves) {
+      const raw = JSON.stringify(save);
+      const shared = readQuestSaveText(raw);
+      const loaded = loadQuestData(fallbackData, () => createStorage({ [questStorageKey]: raw }));
+      expect(shared.status === "valid" && shared.data).toEqual(loaded.data);
+    }
+  });
+});
+
+describe("loadQuestData with a save from a newer version", () => {
+  it("loads it unchanged and keeps saving, as before", () => {
+    const raw = JSON.stringify({ ...createCurrentSave(), schemaVersion: latestQuestSaveVersion + 1 });
+    const storage = createStorage({ [questStorageKey]: raw });
+
+    const result = loadQuestData(fallbackData, () => storage);
+
+    expect(result.canPersist).toBe(true);
+    expect(result.data).toEqual(JSON.parse(raw));
+    expect(storage.values.get(questStorageKey)).toBe(raw);
+    expect(storage.values.has(validBackupStorageKey)).toBe(false);
+    expect(storage.values.has(invalidBackupStorageKey)).toBe(false);
   });
 });
 

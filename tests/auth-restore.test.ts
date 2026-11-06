@@ -23,8 +23,34 @@ async function settle() {
   for (let index = 0; index < 20; index += 1) await Promise.resolve();
 }
 
+/** Each test email gets its own stable user ID, so tests can tell accounts apart by ID. */
+function idFor(email: string) {
+  return `user-id-${email}`;
+}
+
+/** Which account each token was issued for, as the real server knows. A forged token isn't listed. */
+const issuedTokens = new Map<string, string>();
+
 function session(token: string, email: string) {
-  return { access_token: token, user: { email } } as unknown as Session;
+  issuedTokens.set(token, email);
+  return { access_token: token, user: { id: idFor(email), email } } as unknown as Session;
+}
+
+/** A verifier that answers like a reachable Supabase: tokens it issued are valid, for their own account. */
+async function serverCheck(token: string): Promise<TokenCheck> {
+  const email = issuedTokens.get(token);
+  return email ? { status: "valid", userId: idFor(email), email } : { status: "rejected" };
+}
+
+/** Holds the check of "old-token" until the test decides it; any other token is checked by the server. */
+function holdingOldToken(result: Promise<TokenCheck>) {
+  return (token: string) => (token === "old-token" ? result : serverCheck(token));
+}
+
+/** A token shaped like a real one, so the account it claims (`sub`) can be read, unverified. */
+function jwtFor(name: string, userId: string) {
+  const encode = (value: object) => Buffer.from(JSON.stringify(value)).toString("base64url");
+  return `${encode({ alg: "HS256", typ: "JWT" })}.${encode({ sub: userId, name })}.signature`;
 }
 
 /**
@@ -113,16 +139,17 @@ describe("restoring while a sign-in or sign-out happens", () => {
     const fake = createFakeAuth(session("old-token", "old@example.com"));
     const check = deferred<TokenCheck>();
     const states = track();
-    const controller = createAuthController(fake.client, () => check.promise, states.onChange);
+    const controller = createAuthController(fake.client, holdingOldToken(check.promise), states.onChange);
     fake.emit("INITIAL_SESSION", fake.current);
 
     fake.signInElsewhere("new-token", "new@example.com");
     check.resolve({ status: "rejected" });
     await controller.restored;
+    await settle();
 
     expect(fake.client.signOut).not.toHaveBeenCalled();
     expect(fake.current?.access_token).toBe("new-token");
-    expect(states.last()).toEqual({ status: "signed-in", user: { email: "new@example.com" } });
+    expect(states.last()).toEqual({ status: "signed-in", user: { id: idFor("new@example.com"), email: "new@example.com" } });
   });
 
   it("a sign-out during the check wins over a late 'valid' result", async () => {
@@ -133,11 +160,11 @@ describe("restoring while a sign-in or sign-out happens", () => {
     fake.emit("INITIAL_SESSION", fake.current);
 
     fake.signOutElsewhere();
-    check.resolve({ status: "valid", email: "old@example.com" });
+    check.resolve({ status: "valid", userId: idFor("old@example.com"), email: "old@example.com" });
     await controller.restored;
 
     expect(states.last()).toEqual({ status: "signed-out" });
-    expect(states.states).not.toContainEqual({ status: "signed-in", user: { email: "old@example.com" } });
+    expect(states.states).not.toContainEqual({ status: "signed-in", user: { id: idFor("old@example.com"), email: "old@example.com" } });
   });
 
   it("a sign-out during the check isn't repeated when the old session is then rejected", async () => {
@@ -165,7 +192,7 @@ describe("restoring while a sign-in or sign-out happens", () => {
         fake.replaceQuietly(session("other-tab-token", "other@example.com"));
         return { status: "rejected" };
       }
-      return { status: "valid", email: "other@example.com" };
+      return { status: "valid", userId: idFor("other@example.com"), email: "other@example.com" };
     });
     const controller = createAuthController(fake.client, verify, states.onChange);
     fake.emit("INITIAL_SESSION", fake.current);
@@ -173,7 +200,7 @@ describe("restoring while a sign-in or sign-out happens", () => {
 
     expect(checks).toEqual(["old-token", "other-tab-token"]);
     expect(fake.client.signOut).not.toHaveBeenCalled();
-    expect(states.last()).toEqual({ status: "signed-in", user: { email: "other@example.com" } });
+    expect(states.last()).toEqual({ status: "signed-in", user: { id: idFor("other@example.com"), email: "other@example.com" } });
   });
 
   it("never signs out a rejected session: it is reported as ended and left for the player to remove", async () => {
@@ -204,7 +231,8 @@ describe("restoring while a sign-in or sign-out happens", () => {
       otherTabSignsIn();
       return signOut(...args);
     });
-    const controller = createAuthController(fake.client, async () => ({ status: "rejected" }), (state) => {
+    const verify = (token: string) => (token === "old-token" ? Promise.resolve<TokenCheck>({ status: "rejected" }) : serverCheck(token));
+    const controller = createAuthController(fake.client, verify, (state) => {
       states.push(state);
       queueMicrotask(otherTabSignsIn);
     });
@@ -214,7 +242,7 @@ describe("restoring while a sign-in or sign-out happens", () => {
 
     expect(raced).toBe(true);
     expect(fake.current?.access_token).toBe("other-tab-token");
-    expect(states.at(-1)).toEqual({ status: "signed-in", user: { email: "other@example.com" } });
+    expect(states.at(-1)).toEqual({ status: "signed-in", user: { id: idFor("other@example.com"), email: "other@example.com" } });
   });
 
   it("Codex's race: a new session saved after the final comparison survives, and the UI follows it", async () => {
@@ -229,7 +257,8 @@ describe("restoring while a sign-in or sign-out happens", () => {
       if (reads === 2) queueMicrotask(() => fake.signInElsewhere("other-tab-token", "other@example.com"));
       return result;
     });
-    const controller = createAuthController(fake.client, async () => ({ status: "rejected" }), states.onChange);
+    const verify = (token: string) => (token === "old-token" ? Promise.resolve<TokenCheck>({ status: "rejected" }) : serverCheck(token));
+    const controller = createAuthController(fake.client, verify, states.onChange);
     fake.emit("INITIAL_SESSION", fake.current);
     await controller.restored;
     await settle();
@@ -238,7 +267,7 @@ describe("restoring while a sign-in or sign-out happens", () => {
     expect(fake.client.signOut).not.toHaveBeenCalled();
     expect(fake.current?.access_token).toBe("other-tab-token");
     // The UI matches what supabase-js actually holds.
-    expect(states.last()).toEqual({ status: "signed-in", user: { email: fake.current?.user.email } });
+    expect(states.last()).toEqual({ status: "signed-in", user: { id: fake.current?.user.id, email: fake.current?.user.email } });
   });
 
   it("Codex's race without an event: a session written quietly after the comparison still survives", async () => {
@@ -264,7 +293,7 @@ describe("restoring while a sign-in or sign-out happens", () => {
     const fake = createFakeAuth(session("old-token", "old@example.com"));
     const check = deferred<TokenCheck>();
     const states = track();
-    const controller = createAuthController(fake.client, () => check.promise, states.onChange);
+    const controller = createAuthController(fake.client, holdingOldToken(check.promise), states.onChange);
     fake.emit("INITIAL_SESSION", fake.current);
 
     fake.signInElsewhere("tab-b-token", "b@example.com");
@@ -272,14 +301,15 @@ describe("restoring while a sign-in or sign-out happens", () => {
     fake.signInElsewhere("tab-c-token", "c@example.com");
     check.resolve({ status: "rejected" });
     await controller.restored;
+    await settle();
 
     expect(fake.client.signOut).not.toHaveBeenCalled();
     expect(fake.current?.access_token).toBe("tab-c-token");
-    expect(states.last()).toEqual({ status: "signed-in", user: { email: "c@example.com" } });
+    expect(states.last()).toEqual({ status: "signed-in", user: { id: idFor("c@example.com"), email: "c@example.com" } });
   });
 
   it.each([
-    ["valid", { status: "valid", email: "old@example.com" }],
+    ["valid", { status: "valid", userId: idFor("old@example.com"), email: "old@example.com" }],
     ["unreachable", { status: "unreachable" }],
     ["rejected", { status: "rejected" }],
   ] as const)("never signs anything out when the check is %s", async (_label, result) => {
@@ -326,7 +356,7 @@ describe("restoring while a sign-in or sign-out happens", () => {
     const fake = createFakeAuth(session("old-token", "old@example.com"));
     const check = deferred<TokenCheck>();
     const states = track();
-    const controller = createAuthController(fake.client, () => check.promise, states.onChange);
+    const controller = createAuthController(fake.client, holdingOldToken(check.promise), states.onChange);
     fake.emit("INITIAL_SESSION", fake.current);
 
     const signingIn = controller.completeSignIn(signInLink);
@@ -334,27 +364,29 @@ describe("restoring while a sign-in or sign-out happens", () => {
     expect(fake.client.verifyOtp).not.toHaveBeenCalled();
 
     check.resolve({ status: "rejected" });
-    expect(await signingIn).toEqual({ ok: true, user: { email: "new@example.com" } });
+    expect(await signingIn).toEqual({ ok: true, user: { id: idFor("new@example.com"), email: "new@example.com" } });
+    await settle();
 
     expect(fake.client.signOut).not.toHaveBeenCalled();
     expect(fake.current?.access_token).toBe("new-token");
-    expect(states.last()).toEqual({ status: "signed-in", user: { email: "new@example.com" } });
+    expect(states.last()).toEqual({ status: "signed-in", user: { id: idFor("new@example.com"), email: "new@example.com" } });
   });
 
   it("a sign-in that stops waiting for a stuck check is never signed out by that check's late rejection", async () => {
     const fake = createFakeAuth(session("old-token", "old@example.com"));
     const check = deferred<TokenCheck>();
     const states = track();
-    const controller = createAuthController(fake.client, () => check.promise, states.onChange, { restoreWaitMs: 0 });
+    const controller = createAuthController(fake.client, holdingOldToken(check.promise), states.onChange, { restoreWaitMs: 0 });
     fake.emit("INITIAL_SESSION", fake.current);
 
     expect((await controller.completeSignIn(signInLink)).ok).toBe(true);
     check.resolve({ status: "rejected" });
     await controller.restored;
+    await settle();
 
     expect(fake.client.signOut).not.toHaveBeenCalled();
     expect(fake.current?.access_token).toBe("new-token");
-    expect(states.last()).toEqual({ status: "signed-in", user: { email: "new@example.com" } });
+    expect(states.last()).toEqual({ status: "signed-in", user: { id: idFor("new@example.com"), email: "new@example.com" } });
   });
 
   it("stops reporting changes once disposed", async () => {
@@ -365,7 +397,7 @@ describe("restoring while a sign-in or sign-out happens", () => {
     fake.emit("INITIAL_SESSION", fake.current);
 
     controller.dispose();
-    check.resolve({ status: "valid", email: "old@example.com" });
+    check.resolve({ status: "valid", userId: idFor("old@example.com"), email: "old@example.com" });
     fake.signInElsewhere("new-token", "new@example.com");
     await settle();
 
@@ -378,7 +410,8 @@ describe("the same session announced again, as when a tab is shown again", () =>
   async function endedSession() {
     const fake = createFakeAuth(session("old-token", "old@example.com"));
     const states = track();
-    const controller = createAuthController(fake.client, async () => ({ status: "rejected" }), states.onChange);
+    const verify = (token: string) => (token === "old-token" ? Promise.resolve<TokenCheck>({ status: "rejected" }) : serverCheck(token));
+    const controller = createAuthController(fake.client, verify, states.onChange);
     fake.emit("INITIAL_SESSION", fake.current);
     await controller.restored;
     expect(states.last()).toEqual({ status: "session-ended", user: { email: "old@example.com" } });
@@ -418,11 +451,17 @@ describe("the same session announced again, as when a tab is shown again", () =>
     const { fake, states } = await endedSession();
 
     fake.signInElsewhere("new-token", "new@example.com");
+    // Checked before it counts.
+    expect(states.last()).toEqual({ status: "loading" });
+    await settle();
 
-    expect(states.last()).toEqual({ status: "signed-in", user: { email: "new@example.com" } });
-    // And that new session, announced again, stays signed in.
+    expect(states.last()).toEqual({ status: "signed-in", user: { id: idFor("new@example.com"), email: "new@example.com" } });
+    // And that new session, announced again, stays signed in without another check.
+    const shown = states.states.length;
     fake.emit("SIGNED_IN", fake.current);
-    expect(states.last()).toEqual({ status: "signed-in", user: { email: "new@example.com" } });
+    await settle();
+    expect(states.states).toHaveLength(shown);
+    expect(states.last()).toEqual({ status: "signed-in", user: { id: idFor("new@example.com"), email: "new@example.com" } });
   });
 
   it("a refresh the server accepted, with a new token, signs in", async () => {
@@ -430,8 +469,9 @@ describe("the same session announced again, as when a tab is shown again", () =>
 
     fake.replaceQuietly(session("refreshed-token", "old@example.com"));
     fake.emit("TOKEN_REFRESHED", fake.current);
+    await settle();
 
-    expect(states.last()).toEqual({ status: "signed-in", user: { email: "old@example.com" } });
+    expect(states.last()).toEqual({ status: "signed-in", user: { id: idFor("old@example.com"), email: "old@example.com" } });
   });
 
   it("another tab signing out, then signing in again, is followed", async () => {
@@ -440,7 +480,8 @@ describe("the same session announced again, as when a tab is shown again", () =>
     fake.signOutElsewhere();
     expect(states.last()).toEqual({ status: "signed-out" });
     fake.signInElsewhere("tab-b-token", "b@example.com");
-    expect(states.last()).toEqual({ status: "signed-in", user: { email: "b@example.com" } });
+    await settle();
+    expect(states.last()).toEqual({ status: "signed-in", user: { id: idFor("b@example.com"), email: "b@example.com" } });
   });
 
   it("an explicit sign-out from the ended state still works", async () => {
@@ -455,13 +496,13 @@ describe("the same session announced again, as when a tab is shown again", () =>
   it("a valid session announced again stays signed in", async () => {
     const fake = createFakeAuth(session("good-token", "mira@example.com"));
     const states = track();
-    const controller = createAuthController(fake.client, async () => ({ status: "valid", email: "mira@example.com" }), states.onChange);
+    const controller = createAuthController(fake.client, async () => ({ status: "valid", userId: idFor("mira@example.com"), email: "mira@example.com" }), states.onChange);
     fake.emit("INITIAL_SESSION", fake.current);
     await controller.restored;
 
     fake.emit("SIGNED_IN", fake.current);
 
-    expect(states.last()).toEqual({ status: "signed-in", user: { email: "mira@example.com" } });
+    expect(states.last()).toEqual({ status: "signed-in", user: { id: idFor("mira@example.com"), email: "mira@example.com" } });
   });
 });
 
@@ -475,8 +516,8 @@ describe("checking the stored session", () => {
     expect(await checkStoredSession(ended.client, vi.fn())).toEqual({ status: "ended" });
 
     const valid = createFakeAuth(session("token-1", "mira@example.com"));
-    const verify = vi.fn(async (): Promise<TokenCheck> => ({ status: "valid", email: "mira@example.com" }));
-    expect(await checkStoredSession(valid.client, verify)).toEqual({ status: "valid", user: { email: "mira@example.com" }, token: "token-1" });
+    const verify = vi.fn(async (): Promise<TokenCheck> => ({ status: "valid", userId: idFor("mira@example.com"), email: "mira@example.com" }));
+    expect(await checkStoredSession(valid.client, verify)).toEqual({ status: "valid", user: { id: idFor("mira@example.com"), email: "mira@example.com" }, token: "token-1" });
     expect(verify).toHaveBeenCalledWith("token-1");
   });
 
@@ -486,6 +527,7 @@ describe("checking the stored session", () => {
     expect(await checkStoredSession(fake.client, async () => ({ status: "unreachable" }))).toEqual({
       status: "unreachable",
       user: { email: "mira@example.com" },
+      claimedUserId: null,
       token: "token-1",
     });
     expect(await checkStoredSession(fake.client, async () => ({ status: "rejected" }))).toEqual({
@@ -507,18 +549,329 @@ describe("checking the stored session", () => {
   });
 });
 
+/** A stored session whose user record can be shaped freely, as a hand-edited cookie could be. */
+function forgedSession(token: string, user: Record<string, unknown> | null) {
+  return { access_token: token, user } as unknown as Session;
+}
+
+describe("the stored session's identity (Codex finding 2: only a verified ID counts)", () => {
+  it("comes from the verifier, matching the stored session", async () => {
+    const fake = createFakeAuth(session("token-1", "mira@example.com"));
+
+    expect(await checkStoredSession(fake.client, serverCheck)).toEqual({
+      status: "valid",
+      user: { id: idFor("mira@example.com"), email: "mira@example.com" },
+      token: "token-1",
+    });
+  });
+
+  it("uses the verified ID when the stored session has none", async () => {
+    const fake = createFakeAuth(forgedSession("token-1", { email: "mira@example.com" }));
+    const verify = async (): Promise<TokenCheck> => ({ status: "valid", userId: "verified-id", email: "mira@example.com" });
+
+    expect(await checkStoredSession(fake.client, verify)).toEqual({
+      status: "valid",
+      user: { id: "verified-id", email: "mira@example.com" },
+      token: "token-1",
+    });
+  });
+
+  it("never falls back to the stored ID: a verified reply without an ID is rejected", async () => {
+    const fake = createFakeAuth(session("token-1", "mira@example.com"));
+    const verify = async (): Promise<TokenCheck> => ({ status: "valid", userId: null, email: "mira@example.com" });
+
+    expect(await checkStoredSession(fake.client, verify)).toEqual({
+      status: "rejected",
+      user: { email: "mira@example.com" },
+      token: "token-1",
+    });
+    expect(fake.client.signOut).not.toHaveBeenCalled();
+  });
+
+  it("rejects a stored user that doesn't match the verified token, without removing it", async () => {
+    // The token is mira's; the stored user record claims to be someone else.
+    const fake = createFakeAuth(forgedSession("token-1", { id: idFor("other@example.com"), email: "other@example.com" }));
+    const verify = async (): Promise<TokenCheck> => ({ status: "valid", userId: idFor("mira@example.com"), email: "mira@example.com" });
+
+    expect(await checkStoredSession(fake.client, verify)).toEqual({
+      status: "rejected",
+      user: { email: "mira@example.com" },
+      token: "token-1",
+    });
+    expect(fake.client.signOut).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["a matching user record and token", { id: "user-a", email: "a@example.com" }, jwtFor("t", "user-a"), "user-a"],
+    ["a user record for another account", { id: "user-b", email: "a@example.com" }, jwtFor("t", "user-a"), null],
+    ["no user ID", { email: "a@example.com" }, jwtFor("t", "user-a"), null],
+    ["a token that claims no account", { id: "user-a", email: "a@example.com" }, "not-a-jwt", null],
+  ])("offline, has no verified ID, even with %s", async (_, user, token, claimedUserId) => {
+    const fake = createFakeAuth(forgedSession(token, user));
+
+    expect(await checkStoredSession(fake.client, async () => ({ status: "unreachable" }))).toEqual({
+      status: "unreachable",
+      user: { email: "a@example.com" },
+      claimedUserId,
+      token,
+    });
+    expect(fake.client.signOut).not.toHaveBeenCalled();
+  });
+
+  it("treats a verifier that fails unexpectedly as unreachable", async () => {
+    const fake = createFakeAuth(session("token-1", "mira@example.com"));
+    const verify = async (): Promise<TokenCheck> => { throw new Error("bug"); };
+
+    expect((await checkStoredSession(fake.client, verify)).status).toBe("unreachable");
+  });
+
+  it("restores an unchecked session as unverified, with no ID, and never as signed in", async () => {
+    const fake = createFakeAuth(session("token-1", "mira@example.com"));
+    const states = track();
+    const controller = createAuthController(fake.client, async () => ({ status: "unreachable" }), states.onChange);
+    fake.emit("INITIAL_SESSION", fake.current);
+    await controller.restored;
+
+    expect(states.states).toEqual([{ status: "unverified", user: { email: "mira@example.com" } }]);
+    expect(fake.client.signOut).not.toHaveBeenCalled();
+    expect(fake.current?.access_token).toBe("token-1");
+  });
+
+  it("checks an unverified session again when it's announced again, as when the tab is shown again", async () => {
+    const fake = createFakeAuth(session("token-1", "mira@example.com"));
+    const states = track();
+    let online = false;
+    const verify = vi.fn((token: string) => (online ? serverCheck(token) : Promise.resolve<TokenCheck>({ status: "unreachable" })));
+    const controller = createAuthController(fake.client, verify, states.onChange);
+    fake.emit("INITIAL_SESSION", fake.current);
+    await controller.restored;
+    expect(states.last()?.status).toBe("unverified");
+
+    // Still offline: still unverified, and nothing is removed.
+    fake.emit("SIGNED_IN", fake.current);
+    await settle();
+    expect(states.last()).toEqual({ status: "unverified", user: { email: "mira@example.com" } });
+
+    online = true;
+    fake.emit("SIGNED_IN", fake.current);
+    await settle();
+    expect(states.last()).toEqual({ status: "signed-in", user: { id: idFor("mira@example.com"), email: "mira@example.com" } });
+    expect(verify).toHaveBeenCalledTimes(3);
+    expect(fake.client.signOut).not.toHaveBeenCalled();
+  });
+
+  it("is never part of an ended session", async () => {
+    const fake = createFakeAuth(session("token-1", "mira@example.com"));
+    const states = track();
+    const controller = createAuthController(fake.client, async () => ({ status: "rejected" }), states.onChange);
+    fake.emit("INITIAL_SESSION", fake.current);
+    await controller.restored;
+
+    expect(states.last()).toEqual({ status: "session-ended", user: { email: "mira@example.com" } });
+  });
+});
+
+describe("sessions announced after startup (Codex finding 1: identity is verified before it's shown)", () => {
+  /** Signed in and verified as A, with a real-shaped token, ready for the next announcement. */
+  async function signedInAsA(verify: (token: string) => Promise<TokenCheck> = serverCheck) {
+    const tokenA = jwtFor("a-1", idFor("a@example.com"));
+    const fake = createFakeAuth(session(tokenA, "a@example.com"));
+    const states = track();
+    const controller = createAuthController(fake.client, verify, states.onChange);
+    fake.emit("INITIAL_SESSION", fake.current);
+    await controller.restored;
+    expect(states.last()).toEqual({ status: "signed-in", user: { id: idFor("a@example.com"), email: "a@example.com" } });
+    return { fake, states, controller };
+  }
+
+  /** Announces a session as supabase-js would after another tab wrote it. */
+  function announce(fake: ReturnType<typeof createFakeAuth>, value: Session, event: AuthChangeEvent = "SIGNED_IN") {
+    fake.replaceQuietly(value);
+    fake.emit(event, value);
+  }
+
+  const signedInAs = (email: string) => ({ status: "signed-in", user: { id: idFor(email), email } });
+
+  it("a token for A with a stored user record for B never signs in as B, and A isn't kept on screen", async () => {
+    const { fake, states } = await signedInAsA();
+    const shown = states.states.length;
+    const tokenA2 = jwtFor("a-2", idFor("a@example.com"));
+    issuedTokens.set(tokenA2, "a@example.com");
+
+    announce(fake, forgedSession(tokenA2, { id: idFor("b@example.com"), email: "b@example.com" }));
+    expect(states.last()).toEqual({ status: "loading" });
+    await settle();
+
+    expect(states.states.slice(shown)).toEqual([{ status: "loading" }, { status: "session-ended", user: { email: "a@example.com" } }]);
+    expect(states.states).not.toContainEqual(signedInAs("b@example.com"));
+    expect(fake.client.signOut).not.toHaveBeenCalled();
+  });
+
+  it("a forged token claiming B, with B's user record, is rejected and A isn't kept on screen", async () => {
+    const { fake, states } = await signedInAsA();
+    const forgedToken = jwtFor("forged", idFor("b@example.com"));
+
+    announce(fake, forgedSession(forgedToken, { id: idFor("b@example.com"), email: "b@example.com" }));
+    expect(states.last()).toEqual({ status: "loading" });
+    await settle();
+
+    expect(states.last()).toEqual({ status: "session-ended", user: { email: "b@example.com" } });
+    expect(states.states).not.toContainEqual(signedInAs("b@example.com"));
+    expect(fake.client.signOut).not.toHaveBeenCalled();
+    expect(fake.current?.access_token).toBe(forgedToken);
+  });
+
+  it("a token whose own claim is A, with B's user record, isn't treated as the same account", async () => {
+    // Offline, so nothing can be verified: A must not stay shown, and B must not appear.
+    let online = true;
+    const verify = (token: string) => (online ? serverCheck(token) : Promise.resolve<TokenCheck>({ status: "unreachable" }));
+    const { fake, states } = await signedInAsA(verify);
+    online = false;
+
+    announce(fake, forgedSession(jwtFor("a-2", idFor("a@example.com")), { id: idFor("b@example.com"), email: "b@example.com" }));
+    await settle();
+
+    expect(states.last()).toEqual({ status: "unverified", user: { email: "b@example.com" } });
+    expect(states.states).not.toContainEqual(signedInAs("b@example.com"));
+  });
+
+  it.each([
+    ["no user", null],
+    ["no user ID", { email: "a@example.com" }],
+    ["a blank user ID", { id: " ", email: "a@example.com" }],
+  ])("a session with %s after a sign-in is verified first, and gets its ID only from the verifier", async (_, user) => {
+    const { fake, states } = await signedInAsA();
+    const tokenA2 = jwtFor("a-2", idFor("a@example.com"));
+    issuedTokens.set(tokenA2, "a@example.com");
+
+    announce(fake, forgedSession(tokenA2, user));
+    // Not the same account as far as the session can show, so A isn't kept while it's checked.
+    expect(states.last()).toEqual({ status: "loading" });
+    await settle();
+
+    expect(states.last()).toEqual(signedInAs("a@example.com"));
+  });
+
+  it.each([
+    ["no user", null],
+    ["no user ID", { email: "a@example.com" }],
+  ])("a session with %s after a sign-in, while offline, is unverified and has no ID", async (_, user) => {
+    let online = true;
+    const verify = (token: string) => (online ? serverCheck(token) : Promise.resolve<TokenCheck>({ status: "unreachable" }));
+    const { fake, states } = await signedInAsA(verify);
+    online = false;
+
+    announce(fake, forgedSession(jwtFor("a-2", idFor("a@example.com")), user));
+    await settle();
+
+    expect(states.last()?.status).toBe("unverified");
+    expect(states.last()).not.toHaveProperty("user.id");
+  });
+
+  it("a refreshed token for the same account keeps the account shown while it's checked", async () => {
+    const { fake, states } = await signedInAsA();
+    const shown = states.states.length;
+
+    announce(fake, session(jwtFor("a-2", idFor("a@example.com")), "a@example.com"), "TOKEN_REFRESHED");
+    expect(states.states).toHaveLength(shown);
+    await settle();
+
+    expect(states.states.slice(shown)).toEqual([signedInAs("a@example.com")]);
+  });
+
+  it("a refreshed token for the same account keeps the account through an outage, and is checked again later", async () => {
+    let online = true;
+    const verify = vi.fn((token: string) => (online ? serverCheck(token) : Promise.resolve<TokenCheck>({ status: "unreachable" })));
+    const { fake, states } = await signedInAsA(verify);
+    const shown = states.states.length;
+    online = false;
+
+    const refreshed = session(jwtFor("a-2", idFor("a@example.com")), "a@example.com");
+    announce(fake, refreshed, "TOKEN_REFRESHED");
+    await settle();
+    expect(states.states).toHaveLength(shown);
+    expect(states.last()).toEqual(signedInAs("a@example.com"));
+
+    // Shown again once the connection is back: the new token is checked this time.
+    online = true;
+    fake.emit("SIGNED_IN", refreshed);
+    await settle();
+    expect(verify).toHaveBeenLastCalledWith(refreshed.access_token);
+    expect(states.last()).toEqual(signedInAs("a@example.com"));
+  });
+
+  it("a refreshed token for the same account that the server rejects ends the session", async () => {
+    const { fake, states } = await signedInAsA();
+
+    announce(fake, forgedSession(jwtFor("a-forged", idFor("a@example.com")), { id: idFor("a@example.com"), email: "a@example.com" }), "TOKEN_REFRESHED");
+    await settle();
+
+    expect(states.last()).toEqual({ status: "session-ended", user: { email: "a@example.com" } });
+    expect(fake.client.signOut).not.toHaveBeenCalled();
+  });
+
+  it("another account's real sign-in switches to that account once verified", async () => {
+    const { fake, states } = await signedInAsA();
+    const shown = states.states.length;
+
+    fake.signInElsewhere("token-b", "b@example.com");
+    await settle();
+
+    expect(states.states.slice(shown)).toEqual([{ status: "loading" }, signedInAs("b@example.com")]);
+  });
+
+  it("a newer sign-out wins over a check still running for an announced session", async () => {
+    const check = deferred<TokenCheck>();
+    const verify = (token: string) => (token === "token-b" ? check.promise : serverCheck(token));
+    const { fake, states } = await signedInAsA(verify);
+
+    fake.signInElsewhere("token-b", "b@example.com");
+    fake.signOutElsewhere();
+    check.resolve({ status: "valid", userId: idFor("b@example.com"), email: "b@example.com" });
+    await settle();
+
+    expect(states.last()).toEqual({ status: "signed-out" });
+    expect(states.states).not.toContainEqual(signedInAs("b@example.com"));
+  });
+
+  it("an announced session that can't be read back is never shown as signed in", async () => {
+    const { fake, states } = await signedInAsA();
+    fake.client.getSession.mockImplementation(async () => { throw new Error("bug"); });
+
+    fake.signInElsewhere("token-b", "b@example.com");
+    await settle();
+
+    // As on startup, a session that can't be read counts as none.
+    expect(states.last()).toEqual({ status: "signed-out" });
+    expect(states.states).not.toContainEqual(signedInAs("b@example.com"));
+  });
+});
+
 describe("verifying a symmetric (HS256) token", () => {
   const hsToken = `${Buffer.from(JSON.stringify({ alg: "HS256", typ: "JWT" })).toString("base64url")}.e30.sig`;
 
   it("asks /auth/v1/user directly with the publishable key, and never uses getClaims", async () => {
-    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ email: "mira@example.com" }), { status: 200 }));
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ id: idFor("mira@example.com"), email: "mira@example.com" }), { status: 200 }));
     const fake = createFakeAuth(null);
 
-    expect(await createTokenVerifier(fake.client, config, { fetch: fetchMock })(hsToken)).toEqual({ status: "valid", email: "mira@example.com" });
+    expect(await createTokenVerifier(fake.client, config, { fetch: fetchMock })(hsToken)).toEqual({ status: "valid", userId: idFor("mira@example.com"), email: "mira@example.com" });
     const [url, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
     expect(url).toBe(`${projectUrl}/auth/v1/user`);
     expect(init.headers).toEqual({ apikey: "sb_publishable_test", authorization: `Bearer ${hsToken}` });
     expect(fake.client.getClaims).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["no ID", { email: "mira@example.com" }],
+    ["a blank ID", { id: "", email: "mira@example.com" }],
+    ["an ID that isn't text", { id: 7, email: "mira@example.com" }],
+  ])("reports a reply with %s as having no verified ID", async (_, body) => {
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify(body), { status: 200 }));
+    expect(await createTokenVerifier(createFakeAuth(null).client, config, { fetch: fetchMock })(hsToken)).toEqual({
+      status: "valid",
+      userId: null,
+      email: "mira@example.com",
+    });
   });
 
   it.each([
@@ -553,7 +906,7 @@ async function createSigningKey(kid: string) {
 
 describe("verifying an asymmetric (ES256) token", () => {
   const claims = () => ({
-    sub: "user-1",
+    sub: idFor("mira@example.com"),
     email: "mira@example.com",
     role: "authenticated",
     aud: "authenticated",
@@ -588,7 +941,7 @@ describe("verifying an asymmetric (ES256) token", () => {
     const verifierFetch = jwksFetch(() => new Response(JSON.stringify({ keys: [key.publicJwk] }), { status: 200 }));
 
     expect(canVerifyLocally(token)).toBe(true);
-    expect(await createTokenVerifier(real.auth, config, { fetch: verifierFetch })(token)).toEqual({ status: "valid", email: "mira@example.com" });
+    expect(await createTokenVerifier(real.auth, config, { fetch: verifierFetch })(token)).toEqual({ status: "valid", userId: idFor("mira@example.com"), email: "mira@example.com" });
     expect(verifierFetch).toHaveBeenCalledTimes(1);
     expect(real.clientFetch).not.toHaveBeenCalled();
   });
@@ -652,10 +1005,10 @@ describe("verifying an asymmetric (ES256) token", () => {
     const key = await createSigningKey("key-1");
     const token = await key.sign(claims());
     vi.stubGlobal("crypto", undefined);
-    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ email: "mira@example.com" }), { status: 200 }));
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ id: idFor("mira@example.com"), email: "mira@example.com" }), { status: 200 }));
     const fake = createFakeAuth(null);
 
-    expect(await createTokenVerifier(fake.client, config, { fetch: fetchMock })(token)).toEqual({ status: "valid", email: "mira@example.com" });
+    expect(await createTokenVerifier(fake.client, config, { fetch: fetchMock })(token)).toEqual({ status: "valid", userId: idFor("mira@example.com"), email: "mira@example.com" });
     expect(fake.client.getClaims).not.toHaveBeenCalled();
   });
 });
