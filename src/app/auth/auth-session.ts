@@ -308,6 +308,8 @@ async function readCurrentAccessToken(client: Pick<AuthClient, "getSession">): P
 export async function checkStoredSession(
   client: Pick<AuthClient, "getSession">,
   verify: VerifyToken,
+  /** Told which token is about to be checked, before the check starts. */
+  onChecking?: (token: string) => void,
 ): Promise<StoredSessionCheck> {
   let session: Awaited<ReturnType<AuthClient["getSession"]>>["data"]["session"];
   try {
@@ -320,6 +322,7 @@ export async function checkStoredSession(
   }
 
   const token = session.access_token;
+  onChecking?.(token);
   const check = await verify(token);
   if ((await readCurrentAccessToken(client)) !== token) return { status: "superseded" };
 

@@ -373,6 +373,98 @@ describe("restoring while a sign-in or sign-out happens", () => {
   });
 });
 
+describe("the same session announced again, as when a tab is shown again", () => {
+  /** A rejected session, then whatever the test does next. */
+  async function endedSession() {
+    const fake = createFakeAuth(session("old-token", "old@example.com"));
+    const states = track();
+    const controller = createAuthController(fake.client, async () => ({ status: "rejected" }), states.onChange);
+    fake.emit("INITIAL_SESSION", fake.current);
+    await controller.restored;
+    expect(states.last()).toEqual({ status: "session-ended", user: { email: "old@example.com" } });
+    return { fake, states, controller };
+  }
+
+  it("rejected, tab hidden, tab visible, same-token SIGNED_IN: stays ended", async () => {
+    const { fake, states } = await endedSession();
+
+    // supabase-js re-announces the unchanged stored session each time the tab becomes visible.
+    fake.emit("SIGNED_IN", fake.current);
+    fake.emit("SIGNED_IN", fake.current);
+
+    expect(states.last()).toEqual({ status: "session-ended", user: { email: "old@example.com" } });
+    expect(states.states.some((state) => state.status === "signed-in")).toBe(false);
+    expect(fake.client.signOut).not.toHaveBeenCalled();
+    expect(fake.current?.access_token).toBe("old-token");
+  });
+
+  it("the same token announced while it is still being checked doesn't count as signed in", async () => {
+    const fake = createFakeAuth(session("old-token", "old@example.com"));
+    const check = deferred<TokenCheck>();
+    const states = track();
+    const controller = createAuthController(fake.client, () => check.promise, states.onChange);
+    fake.emit("INITIAL_SESSION", fake.current);
+    await settle();
+
+    fake.emit("SIGNED_IN", fake.current);
+    expect(states.states).toEqual([]);
+    check.resolve({ status: "rejected" });
+    await controller.restored;
+
+    expect(states.states).toEqual([{ status: "session-ended", user: { email: "old@example.com" } }]);
+  });
+
+  it("a new sign-in after the rejection signs in", async () => {
+    const { fake, states } = await endedSession();
+
+    fake.signInElsewhere("new-token", "new@example.com");
+
+    expect(states.last()).toEqual({ status: "signed-in", user: { email: "new@example.com" } });
+    // And that new session, announced again, stays signed in.
+    fake.emit("SIGNED_IN", fake.current);
+    expect(states.last()).toEqual({ status: "signed-in", user: { email: "new@example.com" } });
+  });
+
+  it("a refresh the server accepted, with a new token, signs in", async () => {
+    const { fake, states } = await endedSession();
+
+    fake.replaceQuietly(session("refreshed-token", "old@example.com"));
+    fake.emit("TOKEN_REFRESHED", fake.current);
+
+    expect(states.last()).toEqual({ status: "signed-in", user: { email: "old@example.com" } });
+  });
+
+  it("another tab signing out, then signing in again, is followed", async () => {
+    const { fake, states } = await endedSession();
+
+    fake.signOutElsewhere();
+    expect(states.last()).toEqual({ status: "signed-out" });
+    fake.signInElsewhere("tab-b-token", "b@example.com");
+    expect(states.last()).toEqual({ status: "signed-in", user: { email: "b@example.com" } });
+  });
+
+  it("an explicit sign-out from the ended state still works", async () => {
+    const { fake, states, controller } = await endedSession();
+
+    expect(await controller.signOut()).toEqual({ ok: true });
+
+    expect(fake.client.signOut).toHaveBeenCalledWith({ scope: "local" });
+    expect(states.last()).toEqual({ status: "signed-out" });
+  });
+
+  it("a valid session announced again stays signed in", async () => {
+    const fake = createFakeAuth(session("good-token", "mira@example.com"));
+    const states = track();
+    const controller = createAuthController(fake.client, async () => ({ status: "valid", email: "mira@example.com" }), states.onChange);
+    fake.emit("INITIAL_SESSION", fake.current);
+    await controller.restored;
+
+    fake.emit("SIGNED_IN", fake.current);
+
+    expect(states.last()).toEqual({ status: "signed-in", user: { email: "mira@example.com" } });
+  });
+});
+
 describe("checking the stored session", () => {
   it("reports no session, an ended one, and a valid one", async () => {
     const none = createFakeAuth(null);

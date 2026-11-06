@@ -231,3 +231,79 @@ test.describe("Expired sessions", () => {
     expect(await storedAccessToken(page)).toBe(refreshed.access_token);
   });
 });
+
+/** Hides the tab, then shows it again, the way switching tabs does. supabase-js re-announces its session on "visible". */
+async function hideAndShowTab(page: Page) {
+  for (const state of ["hidden", "visible"] as const) {
+    await page.evaluate((visibility) => {
+      Object.defineProperty(document, "visibilityState", { configurable: true, get: () => visibility });
+      Object.defineProperty(document, "hidden", { configurable: true, get: () => visibility === "hidden" });
+      window.dispatchEvent(new Event("visibilitychange"));
+      document.dispatchEvent(new Event("visibilitychange"));
+    }, state);
+  }
+}
+
+test.describe("Returning to a tab after a sign-in has ended", () => {
+  async function endSignIn(page: Page, auth: FakeAuth) {
+    const session = fakeSession(TEST_EMAIL);
+    auth.reply("POST /verify", { status: 200, body: session });
+    await openApp(page, SIGN_IN_LINK);
+    await page.getByRole("button", { name: "Finish signing in" }).click();
+    await expect(accountSection(page)).toContainText(`Signed in as ${TEST_EMAIL}`);
+    auth.reply("GET /user", { status: 403, body: authError("user_not_found", "User from sub claim in JWT does not exist") });
+    await reloadApp(page);
+    await expect(accountSection(page)).toContainText(`Your sign-in for ${TEST_EMAIL} has ended`);
+    return session;
+  }
+
+  test("the same rejected session re-announced when the tab is shown again stays ended", async ({ page }) => {
+    const auth = await useFakeAuth(page);
+    const session = await endSignIn(page, auth);
+
+    await hideAndShowTab(page);
+    await page.waitForTimeout(500);
+    await hideAndShowTab(page);
+    await page.waitForTimeout(500);
+
+    await expect(accountSection(page)).toContainText(`Your sign-in for ${TEST_EMAIL} has ended`);
+    await expect(accountSection(page)).not.toContainText("Signed in as");
+    expect(await storedAccessToken(page)).toBe(session.access_token);
+    expect(authRequests(auth, "POST /logout")).toHaveLength(0);
+  });
+
+  test("a new sign-in after the old one ended still signs in", async ({ page }) => {
+    const auth = await useFakeAuth(page);
+    await endSignIn(page, auth);
+    const newSession = fakeSession(NEW_EMAIL);
+    auth.reply("POST /verify", { status: 200, body: newSession });
+    auth.reply("GET /user", { status: 200, body: fakeUser(NEW_EMAIL) });
+
+    await openApp(page, SIGN_IN_LINK);
+    await page.getByRole("button", { name: "Finish signing in" }).click();
+
+    await expect(accountSection(page)).toContainText(`Signed in as ${NEW_EMAIL}`);
+    expect(await storedAccessToken(page)).toBe(newSession.access_token);
+    await hideAndShowTab(page);
+    await page.waitForTimeout(500);
+    await expect(accountSection(page)).toContainText(`Signed in as ${NEW_EMAIL}`);
+  });
+
+  test("another tab's new sign-in replaces the ended session here too", async ({ page }) => {
+    const auth = await useFakeAuth(page);
+    await endSignIn(page, auth);
+
+    const otherTab = await page.context().newPage();
+    const otherAuth = await useFakeAuth(otherTab);
+    const newSession = fakeSession(NEW_EMAIL);
+    otherAuth.reply("POST /verify", { status: 200, body: newSession });
+    otherAuth.reply("GET /user", { status: 200, body: fakeUser(NEW_EMAIL) });
+    await openApp(otherTab, SIGN_IN_LINK);
+    await otherTab.getByRole("button", { name: "Finish signing in" }).click();
+    await expect(accountSection(otherTab)).toContainText(`Signed in as ${NEW_EMAIL}`);
+
+    await expect(accountSection(page)).toContainText(`Signed in as ${NEW_EMAIL}`);
+    expect(await storedAccessToken(page)).toBe(newSession.access_token);
+    await otherTab.close();
+  });
+});

@@ -68,6 +68,11 @@ export function createAuthController(
   // supabase-js announces the stored session as SIGNED_IN while it starts up, before anyone has checked
   // it. Those announcements end with INITIAL_SESSION, and the check below decides instead.
   let startedUp = false;
+  // Tokens nobody has vouched for: the one being checked right now, and the one the check rejected.
+  // supabase-js re-announces the stored session as SIGNED_IN whenever the tab becomes visible again, so
+  // an event carrying one of these tokens isn't a new session and must not mark the player signed in.
+  let checkingToken: string | null = null;
+  let rejectedToken: string | null = null;
 
   const set = (state: AuthState) => {
     if (!disposed) onChange(state);
@@ -83,11 +88,17 @@ export function createAuthController(
 
     if (event === "SIGNED_OUT" || !session) {
       generation += 1;
+      rejectedToken = null;
       set({ status: "signed-out" });
       return;
     }
+    // The same unverified session announced again (for example, the tab was shown again): nothing changed.
+    if (session.access_token === checkingToken || session.access_token === rejectedToken) return;
+
     if (event === "SIGNED_IN" || event === "TOKEN_REFRESHED" || event === "USER_UPDATED") {
+      // A different token: a new sign-in, a refresh the server accepted, or another tab's session.
       generation += 1;
+      rejectedToken = null;
       set({ status: "signed-in", user: { email: session.user.email ?? null } });
     }
   });
@@ -96,7 +107,8 @@ export function createAuthController(
     // A session that keeps changing mid-check is re-checked, a few times at most.
     for (let attempt = 0; attempt < 3; attempt += 1) {
       const startedAt = generation;
-      const result = await checkStoredSession(client, verify);
+      const result = await checkStoredSession(client, verify, (token) => { checkingToken = token; });
+      checkingToken = null;
       if (disposed || generation !== startedAt) return;
 
       switch (result.status) {
@@ -114,6 +126,7 @@ export function createAuthController(
           return;
         case "rejected":
           // Left in place on purpose: clearing it here could delete a newer session (see above).
+          rejectedToken = result.token;
           set({ status: "session-ended", user: result.user });
           return;
       }
@@ -140,6 +153,7 @@ export function createAuthController(
       const result = await signOutOfThisDevice(client);
       if (result.ok) {
         generation += 1;
+        rejectedToken = null;
         set({ status: "signed-out" });
       }
       return result;
