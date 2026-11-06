@@ -327,8 +327,41 @@ describe("automatic retries for temporary failures", () => {
     await vi.advanceTimersByTimeAsync(60 * 60 * 1000);
     expect(sent()).toEqual(["Edit 1"]);
 
-    expect(session.requestSave(edit(1))).toBe("saving");
-    expect(sent()).toEqual(["Edit 1", "Edit 1"]);
+    expect(session.requestSave(edit(1))).toBe("unchanged");
+    expect(session.requestSave(edit(2))).toBe("saving");
+    expect(sent()).toEqual(["Edit 1", "Edit 2"]);
+  });
+
+  it("never retries because the same data is asked for again, as React does on every render", async () => {
+    // A listener that asks again on every change, like the quest store's save effect re-rendering
+    // after each save-status change. Before this rule, that retried forever.
+    for (const options of [{}, cloudSessionOptions]) {
+      const { session, sent, answer } = await loadedSession(options);
+      session.subscribe(() => { session.requestSave(edit(1)); });
+      session.requestSave(edit(1));
+      await vi.advanceTimersByTimeAsync(cloudSessionOptions.debounceMs);
+      await answer(failed(options === cloudSessionOptions ? "signed-out" : "storage"));
+      await vi.advanceTimersByTimeAsync(10 * 60 * 1000);
+
+      expect(sent()).toEqual(["Edit 1"]);
+      expect(session.getSnapshot()).toMatchObject({ status: "error", failedAttempts: 1 });
+    }
+  });
+
+  it("asking again during automatic retries doesn't restart their count", async () => {
+    const { session, sent, answer } = await loadedSession();
+    session.subscribe(() => { session.requestSave(edit(1)); });
+    session.requestSave(edit(1));
+    await vi.advanceTimersByTimeAsync(cloudSessionOptions.debounceMs);
+    for (const delay of cloudSessionOptions.retryDelaysMs) {
+      await answer(failed("network"));
+      await vi.advanceTimersByTimeAsync(delay);
+    }
+    await answer(failed("network"));
+    await vi.advanceTimersByTimeAsync(60 * 60 * 1000);
+
+    expect(sent()).toHaveLength(1 + cloudSessionOptions.retryDelaysMs.length);
+    expect(session.getSnapshot()).toMatchObject({ status: "error", nextRetryAt: null });
   });
 });
 
@@ -403,7 +436,7 @@ describe("conflicts stop saving until the player reloads", () => {
 
     const outcome = await session.reload(base);
 
-    expect(outcome).toEqual({ status: "ready", data: edit(100), discardedUnsavedChanges: true });
+    expect(outcome).toEqual({ status: "ready", data: edit(100), discardedUnsavedChanges: true, cancelled: false });
     expect(storage.load).toHaveBeenCalledTimes(2);
     expect(session.getSnapshot()).toEqual({ status: "saved", hasUnsavedChanges: false });
     expect(session.requestSave(edit(100))).toBe("unchanged");
@@ -435,7 +468,7 @@ describe("conflicts stop saving until the player reloads", () => {
   it("reload after a failed load tries loading again", async () => {
     const { session } = await loadedSession(cloudSessionOptions, [{ status: "failed", data: base, problem: "network" }, ready]);
 
-    expect(await session.reload(base)).toEqual({ status: "ready", data: base, discardedUnsavedChanges: false });
+    expect(await session.reload(base)).toEqual({ status: "ready", data: base, discardedUnsavedChanges: false, cancelled: false });
     expect(session.status).toBe("ready");
   });
 });
@@ -559,7 +592,202 @@ describe("closing: an old session never affects the next account", () => {
     const { session, storage } = await loadedSession();
     session.close();
 
-    expect(await session.reload(base)).toEqual({ status: "failed", data: base, problem: "identity-changed", discardedUnsavedChanges: false });
+    expect(await session.reload(base)).toEqual({ status: "failed", data: base, problem: "identity-changed", discardedUnsavedChanges: false, cancelled: true });
     expect(storage.load).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("conflict backups describe the newest unsaved change exactly (Codex Step 4 finding 1)", () => {
+  /** Edit 1 is being written; the test decides what happens meanwhile, then the write conflicts. */
+  async function conflictWhileWriting(backup: "saved" | "failed", meanwhile: (session: ReturnType<typeof createGameDataSession>) => void = () => {}) {
+    const env = await loadedSession();
+    env.session.requestSave(edit(1));
+    await vi.advanceTimersByTimeAsync(cloudSessionOptions.debounceMs);
+    meanwhile(env.session);
+    await env.answer({ status: "conflict", backup });
+    return env;
+  }
+
+  it("reports saved when the backup holds exactly the newest change", async () => {
+    const { session } = await conflictWhileWriting("saved");
+
+    expect(session.getSnapshot()).toEqual({ status: "conflict", backup: "saved", hasUnsavedChanges: true });
+    expect(session.getUnsavedData()).toEqual(edit(1));
+  });
+
+  it("reports outdated when a newer change was queued while the conflicting write was running", async () => {
+    const { session, sent } = await conflictWhileWriting("saved", (s) => {
+      expect(s.requestSave(edit(2))).toBe("queued");
+    });
+
+    expect(session.getSnapshot()).toEqual({ status: "conflict", backup: "outdated", hasUnsavedChanges: true });
+    // The queued change was never written, and is still kept.
+    expect(sent()).toEqual(["Edit 1"]);
+    expect(session.getUnsavedData()).toEqual(edit(2));
+  });
+
+  it("becomes outdated when changes are made after the conflict, and saved again only for that exact data", async () => {
+    const { session } = await conflictWhileWriting("saved");
+    const seen: string[] = [];
+    session.subscribe(() => {
+      const snapshot = session.getSnapshot();
+      if (snapshot.status === "conflict") seen.push(snapshot.backup);
+    });
+
+    session.requestSave(edit(2));
+    expect(session.getSnapshot()).toEqual({ status: "conflict", backup: "outdated", hasUnsavedChanges: true });
+    expect(session.getUnsavedData()).toEqual(edit(2));
+
+    session.requestSave(edit(3));
+    expect(session.getSnapshot()).toMatchObject({ backup: "outdated" });
+    expect(session.getUnsavedData()).toEqual(edit(3));
+
+    // Back to exactly what the backup holds.
+    session.requestSave(edit(1));
+    expect(session.getSnapshot()).toMatchObject({ backup: "saved" });
+    expect(seen).toEqual(["outdated", "saved"]);
+  });
+
+  it("stays failed whatever changes follow when the backup couldn't be made", async () => {
+    const { session } = await conflictWhileWriting("failed", (s) => { s.requestSave(edit(2)); });
+
+    expect(session.getSnapshot()).toMatchObject({ status: "conflict", backup: "failed" });
+    session.requestSave(edit(1));
+    expect(session.getSnapshot()).toMatchObject({ backup: "failed" });
+  });
+
+  it("flush in a conflict reports the conflict and the unsaved change, writing nothing", async () => {
+    const { session, sent } = await conflictWhileWriting("saved");
+    session.requestSave(edit(2));
+
+    expect(await session.flush()).toEqual({ status: "conflict", backup: "outdated", hasUnsavedChanges: true });
+    expect(sent()).toEqual(["Edit 1"]);
+  });
+});
+
+describe("closing during a reload (Codex Step 4 finding 2)", () => {
+  it("start reload, close, let the in-flight save fail: unsaved data stays and the session stays closed", async () => {
+    const { session, storage, answer, seen } = await loadedSession();
+    session.requestSave(edit(1));
+    await vi.advanceTimersByTimeAsync(cloudSessionOptions.debounceMs);
+
+    const reloading = session.reload(base);
+    session.close();
+    seen.length = 0;
+    await answer(failed("network"));
+    const outcome = await reloading;
+
+    expect(outcome).toEqual({ status: "failed", data: base, problem: "identity-changed", discardedUnsavedChanges: false, cancelled: true });
+    expect(session.getUnsavedData()).toEqual(edit(1));
+    expect(session.getSnapshot()).toEqual({ status: "closed", problem: "identity-changed", hasUnsavedChanges: true });
+    expect(storage.load).toHaveBeenCalledTimes(1);
+    expect(seen).toEqual([]);
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(storage.save).toHaveBeenCalledTimes(1);
+  });
+
+  it("closing while the reload's read is running keeps unsaved data and never applies the read", async () => {
+    let finishReload: (result: GameStorageLoadResult) => void = () => {};
+    const controlled = controlledStorage();
+    const load = vi.mocked(controlled.storage.load);
+    load.mockImplementationOnce(async () => ready)
+      .mockImplementationOnce(() => new Promise((resolve) => { finishReload = resolve; }));
+    const session = createGameDataSession(controlled.storage, cloudSessionOptions);
+    await session.load(base);
+    session.requestSave(edit(1));
+    await vi.advanceTimersByTimeAsync(cloudSessionOptions.debounceMs);
+    await controlled.answer({ status: "conflict", backup: "saved" });
+
+    const reloading = session.reload(base);
+    await vi.advanceTimersByTimeAsync(0);
+    session.close();
+    finishReload({ status: "ready", data: edit(100), storedText: JSON.stringify(edit(100)) });
+
+    expect(await reloading).toMatchObject({ status: "failed", data: base, cancelled: true, discardedUnsavedChanges: false });
+    expect(session.getUnsavedData()).toEqual(edit(1));
+    expect(session.getSnapshot()).toEqual({ status: "closed", problem: "identity-changed", hasUnsavedChanges: true });
+  });
+
+  it("a reload that fails to read keeps the unsaved changes", async () => {
+    const env = await loadedSession(cloudSessionOptions, [ready, { status: "failed", data: base, problem: "network" }]);
+    env.session.requestSave(edit(1));
+    await vi.advanceTimersByTimeAsync(cloudSessionOptions.debounceMs);
+    await env.answer({ status: "conflict", backup: "failed" });
+
+    const outcome = await env.session.reload(base);
+
+    expect(outcome).toEqual({ status: "failed", data: base, problem: "network", discardedUnsavedChanges: false, cancelled: false });
+    expect(env.session.getUnsavedData()).toEqual(edit(1));
+    expect(env.session.getSnapshot()).toEqual({ status: "load-failed", problem: "network", hasUnsavedChanges: true });
+  });
+
+  it("a reload replaced by a newer one is cancelled and changes nothing", async () => {
+    const resolvers: Array<(result: GameStorageLoadResult) => void> = [];
+    const controlled = controlledStorage();
+    vi.mocked(controlled.storage.load)
+      .mockImplementationOnce(async () => ready)
+      .mockImplementation(() => new Promise((resolve) => { resolvers.push(resolve); }));
+    const session = createGameDataSession(controlled.storage, cloudSessionOptions);
+    await session.load(base);
+
+    const first = session.reload(base);
+    await vi.advanceTimersByTimeAsync(0);
+    const second = session.reload(base);
+    await vi.advanceTimersByTimeAsync(0);
+    resolvers[1]({ status: "ready", data: edit(2), storedText: JSON.stringify(edit(2)) });
+    resolvers[0]({ status: "ready", data: edit(1), storedText: JSON.stringify(edit(1)) });
+
+    expect(await second).toMatchObject({ status: "ready", data: edit(2), cancelled: false });
+    expect(await first).toMatchObject({ status: "failed", data: base, cancelled: true });
+    expect(session.requestSave(edit(2))).toBe("unchanged");
+  });
+
+  it("an initial load that finishes after closing hands out the fallback, never the stale save", async () => {
+    let finishLoad: (result: GameStorageLoadResult) => void = () => {};
+    const storage: GameStorage = {
+      load: vi.fn(() => new Promise<GameStorageLoadResult>((resolve) => { finishLoad = resolve; })),
+      save: vi.fn(),
+    };
+    const session = createGameDataSession(storage, cloudSessionOptions);
+    const loading = session.load(base);
+
+    session.close();
+    finishLoad({ status: "ready", data: edit(9), storedText: JSON.stringify(edit(9)) });
+
+    expect(await loading).toEqual({ status: "failed", data: base, problem: "identity-changed" });
+  });
+});
+
+describe("a load that closes the session announces it (Codex Step 4 finding 3)", () => {
+  it("tells subscribers once that the session closed, then nothing more", async () => {
+    const controlled = controlledStorage([{ status: "failed", data: base, problem: "identity-changed" }]);
+    const session = createGameDataSession(controlled.storage, cloudSessionOptions);
+    const listener = vi.fn(() => session.getSnapshot());
+    session.subscribe(listener);
+
+    await session.load(base);
+
+    expect(listener).toHaveBeenCalledTimes(1);
+    expect(listener.mock.results[0].value).toEqual({ status: "closed", problem: "identity-changed", hasUnsavedChanges: false });
+    session.requestSave(edit(1));
+    session.close();
+    await session.reload(base);
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(listener).toHaveBeenCalledTimes(1);
+    expect(controlled.storage.load).toHaveBeenCalledTimes(1);
+  });
+
+  it("matches close(): the same final snapshot, and later subscribers hear nothing", async () => {
+    const closedByLoad = createGameDataSession(controlledStorage([{ status: "failed", data: base, problem: "identity-changed" }]).storage, cloudSessionOptions);
+    await closedByLoad.load(base);
+    const closedByCall = createGameDataSession(controlledStorage().storage, cloudSessionOptions);
+    await closedByCall.load(base);
+    closedByCall.close("identity-changed");
+
+    expect(closedByLoad.getSnapshot()).toEqual(closedByCall.getSnapshot());
+    const late = vi.fn();
+    closedByLoad.subscribe(late);
+    closedByLoad.close();
+    expect(late).not.toHaveBeenCalled();
   });
 });

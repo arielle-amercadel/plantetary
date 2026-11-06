@@ -22,7 +22,10 @@ import {
 } from "../settings-logic";
 
 export default function SettingsPage() {
-  const { totalXp, getDataForExport, hasRestored } = useQuestStore();
+  const { totalXp, getDataForExport, hasRestored, storage } = useQuestStore();
+  // Reset clears this browser only. For a cloud garden it would look like a reset but change nothing
+  // saved to the account, so it's turned off until cloud resets exist (Stage 10).
+  const resetUnavailable = storage.mode === "cloud";
   const [profile, setProfile] = useState<ProfilePreferences>(defaultProfilePreferences);
   const [reminders, setReminders] = useState<ReminderPreferences>(defaultReminderPreferences);
   const [displayName, setDisplayName] = useState(defaultProfilePreferences.displayName);
@@ -119,6 +122,7 @@ export default function SettingsPage() {
   }
 
   function resetData() {
+    if (resetUnavailable) return;
     const confirmed = window.confirm(
       "Reset Plantetary data on this device? This removes your quests, categories, completion history, XP records, plant discoveries, profile and reminder preferences, and Plantetary backup copies. This cannot be undone. Other websites’ browser data will not be touched.",
     );
@@ -254,12 +258,13 @@ export default function SettingsPage() {
           <h2 id="settings-data-heading">Data management</h2>
           <p className="settings-description">
             Export includes your quests, custom categories, completion history, XP ledger, discoveries, and local preferences. Reset removes Plantetary data and its safety backups from this device.
+            {resetUnavailable && " Your garden is saved to your account, which Reset can't change yet, so it's turned off while you're using your cloud garden."}
           </p>
           <div className="settings-form-row">
             <button className="settings-action-button" type="button" disabled={!hasRestored} onClick={exportData}>
               Export data as JSON
             </button>
-            <button className="settings-reset-button" type="button" onClick={resetData}>
+            <button className="settings-reset-button" type="button" disabled={resetUnavailable} onClick={resetData}>
               Reset Plantetary data
             </button>
           </div>

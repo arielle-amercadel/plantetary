@@ -1,6 +1,7 @@
 "use client";
 
 import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from "react";
+import type { SupabaseClient } from "@supabase/supabase-js";
 import { createAuthController, type AuthController, type AuthState } from "./auth-controller";
 import {
   createTokenVerifier,
@@ -20,6 +21,8 @@ type AuthContextValue = {
   sendMagicLink: (email: string) => Promise<MagicLinkResult>;
   completeSignIn: (link: Extract<ConfirmLink, { kind: "token-hash" | "code" }>) => Promise<FinishSignInResult>;
   signOut: () => Promise<SignOutResult>;
+  /** The browser's Supabase client for this project, or null if sign-in isn't set up. The same one auth uses. */
+  getSupabaseClient: () => SupabaseClient | null;
 };
 
 const AuthContext = createContext<AuthContextValue | null>(null);
@@ -31,7 +34,8 @@ function createReadySignal() {
 }
 
 /**
- * Kept apart from the quest store on purpose: nothing here reads, writes or resets game saves.
+ * Kept apart from the quest store on purpose: nothing here reads, writes or resets game saves. The quest
+ * store reads `auth` (and the shared client) to decide where the game save lives.
  *
  * `config` comes from the root layout, which checks it on the server first (see server-config.ts).
  */
@@ -85,8 +89,10 @@ export function AuthProvider({ config, children }: { config: SupabaseBrowserConf
     return controller.signOut();
   }, [ready]);
 
+  const getSupabaseClient = useCallback(() => getSupabaseBrowserClient(config), [config]);
+
   return (
-    <AuthContext.Provider value={{ auth, sendMagicLink, completeSignIn, signOut }}>
+    <AuthContext.Provider value={{ auth, sendMagicLink, completeSignIn, signOut, getSupabaseClient }}>
       {children}
     </AuthContext.Provider>
   );

@@ -10,14 +10,14 @@ import {
   storedAccessToken,
   useFakeAuth,
   type FakeAuth,
+  openApp,
+  reloadApp,
 } from "./auth-support";
 import {
   QUEST_SAVE_KEY,
   completeQuest,
   expect,
   expectHomeXp,
-  openApp,
-  reloadApp,
   test,
 } from "./support";
 
@@ -299,7 +299,8 @@ test.describe("Guest progress is never touched", () => {
     const before = await readGameStorage(page);
     await action();
     expect(await readGameStorage(page)).toEqual(before);
-    expect(auth.requests.every((request) => !request.url().includes("/rest/v1/"))).toBe(true);
+    // Signing in may read the account's cloud save, but it never writes or uploads anything.
+    expect(auth.requests.filter((request) => request.url().includes("/rest/v1/") && request.method() !== "GET")).toEqual([]);
   }
 
   test("signing in and out leaves every game save and backup byte-for-byte the same", async ({ page }) => {
@@ -309,7 +310,10 @@ test.describe("Guest progress is never touched", () => {
     expect(save).toBeTruthy();
 
     await checkAround(page, auth, () => signIn(page));
-    await expectGuestProgress(page);
+    // The account has no cloud save, so it asks first, and the browser save is left alone.
+    await openApp(page);
+    await expect(page.getByRole("region", { name: "Start your cloud garden?" })).toBeVisible();
+    expect(await page.evaluate((key) => window.localStorage.getItem(key), QUEST_SAVE_KEY)).toBe(save);
 
     await openApp(page, "/settings");
     await checkAround(page, auth, async () => {
@@ -332,15 +336,18 @@ test.describe("Guest progress is never touched", () => {
     await expectGuestProgress(page);
   });
 
-  test("playing while signed in saves to this browser exactly as a guest does", async ({ page }) => {
+  test("choosing to play on this device while signed in saves to this browser exactly as a guest does", async ({ page }) => {
     const auth = await useFakeAuth(page);
     await signIn(page);
     await openApp(page);
+    await page.getByRole("button", { name: "Keep playing on this device" }).click();
 
     await completeQuest(page, "Drink a glass of water");
     await expectHomeXp(page, 5);
     await reloadApp(page);
     await expectHomeXp(page, 5);
-    expect(auth.requests.every((request) => request.url().includes("/auth/v1/"))).toBe(true);
+    // Nothing was written to the account: only its (missing) cloud save was read, once per load.
+    expect(auth.requests.filter((request) => request.url().includes("/rest/v1/") && request.method() !== "GET")).toEqual([]);
+    expect(JSON.parse((await page.evaluate((key) => window.localStorage.getItem(key), QUEST_SAVE_KEY)) ?? "{}").legacyXpBonus ?? 0).toBe(0);
   });
 });

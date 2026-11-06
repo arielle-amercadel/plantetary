@@ -1,3 +1,4 @@
+import { AuthApiError, AuthRetryableFetchError } from "@supabase/supabase-js";
 import { describe, expect, it, vi } from "vitest";
 import type { AuthState } from "../src/app/auth/auth-controller";
 import {
@@ -1076,5 +1077,67 @@ describe("describeCloudError", () => {
     [`something else: ${messages.formatGuard(6, 5)}`, "rejected"],
   ])("reads 23514 with message %j as %s", (message, problem) => {
     expect(describeCloudError({ code: "23514", message }, 400)).toBe(problem);
+  });
+});
+
+describe("a session that can't be refreshed is not an account change (Codex Stage 7 final review P1)", () => {
+  /** What supabase-js returns when the access token expired and refreshing it failed offline. */
+  const offline = () => ({ data: { session: null }, error: new AuthRetryableFetchError("Failed to fetch", 0) });
+
+  it("an offline refresh failure on save is temporary: nothing is sent, and saving works again once back online", async () => {
+    const { fake, storage } = setup();
+    fake.seed(USER_A, currentSave());
+    await storage.load(fallback);
+    const getSession = vi.mocked(fake.client.auth.getSession);
+    getSession.mockResolvedValueOnce(offline() as never).mockResolvedValueOnce(offline() as never);
+    const writes = fake.requests("quest_saves").filter((call) => call.op !== "select").length;
+
+    // Two edits made while offline: neither is sent, neither closes the storage.
+    expect(await storage.save(edited(currentSave(), 5))).toEqual({ status: "failed", problem: "network" });
+    expect(await storage.save(edited(currentSave(), 6))).toEqual({ status: "failed", problem: "network" });
+    expect(fake.requests("quest_saves").filter((call) => call.op !== "select")).toHaveLength(writes);
+
+    // Back online (the refresh works): the newest edit is saved, as a normal conditional update.
+    expect(await storage.save(edited(currentSave(), 6))).toEqual({ status: "saved" });
+    expect(fake.db.row?.data).toEqual(edited(currentSave(), 6));
+    expect(await storage.save(edited(currentSave(), 7))).toEqual({ status: "saved" });
+  });
+
+  it("an offline refresh failure on load is a network failure, and loading again works", async () => {
+    const { fake, storage } = setup();
+    fake.seed(USER_A, currentSave());
+    vi.mocked(fake.client.auth.getSession).mockResolvedValueOnce(offline() as never);
+
+    expect(await storage.load(fallback)).toMatchObject({ status: "failed", problem: "network" });
+    expect(fake.requests("quest_saves")).toEqual([]);
+    expect(await storage.load(fallback)).toMatchObject({ status: "ready", data: currentSave() });
+  });
+
+  it("a refresh the server refused isn't treated as a confirmed change either, until the session is really gone", async () => {
+    const { fake, storage } = setup();
+    fake.seed(USER_A, currentSave());
+    await storage.load(fallback);
+    vi.mocked(fake.client.auth.getSession).mockResolvedValueOnce(
+      { data: { session: null }, error: new AuthApiError("Invalid Refresh Token", 400, "refresh_token_not_found") } as never,
+    );
+
+    expect(await storage.save(edited(currentSave(), 5))).toEqual({ status: "failed", problem: "signed-out" });
+    // supabase-js then clears the session: no session and no error is a confirmed sign-out, which closes.
+    fake.setSessionUser(null);
+    expect(await storage.save(edited(currentSave(), 5))).toEqual({ status: "failed", problem: "identity-changed" });
+    fake.setSessionUser(USER_A);
+    expect(await storage.save(edited(currentSave(), 5))).toEqual({ status: "failed", problem: "identity-changed" });
+  });
+
+  it("an error never lets a request go out for another account: a token for someone else still closes", async () => {
+    const { fake, storage } = setup();
+    fake.seed(USER_A, currentSave());
+    await storage.load(fallback);
+    vi.mocked(fake.client.auth.getSession).mockResolvedValueOnce(
+      { data: { session: { access_token: tokenFor(USER_B) } }, error: new AuthRetryableFetchError("Failed to fetch", 0) } as never,
+    );
+
+    expect(await storage.save(edited(currentSave(), 5))).toEqual({ status: "failed", problem: "identity-changed" });
+    expect(fake.db.row?.data).toEqual(currentSave());
   });
 });

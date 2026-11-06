@@ -20,8 +20,8 @@ import {
  * - `unavailable`: sign-in isn't configured for this build; everyone plays as a guest.
  * - `loading`: checking a session: the saved one on startup, or a new one announced later.
  * - `signed-out`: playing as a guest.
- * - `signed-in`: signed in, verified with Supabase. Game progress is still saved only in this browser,
- *   exactly as for a guest. `user.id` is the verified Supabase user ID (`auth.uid()` in the database), and
+ * - `signed-in`: signed in, verified with Supabase. The game save can then live in the account (see
+ *   game-storage-controller.ts). `user.id` is the verified Supabase user ID (`auth.uid()` in the database), and
  *   is never empty. This is the only state with a user ID.
  * - `unverified`: a session is stored, but it couldn't be checked (usually because Supabase couldn't be
  *   reached). It's kept, and checked again when the tab is shown again, when supabase-js refreshes it, or

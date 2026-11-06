@@ -29,7 +29,10 @@ export type SaveRequestOutcome = "blocked" | "unchanged" | "saving" | "scheduled
  * - `error`: the latest change couldn't be written. `nextRetryAt` is when it's tried again on its own
  *   (a timestamp), or null if it waits for `retry()` or the next change.
  * - `conflict`: the save changed in another tab or on another device. Nothing more is written until the
- *   player chooses `reload()`. `backup` says whether the unsaved changes were kept as a backup copy.
+ *   player chooses `reload()`. `backup` describes the newest unsaved change, exactly:
+ *   - `saved`: that exact data was kept as a backup copy.
+ *   - `outdated`: a backup copy was kept, but of earlier changes; newer ones exist only on this screen.
+ *   - `failed`: the backup copy couldn't be made; the unsaved changes exist only on this screen.
  * - `closed`: this session ended (the account changed, or it was closed). Nothing more is written.
  *
  * `hasUnsavedChanges` is true whenever a change exists that storage doesn't have, in any state.
@@ -41,10 +44,16 @@ export type SaveState =
   | { status: "saved" }
   | { status: "saving" }
   | { status: "error"; problem: GameStorageProblem; failedAttempts: number; nextRetryAt: number | null }
-  | { status: "conflict"; backup: "saved" | "failed" }
+  | { status: "conflict"; backup: "saved" | "outdated" | "failed" }
   | { status: "closed"; problem: GameStorageProblem };
 
 export type SaveSnapshot = SaveState & { hasUnsavedChanges: boolean };
+
+export type ReloadOutcome = GameDataLoadOutcome & {
+  discardedUnsavedChanges: boolean;
+  /** True if this reload didn't take effect: the session closed, or a newer reload replaced it. */
+  cancelled: boolean;
+};
 
 export type GameDataSessionOptions = {
   /**
@@ -83,16 +92,24 @@ export type GameDataSession = {
   subscribe: (listener: () => void) => () => void;
   /** The newest change storage doesn't have, or null. Still available after the session closes. */
   getUnsavedData: () => StoredQuestData | null;
+  /**
+   * Only after the player chose to start a fresh save, for an account with none (`empty`): allows
+   * writing, starting from nothing. The first write creates the save; if one appeared meanwhile, storage
+   * reports a conflict rather than replacing it. Returns false in any other state.
+   */
+  beginFirstSave: () => boolean;
   /** After an error: writes the newest unsaved change now. Returns whether a write started. */
   retry: () => boolean;
   /** Writes a change waiting for the pause now, and resolves when idle (for example, before signing out). */
   flush: () => Promise<SaveSnapshot>;
   /**
    * The explicit way out of a conflict, or another try after a failed load: reads the save again and
-   * starts over from it. Unsaved changes are dropped (after a conflict, they were offered as a backup
-   * copy; see the conflict state's `backup`). `discardedUnsavedChanges` says whether any were.
+   * starts over from it. Only once that read succeeds are unsaved changes dropped (after a conflict, the
+   * conflict state's `backup` says what was kept); `discardedUnsavedChanges` says whether any were.
+   * If the session closes meanwhile, or a newer reload replaces this one, nothing changes and the
+   * outcome is `cancelled`, with the fallback data.
    */
-  reload: (fallbackData: StoredQuestData) => Promise<GameDataLoadOutcome & { discardedUnsavedChanges: boolean }>;
+  reload: (fallbackData: StoredQuestData) => Promise<ReloadOutcome>;
   /**
    * Ends the session, for example when the account changes. Nothing more is written or announced, and
    * any write already sent finishes on its own. Unsaved changes stay readable with `getUnsavedData`.
@@ -129,6 +146,8 @@ export function createGameDataSession(storage: GameStorage, options: GameDataSes
   /** Failed writes since the last new change, which limits automatic retries. */
   let failedAttempts = 0;
   let closed = false;
+  /** After a conflict: whether the conflict backup worked, and exactly which data it holds. */
+  let conflictBackup: { result: "saved" | "failed"; text: string } | undefined;
   let state: SaveState = { status: "loading" };
   let snapshot: SaveSnapshot = { ...state, hasUnsavedChanges: false };
   const listeners = new Set<() => void>();
@@ -145,6 +164,8 @@ export function createGameDataSession(storage: GameStorage, options: GameDataSes
 
   /** Updates the snapshot and tells listeners, if anything they can see changed. */
   function publish(next: SaveState = state) {
+    // The backup is described against the newest unsaved change, which may have moved on since.
+    if (next.status === "conflict") next = { status: "conflict", backup: describeConflictBackup() };
     state = next;
     const nextSnapshot: SaveSnapshot = { ...next, hasUnsavedChanges: Boolean(unsavedChange()) };
     const same = Object.keys(nextSnapshot).length === Object.keys(snapshot).length &&
@@ -160,6 +181,15 @@ export function createGameDataSession(storage: GameStorage, options: GameDataSes
     }
   }
 
+  function describeConflictBackup(): "saved" | "outdated" | "failed" {
+    if (!conflictBackup || conflictBackup.result === "failed") return "failed";
+    return latest?.text === conflictBackup.text ? "saved" : "outdated";
+  }
+
+  function closedProblem(): GameStorageProblem {
+    return state.status === "closed" ? state.problem : "identity-changed";
+  }
+
   function clearTimers() {
     if (debounceTimer !== undefined) clearTimeout(debounceTimer);
     if (retryTimer !== undefined) clearTimeout(retryTimer);
@@ -171,7 +201,12 @@ export function createGameDataSession(storage: GameStorage, options: GameDataSes
     return !closed && status === "ready" && state.status !== "conflict";
   }
 
-  async function loadNow(fallbackData: StoredQuestData): Promise<GameDataLoadOutcome> {
+  /**
+   * Reads the save. `applied` is false when the reply arrived after the session closed or a newer load
+   * started, in which case nothing changed. With `discardUnsaved`, a successful read also drops unsaved
+   * changes (for reload), in the same step, so they're never dropped unless the read worked.
+   */
+  async function loadNow(fallbackData: StoredQuestData, discardUnsaved = false): Promise<{ outcome: GameDataLoadOutcome; applied: boolean }> {
     const generation = ++loadGeneration;
     status = "loading";
     publish({ status: "loading" });
@@ -201,12 +236,20 @@ export function createGameDataSession(storage: GameStorage, options: GameDataSes
     }
 
     // A newer load, or closing, makes this reply irrelevant.
-    if (generation !== loadGeneration || closed) return outcome;
+    if (generation !== loadGeneration || closed) return { outcome, applied: false };
     status = outcome.status;
     savedText = nextSavedText;
-    if (next.status === "closed") closed = true;
+    if (next.status === "closed") {
+      // The same way out as close(): listeners hear "closed" once, then nothing more.
+      close(next.problem);
+      return { outcome, applied: true };
+    }
+    if (discardUnsaved && (next.status === "saved" || next.status === "empty")) {
+      latest = undefined;
+      conflictBackup = undefined;
+    }
     publish(next);
-    return outcome;
+    return { outcome, applied: true };
   }
 
   /** What to show while nothing is being written. */
@@ -264,7 +307,9 @@ export function createGameDataSession(storage: GameStorage, options: GameDataSes
       // Nothing more is written until the player reloads: retrying could only conflict again, and the
       // other change must never be overwritten.
       clearTimers();
+      // A change queued behind this write is dropped from the write queue, but stays unsaved (`latest`).
       pending = undefined;
+      conflictBackup = { result: result.backup, text: written.text };
       publish({ status: "conflict", backup: result.backup });
       return;
     }
@@ -314,7 +359,9 @@ export function createGameDataSession(storage: GameStorage, options: GameDataSes
       return status;
     },
     load(fallbackData) {
-      loadPromise ??= loadNow(fallbackData);
+      loadPromise ??= loadNow(fallbackData).then(({ outcome, applied }) =>
+        // A reply that came too late is never handed out as playable data.
+        applied ? outcome : { status: "failed", data: fallbackData, ...(closed ? { problem: closedProblem() } : {}) });
       return loadPromise;
     },
     requestSave(data) {
@@ -328,7 +375,11 @@ export function createGameDataSession(storage: GameStorage, options: GameDataSes
         publish();
         return "blocked";
       }
-      if (text === latestText && state.status !== "error") return "unchanged";
+      // The same data as the newest change is never a new attempt, whatever happened to it. React may
+      // ask again on every render (including the renders a save-status change causes), and treating
+      // that as a retry would retry forever. Retries come from a different change, retry(), or the
+      // limited automatic retries.
+      if (text === (latest?.text ?? latestText)) return "unchanged";
       if (text === savedText && !inFlight) {
         // Back to what storage already has: nothing to write, and nothing left unsaved.
         latest = { data, text };
@@ -376,6 +427,13 @@ export function createGameDataSession(storage: GameStorage, options: GameDataSes
       return () => listeners.delete(listener);
     },
     getUnsavedData: () => unsavedChange()?.data ?? null,
+    beginFirstSave() {
+      if (closed || state.status !== "empty") return false;
+      status = "ready";
+      savedText = null;
+      publish({ status: "saved" });
+      return true;
+    },
     retry() {
       if (!canWrite() || state.status !== "error" || inFlight) return false;
       const change = unsavedChange();
@@ -395,19 +453,31 @@ export function createGameDataSession(storage: GameStorage, options: GameDataSes
       return snapshot;
     },
     async reload(fallbackData) {
-      const discardedUnsavedChanges = Boolean(unsavedChange());
-      if (closed) return { status: "failed", data: fallbackData, problem: "identity-changed", discardedUnsavedChanges: false };
+      const cancelled = (): ReloadOutcome => ({
+        status: "failed",
+        data: fallbackData,
+        ...(closed ? { problem: closedProblem() } : {}),
+        discardedUnsavedChanges: false,
+        cancelled: true,
+      });
+      if (closed) return cancelled();
       clearTimers();
       pending = undefined;
       // Nothing new is written from here. A write already sent finishes first, so the reload reads what it left.
       status = "loading";
       publish({ status: "loading" });
       if (inFlight) await inFlight.done;
-      latest = undefined;
+      // Closed while that write finished: nothing is cleared and nothing more is loaded.
+      if (closed) return cancelled();
+
       failedAttempts = 0;
-      loadPromise = loadNow(fallbackData);
-      const outcome = await loadPromise;
-      return { ...outcome, discardedUnsavedChanges };
+      const hadUnsavedChanges = Boolean(unsavedChange());
+      const run = loadNow(fallbackData, true);
+      loadPromise = run.then(({ outcome }) => outcome);
+      const { outcome, applied } = await run;
+      if (!applied || closed) return cancelled();
+      const discardedUnsavedChanges = hadUnsavedChanges && !unsavedChange();
+      return { ...outcome, discardedUnsavedChanges, cancelled: false };
     },
     close,
   };

@@ -290,9 +290,11 @@ describe("game data session: save failures and ordering", () => {
     expect(storage.values.has(questStorageKey)).toBe(false);
 
     refuse = false;
-    expect(session.requestSave(withXp(fallbackData, 5))).toBe("saving");
+    // Asking again with the same data isn't a new attempt (React asks on every render); the next change is.
+    expect(session.requestSave(withXp(fallbackData, 5))).toBe("unchanged");
+    expect(session.requestSave(withXp(fallbackData, 6))).toBe("saving");
     await session.whenIdle();
-    expect(storage.values.get(questStorageKey)).toBe(JSON.stringify(withXp(fallbackData, 5)));
+    expect(storage.values.get(questStorageKey)).toBe(JSON.stringify(withXp(fallbackData, 6)));
   });
 
   it("treats a save that throws like a refused write", async () => {
@@ -307,7 +309,9 @@ describe("game data session: save failures and ordering", () => {
 
     session.requestSave(withXp(fallbackData, 1));
     await session.whenIdle();
-    expect(session.requestSave(withXp(fallbackData, 1))).toBe("saving");
+    expect(session.getSnapshot()).toMatchObject({ status: "error", problem: "unknown", hasUnsavedChanges: true });
+    // The next change tries again.
+    expect(session.requestSave(withXp(fallbackData, 2))).toBe("saving");
     await session.whenIdle();
 
     expect(storage.save).toHaveBeenCalledTimes(2);
@@ -398,16 +402,17 @@ describe("game data session: adapters that throw synchronously", () => {
     expect(session.requestSave(withXp(fallbackData, 2))).toBe("unchanged");
   });
 
-  it("retries the same data after a synchronous throw", async () => {
+  it("tries again with the next change after a synchronous throw", async () => {
     const { storage, saves } = createThrowingStorage([1]);
     const session = createGameDataSession(storage);
     await session.load(fallbackData);
 
     session.requestSave(withXp(fallbackData, 1));
-    expect(session.requestSave(withXp(fallbackData, 1))).toBe("saving");
+    expect(session.requestSave(withXp(fallbackData, 1))).toBe("unchanged");
+    expect(session.requestSave(withXp(fallbackData, 2))).toBe("saving");
     await session.whenIdle();
 
-    expect(saves.map((data) => data.legacyXpBonus)).toEqual([1, 1]);
+    expect(saves.map((data) => data.legacyXpBonus)).toEqual([1, 2]);
   });
 
   it("keeps going when a queued save throws synchronously", async () => {

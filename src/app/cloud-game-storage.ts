@@ -1,6 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { AuthState } from "./auth/auth-controller";
-import { readUnverifiedTokenSubject, readUserId } from "./auth/auth-session";
+import { describeAuthError, readUnverifiedTokenSubject, readUserId } from "./auth/auth-session";
 import type { GameSaveResult, GameStorage, GameStorageLoadResult, GameStorageProblem } from "./game-storage";
 import { latestQuestSaveVersion, readQuestSave } from "./quest-storage";
 import type { StoredQuestData } from "./quest-types";
@@ -149,13 +149,19 @@ export function createCloudGameStorage({ client, signIn, getAuth }: CloudGameSto
 
     let token: string | null;
     try {
-      const { data } = await client.auth.getSession();
+      const { data, error } = await client.auth.getSession();
       token = data.session?.access_token ?? null;
+      // No session *and* an error: the session couldn't be read or refreshed (for example, its token
+      // expired while offline, so supabase-js returns no session with a retryable fetch error). That
+      // isn't a confirmed account change, so this storage stays open and the save can be tried again.
+      // Nothing is sent without a token. If the sign-in really ended, supabase-js clears the session and
+      // the auth state changes, which closes this storage then.
+      if (!token && error) return describeAuthError(error) === "network" ? "network" : "signed-out";
     } catch {
       return "unknown";
     }
-    // Requests are sent with this token, and RLS uses its account. If it's gone or for another account,
-    // the player has signed out or switched accounts, possibly in another tab.
+    // Requests are sent with this token, and RLS uses its account. If it's gone (with no error) or for
+    // another account, the player has signed out or switched accounts, possibly in another tab.
     if (!token || readUnverifiedTokenSubject(token) !== userId) return close();
     const after = getAuth();
     if (after.status !== "signed-in" || after.user.id !== userId) return close();

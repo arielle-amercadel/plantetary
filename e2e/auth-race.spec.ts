@@ -10,8 +10,15 @@ import {
   storedAccessToken,
   useFakeAuth,
   type FakeAuth,
+  openApp,
+  reloadApp,
+  openOtherTab,
 } from "./auth-support";
-import { completeQuest, expect, openApp, reloadApp, test } from "./support";
+import {
+  completeQuest,
+  expect,
+  test,
+} from "./support";
 
 const NEW_EMAIL = "new-player@example.com";
 const SIGN_IN_LINK = "/auth/confirm?token_hash=pkce_0123456789abcdef&type=email";
@@ -35,7 +42,9 @@ test.describe("Signing in while an old session is still being checked", () => {
     await openApp(page, SIGN_IN_LINK);
     await page.getByRole("button", { name: "Finish signing in" }).click();
     await expect(accountSection(page)).toContainText(`Signed in as ${TEST_EMAIL}`);
+    // Signed in, the garden is the account's; playing on this device makes progress in this browser.
     await openApp(page);
+    await page.getByRole("button", { name: "Keep playing on this device" }).click();
     await completeQuest(page, "Drink a glass of water");
     const progress = await readGameStorage(page);
 
@@ -50,7 +59,11 @@ test.describe("Signing in while an old session is still being checked", () => {
     });
     auth.reply("POST /verify", { status: 200, body: newSession });
 
-    await openApp(page, SIGN_IN_LINK);
+    // The old session's check is held, so no garden loads yet: load the page plainly, and wait for the
+    // held check to arrive, which proves the page is running.
+    const checksBefore = authRequests(auth, "GET /user").length;
+    await page.goto(SIGN_IN_LINK);
+    await expect.poll(() => authRequests(auth, "GET /user").length).toBeGreaterThan(checksBefore);
     await page.getByRole("button", { name: "Finish signing in" }).click();
     await expect(page.getByText("Signing you in…")).toBeVisible();
     gate.release();
@@ -75,14 +88,16 @@ test.describe("Signing out in another tab while this tab is still checking", () 
     await page.getByRole("button", { name: "Finish signing in" }).click();
     await expect(accountSection(page)).toContainText(`Signed in as ${TEST_EMAIL}`);
 
-    const otherTab = await page.context().newPage();
+    const otherTab = await openOtherTab(page);
     const gate = deferred();
     const otherAuth = await useFakeAuth(otherTab);
     otherAuth.reply("GET /user", async () => {
       await gate.released;
       return { status: 200, body: fakeUser(TEST_EMAIL) };
     });
-    await openApp(otherTab, "/settings");
+    await otherTab.goto("/settings");
+    // "Checking…" is in the server's HTML; the held check arriving proves the tab is running and listening.
+    await expect.poll(() => authRequests(otherAuth, "GET /user").length).toBeGreaterThan(0);
     await expect(accountSection(otherTab)).toContainText("Checking whether you're signed in");
 
     await openApp(page, "/settings");
@@ -171,18 +186,25 @@ test.describe("Signing in from another tab while this tab is checking an old ses
       await gate.released;
       return { status: 403, body: authError("session_not_found", "Session from session_id claim in JWT does not exist") };
     });
-    await openApp(page, "/settings");
+    const checksBefore = authRequests(auth, "GET /user").length;
+    await page.goto("/settings");
+    // "Checking…" is in the server's HTML; the held check arriving proves the tab is running and listening.
+    await expect.poll(() => authRequests(auth, "GET /user").length).toBeGreaterThan(checksBefore);
     await expect(accountSection(page)).toContainText("Checking whether you're signed in");
 
     // Meanwhile another tab finishes a new sign-in.
-    const otherTab = await page.context().newPage();
+    const otherTab = await openOtherTab(page);
     const otherAuth = await useFakeAuth(otherTab);
     otherAuth.reply("POST /verify", { status: 200, body: newSession });
     otherAuth.reply("GET /user", { status: 200, body: fakeUser(NEW_EMAIL) });
     await openApp(otherTab, SIGN_IN_LINK);
     await otherTab.getByRole("button", { name: "Finish signing in" }).click();
     await expect(accountSection(otherTab)).toContainText(`Signed in as ${NEW_EMAIL}`);
-    await expect(accountSection(page)).toContainText(`Signed in as ${NEW_EMAIL}`);
+    // This tab usually shows the new account at once. If the other tab's sign-in arrived while this
+    // tab's supabase-js was still starting up, it's ignored as a startup announcement (by design, see
+    // auth-controller.ts), and this tab catches up when its own startup check finishes below. Either
+    // way it must never sign anything out, and must end up showing the new account.
+    await expect(accountSection(page)).not.toContainText(`Signed in as ${TEST_EMAIL}`);
 
     // Now the old session's rejection arrives in the first tab.
     gate.release();
@@ -300,7 +322,7 @@ test.describe("Returning to a tab after a sign-in has ended", () => {
     const auth = await useFakeAuth(page);
     await endSignIn(page, auth);
 
-    const otherTab = await page.context().newPage();
+    const otherTab = await openOtherTab(page);
     const otherAuth = await useFakeAuth(otherTab);
     const newSession = fakeSession(NEW_EMAIL);
     otherAuth.reply("POST /verify", { status: 200, body: newSession });

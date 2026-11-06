@@ -1,8 +1,8 @@
 # Optional sign-in (Stage 6)
 
-Players can sign in with an emailed link, with no password. Signing in is optional, and it doesn't change the game: progress is still saved only in the browser, exactly as for a guest. Signing in or out never reads, writes, uploads or resets a game save.
+Players can sign in with an emailed link, with no password. Signing in is optional. Since Stage 7, a verified sign-in can save the garden to the account (see `docs/game-storage.md`). Signing in or out never uploads, changes or resets the save in this browser.
 
-Cloud saves, importing browser saves, and account deletion come in later stages.
+Importing browser saves, and account deletion, come in later stages.
 
 ## How it works
 
@@ -116,4 +116,4 @@ npx supabase status    # copy API_URL and PUBLISHABLE_KEY into .env.local
 npm run dev            # on port 3000, which config.toml allows
 ```
 
-Request a link in Settings, then open the email in the local mail viewer at <http://127.0.0.1:55324>.
+Request a link in Settings, then open the email in the local mail viewer at <http://127.0.0.1:55324>. Once signed in, the local stack also stores your cloud garden, so you can try cloud saves without a hosted project (after `npx supabase db reset`, so every migration is applied).

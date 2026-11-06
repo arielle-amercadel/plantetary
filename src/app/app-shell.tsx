@@ -5,6 +5,8 @@ import Link from "next/link";
 import { useEffect, useState, type ReactNode } from "react";
 import ProfileAvatarArtwork from "./profile-avatar-artwork";
 import { getLevelProgress, useQuestStore } from "./quest-store";
+import SaveStatusIndicator from "./save-status-indicator";
+import StorageNotices from "./storage-notices";
 import { dateFromKey, formatLocalDateLabel } from "./quest-logic";
 import {
   defaultProfilePreferences,
@@ -161,11 +163,15 @@ export default function AppShell({
             <span className="breadcrumb-divider">/</span>
             <strong>{page === "home" ? "Home" : page === "all-quests" ? "All Quests" : page === "journal" ? "Plant Journal" : page === "history" ? "Completion History" : page === "settings" ? "Settings" : "Create Quest"}</strong>
           </div>
-          <div className="date-label">
-            <FigmaIcon src="/icon-sun.svg" size={17} />
-            <span>{todayKey ? formatLocalDateLabel(dateFromKey(todayKey)) : ""}</span>
+          <div className="workspace-topbar-status">
+            <SaveStatusIndicator />
+            <div className="date-label">
+              <FigmaIcon src="/icon-sun.svg" size={17} />
+              <span>{todayKey ? formatLocalDateLabel(dateFromKey(todayKey)) : ""}</span>
+            </div>
           </div>
         </header>
+        <StorageNotices />
         {children}
       </div>
     </div>

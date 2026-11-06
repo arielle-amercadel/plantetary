@@ -627,6 +627,13 @@ button {
   min-width: 0;
 }
 
+.quest-panel-loading {
+  margin: 0;
+  padding: 18px 20px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
 .quest-panel {
   overflow: hidden;
   border: 1px solid var(--border);
@@ -3269,6 +3276,147 @@ button {
   border: 1px solid var(--border);
   border-radius: 8px;
   background: var(--surface);
+}
+
+/* Notices about where the garden is saved (storage-notices.tsx), above each page's content. */
+.storage-notice {
+  margin: 16px 22px 0;
+}
+
+.storage-sign-out-warning {
+  margin-top: 14px;
+}
+
+.storage-notice-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+/* A conflict, or a save that keeps failing: the player's changes are at risk until they act. */
+.storage-notice.is-warning {
+  border-color: #d9b48a;
+  background: #fbf0df;
+}
+
+.storage-confirm {
+  margin-top: 4px;
+  padding-top: 10px;
+  border-top: 1px dashed #d9b48a;
+}
+
+/* Save status in the top bar (save-status-indicator.tsx). Empty for guests whose saves just work. */
+.workspace-topbar-status {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  min-width: 0;
+}
+
+.save-status {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+  font-size: 11px;
+}
+
+.save-status-text {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.save-status[class*=" is-"] .save-status-text {
+  min-height: 24px;
+  padding: 3px 9px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--muted);
+  background: var(--surface);
+}
+
+.save-status-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #b5a894;
+}
+
+.save-status.is-saved .save-status-text {
+  color: var(--leaf-dark);
+}
+
+.save-status.is-saved .save-status-dot {
+  background: var(--leaf);
+}
+
+.save-status.is-saving .save-status-dot {
+  background: #c9a45c;
+  animation: save-status-pulse 1.2s ease-in-out infinite;
+}
+
+.save-status.is-error .save-status-text {
+  border-color: #e0b7a9;
+  color: #985342;
+  background: #f7e9dc;
+}
+
+.save-status.is-error .save-status-dot {
+  background: var(--terracotta);
+}
+
+.save-status.is-conflict .save-status-text {
+  border-color: #d9b48a;
+  color: #7f5420;
+  background: #fbf0df;
+}
+
+.save-status.is-conflict .save-status-dot {
+  background: #c9862e;
+}
+
+@keyframes save-status-pulse {
+  50% {
+    opacity: 0.35;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .save-status.is-saving .save-status-dot {
+    animation: none;
+  }
+}
+
+@media (max-width: 760px) {
+  .workspace-topbar-status {
+    gap: 8px;
+  }
+
+  .save-status {
+    font-size: 10px;
+  }
+}
+
+/* On narrow screens, "Saving…" and "Saved" shrink to their dot; problems keep their words. */
+@media (max-width: 480px) {
+  .save-status.is-saving .save-status-text > span[aria-hidden="true"]:not(.save-status-dot),
+  .save-status.is-saved .save-status-text > span[aria-hidden="true"]:not(.save-status-dot) {
+    display: none;
+  }
+
+  .save-status.is-saving .save-status-text,
+  .save-status.is-saved .save-status-text {
+    padding: 3px 7px;
+  }
+
+  /* A problem keeps its words; the breadcrumb gives up "Your cozy corner /" to make room. */
+  .workspace-topbar:has(.save-status.is-error, .save-status.is-conflict) .breadcrumb > span {
+    display: none;
+  }
+}
+
+.save-status-text {
+  white-space: nowrap;
 }
 
 .settings-section h2 {

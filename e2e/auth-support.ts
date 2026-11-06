@@ -1,5 +1,6 @@
+import { createHash } from "node:crypto";
 import type { Page, Request, Route } from "@playwright/test";
-import { MONDAY } from "./support";
+import { MONDAY, expect } from "./support";
 
 /** Matches NEXT_PUBLIC_SUPABASE_URL in playwright.config.ts. Nothing listens there. */
 export const FAKE_SUPABASE_URL = "http://127.0.0.1:54999";
@@ -21,10 +22,13 @@ function nowSeconds() {
   return Math.floor(Date.parse(MONDAY) / 1000);
 }
 
-/** Each email gets its own stable user ID, so tests can tell accounts apart, as the database does. */
+/**
+ * Each email gets its own stable user ID, so tests can tell accounts apart, as the database does. It's
+ * derived from the whole address: two different emails never share an ID.
+ */
 function fakeUserId(email: string) {
-  const hex = Buffer.from(email).toString("hex").padEnd(12, "0").slice(-12);
-  return `6f1d4c58-0000-4000-8000-${hex}`;
+  const hex = createHash("sha256").update(email).digest("hex");
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-4${hex.slice(13, 16)}-8${hex.slice(17, 20)}-${hex.slice(20, 32)}`;
 }
 
 export function fakeUser(email = TEST_EMAIL) {
@@ -103,17 +107,114 @@ function emailFromBearer(request: Request): string | null {
 type Handler = (request: Request) => Reply | Promise<Reply>;
 
 export type FakeAuth = {
-  /** Every Auth request the app made, apart from CORS preflights. */
+  /** Every Auth and database request the app made, apart from CORS preflights. */
   requests: Request[];
-  /** Replaces the reply for one endpoint, such as "POST /otp" or "GET /user". */
+  /**
+   * Replaces the reply for one endpoint: Auth ones such as "POST /otp" or "GET /user", or database ones
+   * such as "GET quest_saves" or "PATCH quest_saves".
+   */
   reply: (endpoint: string, handler: Handler | Reply) => void;
+  /** The fake project's database, shared by every tab given the same one. */
+  cloud: FakeCloud;
 };
+
+type CloudSave = { data: unknown; schema_version: number; revision: number };
+type CloudBackup = { user_id: string; reason: string; raw_data: string; schema_version: number | null; source_revision: number | null };
+
+/**
+ * The fake project's `quest_saves` and `save_backups` tables, with their real rules: each request sees
+ * only its token's own account (RLS), the database sets revisions (never reused), there's one save per
+ * account, and an update only matches the given user and revision.
+ */
+export type FakeCloud = {
+  saves: Map<string, CloudSave>;
+  backups: CloudBackup[];
+  /** The account's save, by email. */
+  saveOf: (email?: string) => CloudSave | undefined;
+  /** Puts a save in an account, as another device would. Its revision moves on, like any save. */
+  seed: (data: unknown, email?: string, schemaVersion?: number) => void;
+  /** The account's next revision. Revisions never repeat for an account, as in the real database. */
+  nextRevision: (userId: string) => number;
+};
+
+export function createFakeCloud(): FakeCloud {
+  const saves = new Map<string, CloudSave>();
+  const lastRevision = new Map<string, number>();
+  const nextRevision = (userId: string) => {
+    const revision = (lastRevision.get(userId) ?? 0) + 1;
+    lastRevision.set(userId, revision);
+    return revision;
+  };
+  return {
+    saves,
+    backups: [],
+    saveOf: (email = TEST_EMAIL) => saves.get(fakeUserId(email)),
+    seed(data, email = TEST_EMAIL, schemaVersion = 5) {
+      const userId = fakeUserId(email);
+      saves.set(userId, { data: structuredClone(data), schema_version: schemaVersion, revision: nextRevision(userId) });
+    },
+    nextRevision,
+  };
+}
+
+/** The account a request's bearer token was issued for, or null for no sign-in. */
+function userIdFromBearer(request: Request): string | null {
+  const token = request.headers()["authorization"]?.replace(/^Bearer /, "") ?? "";
+  try {
+    const claims = JSON.parse(Buffer.from(token.split(".")[1] ?? "", "base64url").toString("utf8")) as { sub?: unknown };
+    return typeof claims.sub === "string" ? claims.sub : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Answers a PostgREST request against the fake tables, as Supabase would. */
+function answerDatabase(cloud: FakeCloud, request: Request, table: string): Reply {
+  const userId = userIdFromBearer(request);
+  // The publishable key alone carries no account: no sign-in, no access.
+  if (!userId || userId === "anon") return { status: 401, body: { code: "42501", message: "permission denied" } };
+  const url = new URL(request.url());
+  const filter = (column: string) => url.searchParams.get(column)?.replace(/^eq\./, "") ?? null;
+  const wantsObject = (request.headers()["accept"] ?? "").includes("vnd.pgrst.object");
+  const rows = (list: unknown[]) => (wantsObject ? list[0] ?? null : list);
+  const { nextRevision } = cloud;
+
+  if (table === "save_backups" && request.method() === "POST") {
+    const backup = request.postDataJSON() as CloudBackup;
+    if (backup.user_id !== userId) return { status: 403, body: { code: "42501", message: "new row violates row-level security policy" } };
+    cloud.backups.push(backup);
+    return { status: 201 };
+  }
+  if (table !== "quest_saves") return { status: 404, body: { code: "PGRST205", message: "Not mocked" } };
+
+  const own = cloud.saves.get(userId);
+  if (request.method() === "GET") {
+    const visible = own && filter("user_id") === userId ? [{ data: own.data, schema_version: own.schema_version, revision: own.revision }] : [];
+    return { status: 200, body: rows(visible) };
+  }
+  if (request.method() === "POST") {
+    const body = request.postDataJSON() as { user_id: string; data: unknown; schema_version: number };
+    if (body.user_id !== userId) return { status: 403, body: { code: "42501", message: "new row violates row-level security policy" } };
+    if (own) return { status: 409, body: { code: "23505", message: "duplicate key value violates unique constraint \"quest_saves_pkey\"" } };
+    const created = { data: body.data, schema_version: body.schema_version, revision: nextRevision(userId) };
+    cloud.saves.set(userId, created);
+    return { status: 201, body: rows([{ revision: created.revision }]) };
+  }
+  if (request.method() === "PATCH") {
+    const body = request.postDataJSON() as { data: unknown; schema_version: number };
+    if (!own || filter("user_id") !== userId || filter("revision") !== String(own.revision)) return { status: 200, body: [] };
+    const updated = { data: body.data, schema_version: body.schema_version, revision: nextRevision(userId) };
+    cloud.saves.set(userId, updated);
+    return { status: 200, body: [{ revision: updated.revision }] };
+  }
+  return { status: 405, body: { code: "PGRST000", message: "Not mocked" } };
+}
 
 /**
  * Answers the app's Supabase Auth requests in the browser, so no real project is involved.
  * The defaults behave like a working project; tests swap in failures with `reply`.
  */
-export async function useFakeAuth(page: Page): Promise<FakeAuth> {
+export async function useFakeAuth(page: Page, cloud: FakeCloud = createFakeCloud()): Promise<FakeAuth> {
   const requests: Request[] = [];
   const handlers = new Map<string, Handler>([
     ["POST /otp", () => ({ status: 200, body: {} })],
@@ -132,9 +233,15 @@ export async function useFakeAuth(page: Page): Promise<FakeAuth> {
     }
     requests.push(request);
 
-    const path = new URL(request.url()).pathname.replace(/^\/auth\/v1/, "");
+    const pathname = new URL(request.url()).pathname;
+    const table = pathname.startsWith("/rest/v1/") ? pathname.slice("/rest/v1/".length) : null;
+    const path = table ?? pathname.replace(/^\/auth\/v1/, "");
     const handler = handlers.get(`${request.method()} ${path}`);
-    const reply: Reply = handler ? await handler(request) : { status: 404, body: { code: "not_found", msg: "Not mocked" } };
+    const reply: Reply = handler
+      ? await handler(request)
+      : table
+        ? answerDatabase(cloud, request, table)
+        : { status: 404, body: { code: "not_found", msg: "Not mocked" } };
     if (reply === "network-error") {
       await route.abort("connectionrefused");
       return;
@@ -151,7 +258,16 @@ export async function useFakeAuth(page: Page): Promise<FakeAuth> {
     reply(endpoint, handler) {
       handlers.set(endpoint, typeof handler === "function" ? handler : () => handler);
     },
+    cloud,
   };
+}
+
+/** The database requests the app made, as "METHOD table", optionally only one kind. */
+export function cloudRequests(fake: FakeAuth, endpoint?: string) {
+  return fake.requests
+    .filter((request) => new URL(request.url()).pathname.startsWith("/rest/v1/"))
+    .map((request) => `${request.method()} ${new URL(request.url()).pathname.slice("/rest/v1/".length)}`)
+    .filter((entry) => !endpoint || entry === endpoint);
 }
 
 /** An Auth API error body, as Supabase sends it. */
@@ -189,3 +305,37 @@ export function readGameStorage(page: Page) {
     return entries;
   });
 }
+
+/**
+ * Waits for the app to finish starting up: a loaded garden (its date appears), or, for a signed-in
+ * player, the cloud garden's first-time choice or its load error. The auth tests use these instead of
+ * support.ts's openApp, which waits for a garden only.
+ */
+export async function waitForAppOrStorageChoice(page: Page) {
+  const date = page.getByText(/^[A-Z][a-z]+day, [A-Z][a-z]+ \d{1,2}$/);
+  const card = page.getByRole("region", { name: /^(Start your cloud garden\?|Your cloud garden couldn't be loaded)$/ });
+  await expect(date.or(card).first()).toBeVisible();
+}
+
+export async function openApp(page: Page, path = "/") {
+  await page.goto(path);
+  await waitForAppOrStorageChoice(page);
+}
+
+export async function reloadApp(page: Page) {
+  await page.reload();
+  await waitForAppOrStorageChoice(page);
+}
+
+/**
+ * Another tab in the same browser, on the same clock as the tests' first tab. Without the clock, a
+ * token issued on the tests' Monday would already have expired there, and that tab would refresh it.
+ */
+export async function openOtherTab(page: Page) {
+  const otherTab = await page.context().newPage();
+  await otherTab.clock.install({ time: MONDAY });
+  return otherTab;
+}
+
+/** useFakeAuth under a name React's hooks lint rule doesn't mistake for a hook, for use inside helpers. */
+export const answerSupabaseFor = useFakeAuth;
