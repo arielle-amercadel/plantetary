@@ -13,6 +13,7 @@ A cozy, plant-themed gamified quest and habit tracker. Complete small daily and 
 - **Plant Journal:** browse all 16 collectible plants and see your progress toward the next one.
 - **Progress tracking:** today's and overall completion counts, plus a dated completion history.
 - **Settings:** set your display name and avatar, save reminder preferences, export your data as JSON, or reset your progress. Reminder preferences are only saved for now; Plantetary doesn't send notifications yet.
+- **Optional sign-in:** sign in with an emailed link, with no password. Guest mode works without an account, and signing in doesn't change your progress.
 
 ## Tech Stack
 
@@ -28,6 +29,8 @@ Your progress is currently saved only in your browser's `localStorage`, so it st
 
 The database tables for that version are in `supabase/`, but the app doesn't use them yet. See [docs/supabase-database.md](docs/supabase-database.md) for how to set them up and test them.
 
+Signing in is optional, and it doesn't move your progress: it stays in this browser whether you're signed in or not. See [docs/supabase-auth.md](docs/supabase-auth.md) for how sign-in works and how to configure it.
+
 ## Getting Started
 
 You'll need [Node.js](https://nodejs.org) 20.19 or newer and npm.
@@ -40,6 +43,8 @@ npm run dev
 ```
 
 Then open [http://localhost:3000](http://localhost:3000). If that port is in use, Next.js picks another one and shows it in the terminal.
+
+To turn on sign-in, copy `.env.example` to `.env.local` and add your Supabase project's URL and publishable key. Without them, Plantetary runs in guest mode only. See [docs/supabase-auth.md](docs/supabase-auth.md).
 
 ## Commands
 

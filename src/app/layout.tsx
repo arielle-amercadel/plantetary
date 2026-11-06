@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { Inter, Silkscreen } from "next/font/google";
 import "./globals.css";
+import { AuthProvider } from "./auth/auth-provider";
 import { QuestProvider } from "./quest-store";
 
 const inter = Inter({
@@ -27,7 +28,9 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
       className={`${inter.variable} ${silkscreen.variable} h-full antialiased`}
     >
       <body className="min-h-full">
-        <QuestProvider>{children}</QuestProvider>
+        <AuthProvider>
+          <QuestProvider>{children}</QuestProvider>
+        </AuthProvider>
       </body>
     </html>
   );
