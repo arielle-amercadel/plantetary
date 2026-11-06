@@ -5,6 +5,7 @@ import AppShell from "../app-shell";
 import ProfileAvatarArtwork from "../profile-avatar-artwork";
 import { getLocalDateKey } from "../quest-logic";
 import { useQuestStore } from "../quest-store";
+import AccountSection from "./account-section";
 import {
   createSettingsExportJson,
   defaultProfilePreferences,
@@ -152,6 +153,8 @@ export default function SettingsPage() {
           <h1>Settings</h1>
           <p>Manage your local preferences and Plantetary data.</p>
         </header>
+
+        <AccountSection />
 
         <section className="settings-section" aria-labelledby="settings-profile-heading">
           <h2 id="settings-profile-heading">Profile</h2>

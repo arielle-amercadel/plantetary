@@ -3472,3 +3472,52 @@ button {
     gap: 6px;
   }
 }
+
+/* Account (Stage 6: optional sign-in) */
+.settings-field input[type="email"] {
+  min-height: 40px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--foreground);
+  background: #fffdf8;
+}
+
+.account-form-row {
+  align-items: flex-end;
+}
+
+.account-email-field {
+  flex: 1;
+  max-width: 420px;
+}
+
+.account-email {
+  color: var(--foreground);
+  overflow-wrap: anywhere;
+}
+
+.auth-confirm .settings-message {
+  margin-top: 0;
+}
+
+.auth-confirm-note {
+  margin-top: 12px;
+}
+
+.auth-confirm-link {
+  display: inline-flex;
+  align-items: center;
+  text-decoration: none;
+}
+
+@media (max-width: 640px) {
+  .account-form-row {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .account-email-field {
+    max-width: none;
+  }
+}

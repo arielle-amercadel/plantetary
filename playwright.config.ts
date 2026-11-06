@@ -32,5 +32,13 @@ export default defineConfig({
     url: baseURL,
     reuseExistingServer: !isCI,
     timeout: 120_000,
+    // Sign-in talks to a fake Supabase project on a closed local port. The auth tests answer its requests
+    // themselves (e2e/auth-support.ts), and anything they don't answer fails without leaving this machine.
+    // These override any real values in .env.local.
+    env: {
+      ...process.env,
+      NEXT_PUBLIC_SUPABASE_URL: "http://127.0.0.1:54999",
+      NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY: "sb_publishable_plantetary-e2e",
+    },
   },
 });
