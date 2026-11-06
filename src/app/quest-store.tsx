@@ -50,7 +50,8 @@ import {
   migratePlantDiscoveries,
   unwrapPlantGift as unwrapPlantGiftState,
 } from "./plant-journal-logic";
-import { loadQuestData, saveQuestData } from "./quest-storage";
+import { createBrowserGameStorage, type StorageStatus } from "./game-storage";
+import { createGameDataSession } from "./game-data-session";
 
 export type {
   Difficulty,
@@ -163,6 +164,9 @@ type QuestStoreValue = {
   dailyCompletedQuestIds: string[];
   dailyScheduledQuestIds: string[];
   recoverableDailyQuestIds: string[];
+  /** `loading` until the save is read; `failed` means this session's changes are never saved. */
+  storageStatus: StorageStatus;
+  /** True once loading has finished, whether it worked or not. */
   hasRestored: boolean;
   addQuest: (list: QuestListKey, quest: Quest) => void;
   updateQuest: (
@@ -204,13 +208,15 @@ export function QuestProvider({ children }: { children: ReactNode }) {
     initialStoredQuestData.pendingPlantGiftIds ?? [],
   );
   const [todayKey, setTodayKey] = useState("");
-  const [hasRestored, setHasRestored] = useState(false);
-  const [canPersistStorage, setCanPersistStorage] = useState(true);
+  const [storageStatus, setStorageStatus] = useState<StorageStatus>("loading");
+  const [gameData] = useState(() => createGameDataSession(createBrowserGameStorage()));
+  const hasRestored = storageStatus !== "loading";
 
   useEffect(() => {
-    const { data: restoredData, canPersist } = loadQuestData(initialStoredQuestData);
+    let cancelled = false;
 
-    queueMicrotask(() => {
+    void gameData.load(initialStoredQuestData).then(({ status, data: restoredData }) => {
+      if (cancelled) return;
       const restoredToday = getLocalDateKey(new Date());
       const restoredHistory = restoredData.completionHistory ?? {};
       const completionHistory = ensureCompletionSnapshotForDate(
@@ -229,10 +235,13 @@ export function QuestProvider({ children }: { children: ReactNode }) {
       setPendingPlantGiftIds(restoredData.pendingPlantGiftIds ?? []);
       setSchemaVersion(restoredData.schemaVersion ?? 3);
       setTodayKey(restoredToday);
-      setCanPersistStorage(canPersist);
-      setHasRestored(true);
+      setStorageStatus(status);
     });
-  }, []);
+
+    return () => {
+      cancelled = true;
+    };
+  }, [gameData]);
 
   useEffect(() => {
     const updateToday = () => {
@@ -265,9 +274,11 @@ export function QuestProvider({ children }: { children: ReactNode }) {
   const starterPlantGiftPending = pendingPlantGiftIds.includes("fern");
 
   useEffect(() => {
-    if (!hasRestored || !canPersistStorage) return;
+    // Never write while loading or after a failed load: the starter data on screen could replace a real save.
+    if (storageStatus !== "ready") return;
 
-    saveQuestData({
+    // Skipped automatically when the data matches what was last saved.
+    gameData.requestSave({
       schemaVersion,
       questLists,
       categoryLists,
@@ -280,7 +291,7 @@ export function QuestProvider({ children }: { children: ReactNode }) {
       pendingPlantGiftIds,
       starterPlantGiftPending,
     });
-  }, [hasRestored, canPersistStorage, questLists, categoryLists, completionHistory, personalXpByQuestId, personalCompletedOnByQuestId, deletedLegacyPersonalCompletionCount, legacyXpBonus, discoveredPlantIds, pendingPlantGiftIds, starterPlantGiftPending, schemaVersion, todayKey, totalXp]);
+  }, [storageStatus, gameData, questLists, categoryLists, completionHistory, personalXpByQuestId, personalCompletedOnByQuestId, deletedLegacyPersonalCompletionCount, legacyXpBonus, discoveredPlantIds, pendingPlantGiftIds, starterPlantGiftPending, schemaVersion, todayKey, totalXp]);
 
   const historyForDisplay = completionHistory;
   const streaks = todayKey
@@ -510,7 +521,7 @@ export function QuestProvider({ children }: { children: ReactNode }) {
 
   return (
     <QuestStoreContext.Provider
-      value={{ questLists, categoryLists, totalXp, completedTodayCounts, completedOverallCounts, completionHistoryView, todayKey, discoveredPlantIds, pendingPlantGiftIds, starterPlantGiftPending, currentStreak: streaks.currentStreak, longestStreak: streaks.longestStreak, streakWeek, dailyCompletedQuestIds, dailyScheduledQuestIds, recoverableDailyQuestIds, hasRestored, addQuest, updateQuest, addCategory, toggleQuest, deleteQuest, recoverOrphanedDailyQuest, unwrapPlantGift, getDataForExport }}
+      value={{ questLists, categoryLists, totalXp, completedTodayCounts, completedOverallCounts, completionHistoryView, todayKey, discoveredPlantIds, pendingPlantGiftIds, starterPlantGiftPending, currentStreak: streaks.currentStreak, longestStreak: streaks.longestStreak, streakWeek, dailyCompletedQuestIds, dailyScheduledQuestIds, recoverableDailyQuestIds, storageStatus, hasRestored, addQuest, updateQuest, addCategory, toggleQuest, deleteQuest, recoverOrphanedDailyQuest, unwrapPlantGift, getDataForExport }}
     >
       {children}
     </QuestStoreContext.Provider>
