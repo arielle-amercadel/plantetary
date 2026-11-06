@@ -28,7 +28,7 @@ After a failed load the app still shows what it could load, or the starter quest
 - Only when the status is `ready`.
 - Only when the data differs from what storage already has, compared as JSON text. Reloading without changes writes nothing.
 - One write at a time. If changes arrive while a write is running, only the newest is written next.
-- If a write is refused, for example because storage is full, the data isn't treated as saved. An error is logged, and the next change tries again.
+- If a write is refused, for example because storage is full, the data isn't treated as saved. An error is logged, and the next change tries again. An adapter that throws, even before returning a promise, counts as a refused write, and later saves still run.
 
 The browser adapter writes synchronously inside `save`, so a change is in `localStorage` before the next reload, as before.
 
@@ -36,4 +36,5 @@ The browser adapter writes synchronously inside `save`, so a change is in `local
 
 - Profile and reminder preferences still read and write `localStorage` directly from `settings-logic.ts`.
 - Reset still clears `localStorage` directly, then reloads the page.
-- There's no visible save status or error message. Failures are logged to the console, as before.
+- **No visible warning after a failed load (deferred to Stage 7).** The player can keep playing, but nothing is saved and nothing on screen says so; only the console does. This matches the app before Stage 5. Stage 7 adds a visible save status, and this warning belongs with it, so the wording and design are decided once for both browser and cloud saves.
+- **No React-level tests of the provider.** The project has no DOM test environment, and adding one is outside Stage 5. The session logic has unit tests, and the browser tests run the real provider, including a failed load (`e2e/legacy-saves.spec.ts`) and the write counts (`e2e/save-writes.spec.ts`). Delayed loading and unmounting can't happen yet, because browser loads are instant and the provider sits in the root layout. They should get tests in Stage 7, when a slower cloud load makes them real.

@@ -365,6 +365,82 @@ describe("game data session: save failures and ordering", () => {
   });
 });
 
+describe("game data session: adapters that throw synchronously", () => {
+  /** An adapter whose save throws before returning a promise, for the calls the test chooses. */
+  function createThrowingStorage(throwOnCalls: number[]) {
+    const saves: StoredQuestData[] = [];
+    const storage: GameStorage = {
+      load: async () => ({ status: "ready", data: fallbackData, storedText: JSON.stringify(fallbackData) }),
+      // Deliberately not async: the throw happens before any promise exists.
+      save: vi.fn((data: StoredQuestData) => {
+        saves.push(data);
+        if (throwOnCalls.includes(saves.length)) throw new Error("SecurityError");
+        return Promise.resolve(true);
+      }),
+    };
+    return { storage, saves };
+  }
+
+  // Each check below runs before whenIdle(), so a regression fails here instead of hanging.
+  it("is not left stuck after a save throws synchronously", async () => {
+    const { storage, saves } = createThrowingStorage([1]);
+    const session = createGameDataSession(storage);
+    await session.load(fallbackData);
+
+    expect(session.requestSave(withXp(fallbackData, 1))).toBe("saving");
+    expect(console.error).toHaveBeenCalled();
+
+    // Not "queued" behind a save that already ended.
+    expect(session.requestSave(withXp(fallbackData, 2))).toBe("saving");
+    expect(saves.map((data) => data.legacyXpBonus)).toEqual([1, 2]);
+
+    await session.whenIdle();
+    expect(session.requestSave(withXp(fallbackData, 2))).toBe("unchanged");
+  });
+
+  it("retries the same data after a synchronous throw", async () => {
+    const { storage, saves } = createThrowingStorage([1]);
+    const session = createGameDataSession(storage);
+    await session.load(fallbackData);
+
+    session.requestSave(withXp(fallbackData, 1));
+    expect(session.requestSave(withXp(fallbackData, 1))).toBe("saving");
+    await session.whenIdle();
+
+    expect(saves.map((data) => data.legacyXpBonus)).toEqual([1, 1]);
+  });
+
+  it("keeps going when a queued save throws synchronously", async () => {
+    const { storage, saves } = createThrowingStorage([2]);
+    const session = createGameDataSession(storage);
+    await session.load(fallbackData);
+
+    expect(session.requestSave(withXp(fallbackData, 1))).toBe("saving");
+    expect(session.requestSave(withXp(fallbackData, 2))).toBe("queued");
+    // Let the first save finish; the queued one then throws as it starts.
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(saves.map((data) => data.legacyXpBonus)).toEqual([1, 2]);
+
+    expect(session.requestSave(withXp(fallbackData, 3))).toBe("saving");
+    await session.whenIdle();
+    expect(saves.map((data) => data.legacyXpBonus)).toEqual([1, 2, 3]);
+    expect(session.requestSave(withXp(fallbackData, 3))).toBe("unchanged");
+  });
+
+  it("resolves whenIdle after every save throws synchronously", async () => {
+    const { storage } = createThrowingStorage([1, 2, 3]);
+    const session = createGameDataSession(storage);
+    await session.load(fallbackData);
+
+    session.requestSave(withXp(fallbackData, 1));
+    expect(session.requestSave(withXp(fallbackData, 2))).toBe("saving");
+    expect(session.requestSave(withXp(fallbackData, 3))).toBe("saving");
+
+    await expect(session.whenIdle()).resolves.toBeUndefined();
+  });
+});
+
 describe("compatibility with existing browser saves", () => {
   it("keeps all progress in a real old save through load, save and reload", async () => {
     const originalText = JSON.stringify(legacyFixture.save);

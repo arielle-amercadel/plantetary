@@ -53,7 +53,13 @@ export function createGameDataSession(storage: GameStorage): GameDataSession {
   }
 
   function startSave(data: StoredQuestData, text: string) {
-    const done = (async () => {
+    // Recorded before the adapter is called. An adapter can throw synchronously, which finishes the
+    // save below before it ever awaits; recording it afterwards would leave it marked as running forever.
+    const save: { text: string; done: Promise<void> } = { text, done: Promise.resolve() };
+    inFlight = save;
+
+    // The adapter is called synchronously, so the browser write happens immediately, as before.
+    save.done = (async () => {
       let saved = false;
       try {
         saved = await storage.save(data);
@@ -68,12 +74,11 @@ export function createGameDataSession(storage: GameStorage): GameDataSession {
         console.error("Plantetary could not save your latest changes. It will try again after your next change.");
       }
 
-      inFlight = undefined;
+      if (inFlight === save) inFlight = undefined;
       const next = queued;
       queued = undefined;
       if (next && next.text !== savedText) startSave(next.data, next.text);
     })();
-    inFlight = { text, done };
   }
 
   return {
@@ -99,7 +104,12 @@ export function createGameDataSession(storage: GameStorage): GameDataSession {
       return "saving";
     },
     async whenIdle() {
-      while (inFlight) await inFlight.done;
+      while (inFlight) {
+        const current = inFlight;
+        await current.done;
+        // A finished save always clears itself; stopping here keeps a future bug from looping forever.
+        if (inFlight === current) return;
+      }
     },
   };
 }
