@@ -22,7 +22,7 @@ Plantetary is live at **https://plantetary.vercel.app**, deployed by Vercel from
 **Before inviting players:**
 
 1. **Custom SMTP** in Supabase ([supabase-auth.md](supabase-auth.md#supabase-dashboard-settings), step 4), then review **Rate Limits**. Until then, sign-in emails only reach members of your Supabase organization, a few an hour.
-2. **A privacy notice** saying what's stored (email address, game saves and backups), where (Supabase and Vercel), and how to ask for an account to be deleted. There's no account deletion in the app yet (Stage 10); until then, delete the user in **Authentication → Users**, and their saves and backups are deleted with them.
+2. **Publish the privacy notice.** The page is built (`/privacy`, from `src/app/privacy/privacy-notice.md`, linked from the sidebar, the mobile menu, the sign-in form and Settings → Your data), but two things block publishing it: a **legal review** of the wording, and the **effective date**, which is still a placeholder (`[DATE — to be set when published]`). Deletion requests go to hello.plantetary@gmail.com and are handled by hand: [account-deletion.md](account-deletion.md). There's no account deletion in the app yet (Stage 10).
 3. **Your Supabase plan:** free projects pause after a period without activity, and their automatic backups can't be downloaded. Consider a paid plan, or take regular copies (`npx supabase db dump --remote --data-only`, kept outside the repository).
 
 No secret belongs anywhere in this setup. The app uses the project URL and the **publishable** key, both public. The secret key (`sb_secret_…`) and the `service_role` key bypass every database rule: never put them in Vercel, `.env.local`, or the repository.

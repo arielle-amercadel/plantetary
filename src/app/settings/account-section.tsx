@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { useAuth, type AuthState } from "../auth/auth-provider";
 import { authProblemMessages } from "../auth/auth-session";
@@ -298,6 +299,10 @@ export default function AccountSection() {
               </div>
             </fieldset>
           </form>
+          <p className="settings-description account-privacy-note">
+            Signing in stores your email address with Supabase, and your garden too if you use a cloud garden.{" "}
+            <Link className="text-link" href="/privacy">Read the Privacy Notice</Link>
+          </p>
           {auth.status === "session-ended" && (
             <div className="settings-form-row">
               <span />

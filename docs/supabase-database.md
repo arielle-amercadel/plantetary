@@ -43,7 +43,7 @@ Signed-in users can only write the columns they're meant to. `user_id`, `revisio
 
 **Nothing in the app deletes a save or a backup**, so players have no permission to (`20261108090000_remove_player_delete_permissions.sql`). Someone holding a stolen session therefore can't wipe a player's save and the backups that would restore it. Rows are still removed in two ways, neither of which uses the player's permissions:
 
-- **Deleting an account** (**Authentication → Users**) deletes its save, backups and profile (the foreign keys cascade).
+- **Deleting an account** (**Authentication → Users**) deletes its save, backups and profile (the foreign keys cascade). For a player's request, follow [account-deletion.md](account-deletion.md).
 - **Backup limits** remove the oldest backups beyond each reason's limit (the trigger runs as its owner).
 
 The import RPC runs with the player's own permissions, so it relies on players being able to read and add their own backups: it checks that its backup was kept before replacing the save. Those permissions stay. `profiles` keeps its delete permission until the app uses the table. A cloud reset from the app (Stage 10) will need its own checked function.
@@ -459,5 +459,5 @@ Then ask the player to open Plantetary and sign in: their cloud garden is the re
 - `profiles` isn't read or written by the app; profile and reminder preferences stay in the browser.
 - Nothing merges changes between devices (Stage 9). Importing (Stage 8) replaces the cloud garden; it doesn't merge.
 - Backups (`browser_import`, `conflict`, `daily`, `upgrade`) can't be restored from the app. Only the project owner can, from the dashboard.
-- Account deletion and cloud reset from the app (Stage 10).
+- Account deletion and cloud reset from the app (Stage 10). Until then, deletion is by email request, handled by hand: [account-deletion.md](account-deletion.md).
 - CI doesn't run these database tests. They need Docker, so they could be added as a separate CI job later.

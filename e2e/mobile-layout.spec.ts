@@ -20,6 +20,7 @@ const DESTINATIONS = [
   { name: /^Plant Journal/, url: /\/plant-journal$/ },
   { name: "Completion History", url: /\/completion-history$/ },
   { name: "Settings", url: /\/settings$/ },
+  { name: "Privacy", url: /\/privacy$/ },
   { name: "Home", url: /:\d+\/$/ },
 ] as const;
 
@@ -87,7 +88,8 @@ test.describe("Phone header and menu", () => {
 
     await page.keyboard.press("Enter");
     for (let index = 0; index < DESTINATIONS.length; index += 1) await page.keyboard.press("Tab");
-    await expect(mainNav(page).getByRole("link", { name: "Settings" })).toBeFocused();
+    // The last row is Privacy; one more Tab leaves the menu.
+    await expect(mainNav(page).getByRole("link", { name: "Privacy", exact: true })).toBeFocused();
     await page.keyboard.press("Tab");
     await expect(mainNav(page)).toBeHidden();
     await expect(menuButton(page)).toHaveAttribute("aria-expanded", "false");

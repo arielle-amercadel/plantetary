@@ -6,6 +6,7 @@ import ProfileAvatarArtwork from "../profile-avatar-artwork";
 import { getLocalDateKey } from "../quest-logic";
 import { useQuestStore } from "../quest-store";
 import AccountSection from "./account-section";
+import YourDataSection from "./your-data-section";
 import {
   createSettingsExportJson,
   defaultProfilePreferences,
@@ -253,6 +254,8 @@ export default function SettingsPage() {
           </form>
           <p className={`settings-message${reminderError ? " is-error" : ""}`} role="status">{reminderMessage}</p>
         </section>
+
+        <YourDataSection />
 
         <section className="settings-section" aria-labelledby="settings-data-heading">
           <h2 id="settings-data-heading">Data management</h2>
