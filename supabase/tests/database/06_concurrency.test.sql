@@ -197,8 +197,8 @@ select is(
 );
 
 -- 3. Delete and recreate at the same time as a stale tab ------------------------
--- F's save reaches revision 3. One session deletes it while another recreates
--- it; the recreate has to wait for the delete to commit.
+-- F's save reaches revision 3. One session deletes it (as the owner: players
+-- can't) while F recreates it; the recreate has to wait for the delete to commit.
 select pg_temp.run('setup', $sql$
   insert into public.quest_saves (user_id, data, schema_version)
   values ('ffffffff-0000-4000-8000-000000000006', '{"v":1}', 3);
@@ -206,7 +206,7 @@ select pg_temp.run('setup', $sql$
   update public.quest_saves set data = '{"v":3}' where user_id = 'ffffffff-0000-4000-8000-000000000006';
 $sql$);
 
-select pg_temp.begin_as('s1', 'ffffffff-0000-4000-8000-000000000006');
+select pg_temp.run('s1', 'begin');
 select pg_temp.run('s1', $sql$
   delete from public.quest_saves where user_id = 'ffffffff-0000-4000-8000-000000000006' $sql$);
 

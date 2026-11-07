@@ -1,5 +1,6 @@
 -- save_backups: a signed-in user can reach only their own backups, and no one
--- can change a backup after it is made.
+-- can change or delete a backup after it is made (only pruning and deleting
+-- the account remove them).
 
 begin;
 create extension if not exists pgtap with schema extensions;
@@ -30,9 +31,10 @@ select is_empty(
   'A cannot read B''s backups'
 );
 
-select is_empty(
+select throws_ok(
   $$ delete from public.save_backups
-     where user_id = 'bbbbbbbb-0000-4000-8000-000000000002' returning 1 $$,
+     where user_id = 'bbbbbbbb-0000-4000-8000-000000000002' $$,
+  '42501', null,
   'A cannot delete B''s backups'
 );
 
@@ -77,10 +79,10 @@ select lives_ok(
   'A can add a backup to their own account'
 );
 
-select results_eq(
-  $$ delete from public.save_backups where reason = 'conflict' returning user_id $$,
-  $$ values ('aaaaaaaa-0000-4000-8000-000000000001'::uuid) $$,
-  'A delete with no user filter removes only A''s own backups'
+select throws_ok(
+  $$ delete from public.save_backups where reason = 'conflict' $$,
+  '42501', null,
+  'A cannot delete even their own backups'
 );
 
 -- Act as user B --------------------------------------------------------------
@@ -105,9 +107,9 @@ select results_eq(
 
 select results_eq(
   $$ select reason from public.save_backups
-     where user_id = 'aaaaaaaa-0000-4000-8000-000000000001' $$,
-  $$ values ('browser_import'::text) $$,
-  'A has only the backup A kept'
+     where user_id = 'aaaaaaaa-0000-4000-8000-000000000001' order by id $$,
+  $$ values ('conflict'::text), ('browser_import'::text) $$,
+  'A still has every backup: the one made for A, and the one A added'
 );
 
 select * from finish();

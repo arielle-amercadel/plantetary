@@ -1,5 +1,6 @@
 -- Regression: deleting and recreating a save must never reuse a revision, so a
--- stale tab can't overwrite the new save.
+-- stale tab can't overwrite the new save. Players can't delete saves, but the
+-- owner can (a reset by hand, or a future checked reset), so it still matters.
 
 begin;
 create extension if not exists pgtap with schema extensions;
@@ -22,13 +23,15 @@ values ('aaaaaaaa-0000-4000-8000-000000000001', '{"save":"original"}', 3);
 update public.quest_saves set data = '{"save":"original","xp":5}'
 where user_id = 'aaaaaaaa-0000-4000-8000-000000000001';  -- revision 2
 
--- Another device deletes the save and starts again.
+-- The save is deleted (by the owner: players can't), then A starts again.
+reset role;
 select results_eq(
   $$ delete from public.quest_saves
      where user_id = 'aaaaaaaa-0000-4000-8000-000000000001' returning revision $$,
   $$ values (2::bigint) $$,
-  'A deletes their save at revision 2'
+  'A''s save is deleted at revision 2'
 );
+set local role authenticated;
 
 select results_eq(
   $$ insert into public.quest_saves (user_id, data, schema_version)
@@ -67,11 +70,16 @@ select results_eq(
   'A tab holding the current revision can still save, and updates still add 1'
 );
 
--- Several delete-and-recreate rounds never go backwards.
+-- Several delete-and-recreate rounds never go backwards (deletes by the owner,
+-- saves by A).
+reset role;
 delete from public.quest_saves where user_id = 'aaaaaaaa-0000-4000-8000-000000000001';
+set local role authenticated;
 insert into public.quest_saves (user_id, data, schema_version)
 values ('aaaaaaaa-0000-4000-8000-000000000001', '{"round":2}', 3);
+reset role;
 delete from public.quest_saves where user_id = 'aaaaaaaa-0000-4000-8000-000000000001';
+set local role authenticated;
 
 select results_eq(
   $$ insert into public.quest_saves (user_id, data, schema_version)

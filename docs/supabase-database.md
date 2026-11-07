@@ -1,6 +1,6 @@
 # Supabase database
 
-Plantetary's database tables, access rules and tests (built in Stage 4, extended in Stages 7–8). Since Stage 7, a verified sign-in saves its garden in `quest_saves`, with `conflict` and `upgrade` copies in `save_backups` (see [game-storage.md](game-storage.md)). Stage 8 Step 2 adds an explicit transactional import RPC and adapter; its UI/controller aren't wired yet. Imports back up the existing cloud garden as `browser_import`. `profiles` isn't used by the app yet. Guests never touch the database.
+Plantetary's database tables, access rules and tests (built in Stage 4, extended in Stages 7–8). Since Stage 7, a verified sign-in saves its garden in `quest_saves`, with `conflict` and `upgrade` copies in `save_backups` (see [game-storage.md](game-storage.md)). Stage 8 adds a transactional import RPC, used by the app's import screens, which backs up the existing cloud garden as `browser_import`. Since the post-launch hardening, players can't delete their save or backups (see **Who can do what**). `profiles` isn't used by the app yet. Guests never touch the database.
 
 ## What's in this folder
 
@@ -14,7 +14,8 @@ Plantetary's database tables, access rules and tests (built in Stage 4, extended
 | `supabase/migrations/20261105223950_fix_revision_reuse_and_backup_retention.sql` | Review fixes: revisions never repeat, and backup limits hold under concurrent inserts |
 | `supabase/migrations/20261106090000_add_upgrade_backups.sql` | Stage 7: the `upgrade` backup reason, one per user and source revision, with its own limit |
 | `supabase/migrations/20261107090000_add_browser_import_rpc.sql` | Stage 8: transactional, account-bound, revision-checked import RPC; reuses existing tables and `browser_import` backups |
-| `supabase/tests/database/*.test.sql` | 197 pgTAP tests across 9 files |
+| `supabase/migrations/20261108090000_remove_player_delete_permissions.sql` | Post-launch hardening: players can no longer delete their save or backups |
+| `supabase/tests/database/*.test.sql` | 198 pgTAP tests across 9 files |
 
 Migrations run in filename order. Never edit one after it has been applied to your hosted project; add a new migration instead.
 
@@ -34,11 +35,18 @@ Row Level Security (RLS) is on for every table. The database checks every reques
 
 | | Logged-out visitor | Signed-in user, own rows | Signed-in user, someone else's rows |
 | --- | --- | --- | --- |
-| `quest_saves` | Nothing | Read, create, update, delete | Nothing |
+| `quest_saves` | Nothing | Read, create, update (never delete) | Nothing |
 | `profiles` | Nothing | Read, create, update, delete | Nothing |
-| `save_backups` | Nothing | Read, create, delete (never edit) | Nothing |
+| `save_backups` | Nothing | Read, create (never edit or delete) | Nothing |
 
 Signed-in users can only write the columns they're meant to. `user_id`, `revision`, `created_at` and `updated_at` are set by the database.
+
+**Nothing in the app deletes a save or a backup**, so players have no permission to (`20261108090000_remove_player_delete_permissions.sql`). Someone holding a stolen session therefore can't wipe a player's save and the backups that would restore it. Rows are still removed in two ways, neither of which uses the player's permissions:
+
+- **Deleting an account** (**Authentication → Users**) deletes its save, backups and profile (the foreign keys cascade).
+- **Backup limits** remove the oldest backups beyond each reason's limit (the trigger runs as its owner).
+
+The import RPC runs with the player's own permissions, so it relies on players being able to read and add their own backups: it checks that its backup was kept before replacing the save. Those permissions stay. `profiles` keeps its delete permission until the app uses the table. A cloud reset from the app (Stage 10) will need its own checked function.
 
 RLS doesn't stop people from editing their own data, including XP. That's fine for a single-player game, but needs rethinking before any leaderboard.
 
@@ -111,7 +119,8 @@ migrations must not be edited or reapplied manually.
 
 Plantetary is live at https://plantetary.vercel.app, using the hosted Supabase project **plantetary** (Postgres 17, matching `major_version` in `supabase/config.toml`).
 
-- **Migrations:** all seven files in `supabase/migrations/` are applied, through Stage 8's `20261107090000_add_browser_import_rpc.sql`. `npx supabase migration list --remote` shows each in both the Local and Remote columns.
+- **Migrations:** the first seven files in `supabase/migrations/` are applied, through Stage 8's `20261107090000_add_browser_import_rpc.sql`. `npx supabase migration list --remote` shows each in both the Local and Remote columns.
+- **Next to apply:** `20261108090000_remove_player_delete_permissions.sql`, with **Applying a new migration to the hosted project** below. It changes no rows: every save and backup stays exactly as it is. Afterwards, a signed-in player who tries to delete their save or a backup through the API gets `permission denied`; nothing in the app does that, so players notice nothing. Saving, loading, conflict and upgrade backups, imports, backup limits and deleting an account all work as before. The deployed app needs no change, so it can be applied before or after any release; to undo it, a new migration would grant `delete` again and recreate the two policies.
 - **Checked from outside, as an anonymous visitor (read-only):** requests for `quest_saves`, `save_backups` and `profiles` with only the publishable key are refused (HTTP 401, permission denied); the `private` schema isn't exposed; only email sign-in is enabled, with email confirmation on.
 - **Real players' data lives here now.** Apply any new migration with **Applying a new migration to the hosted project** below, backup first, and test by hand only with your own test addresses.
 
@@ -204,7 +213,7 @@ The app uses the project URL and **publishable** key only. The secret key bypass
 
 ## Applying a new migration to the hosted project
 
-Every migration so far is applied (see **Hosted project status**). This is the procedure for the next one; it's the one Stages 7 and 8 were applied with. Those two, for reference:
+See **Hosted project status** for what's applied and what's next. This is the procedure for each new migration; it's the one Stages 7 and 8 were applied with. Those two, for reference:
 
 | Migration | Stage | What it changes | Without it |
 | --- | --- | --- | --- |
@@ -229,7 +238,7 @@ Run these yourself, from the project folder. Every hosted step has `--remote`; n
 
    If `start` stops because the `vector` or `studio` container is unhealthy, run `npx supabase start -x vector,studio`. The database tests don't need either.
 
-3. **See what the hosted project has (read-only).** Every migration already applied (through `20261107090000_add_browser_import_rpc`) should be in both columns, and only the new one(s) missing from Remote. If anything else differs (a migration missing that should be there, or one on Remote that isn't in the folder), stop and find out why first.
+3. **See what the hosted project has (read-only).** Every migration already applied (through `20261107090000_add_browser_import_rpc`, until the next one is applied) should be in both columns, and only the new one(s) missing from Remote. If anything else differs (a migration missing that should be there, or one on Remote that isn't in the folder), stop and find out why first.
 
    ```bash
    npx supabase migration list --remote
@@ -237,7 +246,7 @@ Run these yourself, from the project folder. Every hosted step has `--remote`; n
 
 ### 2. Back up
 
-The project holds players' saves now, so take a copy first, even if the migration only adds things. Save it outside the project folder so it's never committed, and delete it when you no longer need it: it contains players' data.
+The project holds players' saves now, so take a copy first, even if the migration changes no rows. Save it outside the project folder so it's never committed, and delete it when you no longer need it: it contains players' data.
 
 ```bash
 npx supabase db dump --remote --data-only -f ~/plantetary-hosted-data-before-<migration-name>.sql
@@ -280,7 +289,20 @@ If it fails, don't retry by pasting SQL into the SQL Editor. Run step 1.3 again 
    npx supabase test db --remote
    ```
 
-3. **Permissions, if the migration changed any (read-only).** For example, who can run Stage 8's import, in the dashboard's **SQL Editor**:
+3. **Permissions, if the migration changed any (read-only).** In the dashboard's **SQL Editor**. For `20261108090000_remove_player_delete_permissions`:
+
+   ```sql
+   select
+     has_table_privilege('authenticated', 'public.quest_saves', 'DELETE') as can_delete_saves,
+     has_table_privilege('authenticated', 'public.save_backups', 'DELETE') as can_delete_backups,
+     has_table_privilege('authenticated', 'public.save_backups', 'SELECT') as can_read_backups,
+     (select count(*) from pg_policies where schemaname = 'public' and cmd = 'DELETE'
+        and tablename in ('quest_saves', 'save_backups')) as delete_policies;
+   ```
+
+   Expect `false`, `false`, `true` and `0`. `can_read_backups` must stay `true`: imports need it.
+
+   For Stage 8, who can run the import:
 
    ```sql
    select

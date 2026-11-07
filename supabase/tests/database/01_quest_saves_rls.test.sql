@@ -3,7 +3,7 @@
 
 begin;
 create extension if not exists pgtap with schema extensions;
-select plan(19);
+select plan(20);
 
 -- Test users: A and B each have a save; C has none yet.
 insert into auth.users (id, email, aud, role) values
@@ -37,10 +37,18 @@ select is_empty(
   'A cannot update B''s save'
 );
 
-select is_empty(
+select throws_ok(
   $$ delete from public.quest_saves
-     where user_id = 'bbbbbbbb-0000-4000-8000-000000000002' returning 1 $$,
+     where user_id = 'bbbbbbbb-0000-4000-8000-000000000002' $$,
+  '42501', null,
   'A cannot delete B''s save'
+);
+
+select throws_ok(
+  $$ delete from public.quest_saves
+     where user_id = 'aaaaaaaa-0000-4000-8000-000000000001' $$,
+  '42501', null,
+  'A cannot delete even their own save (only deleting the account removes it)'
 );
 
 select throws_ok(
