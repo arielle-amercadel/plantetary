@@ -8,7 +8,7 @@ Plantetary is live at **https://plantetary.vercel.app**, deployed by Vercel from
 
 **Done:**
 
-- **Database:** all seven migrations applied to the hosted Supabase project **plantetary**, through Stage 8 (see [supabase-database.md → Hosted project status](supabase-database.md#hosted-project-status)).
+- **Database:** the first seven migrations applied to the hosted Supabase project **plantetary**, through Stage 8 (see [supabase-database.md → Hosted project status](supabase-database.md#hosted-project-status)). The eighth, which removes players' delete permissions, is next to apply.
 - **Vercel:** the two Supabase variables set for Production (below), and the site redeployed with them.
 - **Supabase Auth:** Site URL and Redirect URLs set for https://plantetary.vercel.app.
 - **Checked by hand on the live site:** sign-in, cloud saving and loading, guest progress staying in the browser, and the mobile layout.
@@ -85,6 +85,6 @@ Delete the test users afterwards (**Authentication → Users**); their saves and
 
 ## If something goes wrong
 
-- **The app:** use Vercel's **Instant Rollback** to the previous deployment. Every migration so far only adds things, so an earlier version of the app keeps working with them; keep it that way for new ones (see **Releasing a change**).
+- **The app:** use Vercel's **Instant Rollback** to the previous deployment. Every migration so far only adds things, or removes permissions the app never used (players deleting saves or backups), so an earlier version of the app keeps working with them; keep it that way for new ones (see **Releasing a change**).
 - **Sign-in only:** removing the two variables and redeploying turns sign-in off. Everyone plays in guest mode; cloud saves stay in the database, untouched.
 - **The database:** don't edit or re-run migrations by hand. Check `npx supabase migration list --remote` and find out what happened first.

@@ -30,9 +30,8 @@ select is_empty(
 select policies_are('public', 'quest_saves', array[
   'Users can read their own save',
   'Users can create their own save',
-  'Users can update their own save',
-  'Users can delete their own save'
-], 'quest_saves has exactly the four expected policies');
+  'Users can update their own save'
+], 'quest_saves has exactly the three expected policies (no delete policy)');
 
 select policies_are('public', 'profiles', array[
   'Users can read their own profile',
@@ -43,9 +42,8 @@ select policies_are('public', 'profiles', array[
 
 select policies_are('public', 'save_backups', array[
   'Users can read their own backups',
-  'Users can create their own backups',
-  'Users can delete their own backups'
-], 'save_backups has no update policy');
+  'Users can create their own backups'
+], 'save_backups has no update or delete policy');
 
 -- Table privileges ------------------------------------------------------------
 select table_privs_are('public', 'quest_saves', 'anon', array[]::text[],
@@ -55,12 +53,12 @@ select table_privs_are('public', 'profiles', 'anon', array[]::text[],
 select table_privs_are('public', 'save_backups', 'anon', array[]::text[],
   'anon has no table privileges on save_backups');
 
-select table_privs_are('public', 'quest_saves', 'authenticated', array['SELECT', 'DELETE'],
-  'authenticated has only SELECT and DELETE on all of quest_saves (writes are per column)');
+select table_privs_are('public', 'quest_saves', 'authenticated', array['SELECT'],
+  'authenticated has only SELECT on all of quest_saves: writes are per column, and there is no DELETE');
 select table_privs_are('public', 'profiles', 'authenticated', array['SELECT', 'DELETE'],
   'authenticated has only SELECT and DELETE on all of profiles (writes are per column)');
-select table_privs_are('public', 'save_backups', 'authenticated', array['SELECT', 'DELETE'],
-  'authenticated has only SELECT and DELETE on all of save_backups (inserts are per column)');
+select table_privs_are('public', 'save_backups', 'authenticated', array['SELECT'],
+  'authenticated has only SELECT on all of save_backups: inserts are per column, and there is no DELETE');
 
 -- The private schema can't be used from the API --------------------------------
 select ok(
