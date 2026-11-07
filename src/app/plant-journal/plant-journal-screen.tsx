@@ -1,13 +1,14 @@
 "use client";
 
 import Image from "next/image";
-import { useState } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { FigmaIcon } from "../app-shell";
 import { getLevelProgress, useQuestStore } from "../quest-store";
 import {
   getNextPlantProgress,
   getPlantCollectionStatus,
   getPlantFilterResults,
+  getPlantJournalPage,
   getPlantJournalSpread,
   getPlantThresholdProgress,
   getWaitingGiftsLabel,
@@ -64,6 +65,34 @@ function PlantCard({ plant, collected, totalXp }: { plant: Plant; collected: boo
   );
 }
 
+/** Below this width the journal shows one page at a time. Matches `.journal-book` rules in globals.css. */
+const singlePageQuery = "(max-width: 980px)";
+
+function subscribeToSinglePage(onChange: () => void) {
+  const query = window.matchMedia(singlePageQuery);
+  query.addEventListener("change", onChange);
+  return () => query.removeEventListener("change", onChange);
+}
+
+/** Whether the screen is narrow enough for one page at a time. Two-page spreads before the page is in a browser. */
+function useSinglePageJournal(): boolean {
+  return useSyncExternalStore(subscribeToSinglePage, () => window.matchMedia(singlePageQuery).matches, () => false);
+}
+
+/** Each page's heading and description, as in the two-page spread: left pages are odd, right pages even. */
+function pageCopy(filter: PlantFilter, side: "left" | "right") {
+  if (side === "left") {
+    return {
+      title: filter === "all" ? "Your Growing Collection" : filter === "collected" ? "Collected Plants" : "Undiscovered Plants",
+      description: filter === "locked" ? "More lovely things are waiting to grow." : "The little leaves you’ve gathered.",
+    };
+  }
+  return {
+    title: filter === "all" ? "Your Collection Continues" : filter === "collected" ? "Collected Plants" : "Undiscovered Plants",
+    description: filter === "collected" ? "The little leaves you’ve gathered." : "More lovely things are waiting to grow.",
+  };
+}
+
 function BookPage({
   title,
   description,
@@ -117,7 +146,14 @@ function BookPage({
 
 export default function PlantJournalScreen() {
   const [filter, setFilter] = useState<PlantFilter>("all");
-  const [spreadIndex, setSpreadIndex] = useState(0);
+  // The page being read (0 is page 1). Two-page spreads show the spread containing it; one page at a
+  // time shows just it, so resizing keeps the reader's place.
+  const [pageIndex, setPageIndex] = useState(0);
+  const singlePage = useSinglePageJournal();
+  const previousPageRef = useRef<HTMLButtonElement>(null);
+  const nextPageRef = useRef<HTMLButtonElement>(null);
+  /** After reaching the first or last page, that button is disabled, so focus moves to the other one. */
+  const pendingPageFocus = useRef<"previous" | "next" | null>(null);
   const [revealedPlantId, setRevealedPlantId] = useState<string | null>(null);
   const { totalXp, discoveredPlantIds, pendingPlantGiftIds, unwrapPlantGift, hasRestored } = useQuestStore();
   const { level, xpIntoLevel, xpForNextLevel } = getLevelProgress(totalXp);
@@ -126,8 +162,25 @@ export default function PlantJournalScreen() {
   const visiblePlants = getPlantFilterResults(discoveredPlantIds, filter, pendingPlantGiftIds);
   const discoveredSet = new Set(discoveredPlantIds);
   const collectionCount = plantCatalog.filter((plant) => discoveredSet.has(plant.id)).length;
-  const spread = getPlantJournalSpread(discoveredPlantIds, filter, spreadIndex, pendingPlantGiftIds);
+  const spread = getPlantJournalSpread(discoveredPlantIds, filter, Math.floor(pageIndex / 2), pendingPlantGiftIds);
   const { leftPlants, rightPlants, currentSpread, spreadCount } = spread;
+  const onePage = getPlantJournalPage(discoveredPlantIds, filter, pageIndex, pendingPlantGiftIds);
+  const onePageCopy = pageCopy(filter, onePage.currentPage % 2 === 0 ? "left" : "right");
+
+  useEffect(() => {
+    const target = pendingPageFocus.current === "previous" ? previousPageRef.current
+      : pendingPageFocus.current === "next" ? nextPageRef.current : null;
+    if (!target) return;
+    pendingPageFocus.current = null;
+    if (!target.disabled) target.focus();
+  });
+
+  function turnPage(step: -1 | 1) {
+    const next = onePage.currentPage + step;
+    setPageIndex(next);
+    if (next === 0) pendingPageFocus.current = "next";
+    else if (next === onePage.pageCount - 1) pendingPageFocus.current = "previous";
+  }
   const nextGift = plantCatalog.find((plant) => pendingPlantGiftIds.includes(plant.id));
   const revealedPlant = plantCatalog.find((plant) => plant.id === revealedPlantId);
 
@@ -237,7 +290,7 @@ export default function PlantJournalScreen() {
               aria-pressed={filter === item}
               onClick={() => {
                 setFilter(item);
-                setSpreadIndex(0);
+                setPageIndex(0);
               }}
             >
               {item === "all" ? "All" : item === "collected" ? "Collected" : "Locked"}
@@ -247,49 +300,87 @@ export default function PlantJournalScreen() {
         <span className="journal-filter-count">Showing {visiblePlants.length} plants</span>
       </section>
 
-      <section className="journal-book" aria-label="Open botanical journal">
-        <div className="journal-book-spread">
-          <BookPage
-            title={filter === "all" ? "Your Growing Collection" : filter === "collected" ? "Collected Plants" : "Undiscovered Plants"}
-            description={filter === "locked" ? "More lovely things are waiting to grow." : "The little leaves you’ve gathered."}
-            plants={leftPlants}
-            discoveredPlantIds={discoveredPlantIds}
-            pageKind={filter}
-            totalXp={totalXp}
-            pageNumber={currentSpread * 2 + 1}
-          />
-          <div className="journal-book-binding" aria-hidden="true"><span /></div>
-          <BookPage
-            title={filter === "all" ? "Your Collection Continues" : filter === "collected" ? "Collected Plants" : "Undiscovered Plants"}
-            description={filter === "collected" ? "The little leaves you’ve gathered." : "More lovely things are waiting to grow."}
-            plants={rightPlants}
-            discoveredPlantIds={discoveredPlantIds}
-            pageKind={filter === "all" ? "all" : filter}
-            totalXp={totalXp}
-            pageNumber={currentSpread * 2 + 2}
-          />
-        </div>
-        {spreadCount > 1 && (
-          <nav className="journal-book-navigation" aria-label="Journal spread navigation">
-            {currentSpread > 0 && (
+      <section className={`journal-book${singlePage ? " is-single-page" : ""}`} aria-label="Open botanical journal">
+        {singlePage ? (
+          <>
+            <div className="journal-book-spread">
+              <BookPage
+                {...onePageCopy}
+                plants={onePage.plants}
+                discoveredPlantIds={discoveredPlantIds}
+                pageKind={filter}
+                totalXp={totalXp}
+                pageNumber={onePage.pageNumber}
+              />
+            </div>
+            <nav className="journal-page-navigation" aria-label="Journal page navigation">
               <button
+                ref={previousPageRef}
                 type="button"
-                aria-label="Previous spread"
-                onClick={() => setSpreadIndex(currentSpread - 1)}
+                aria-label="Previous page"
+                disabled={onePage.currentPage === 0}
+                onClick={() => turnPage(-1)}
               >
-                <span aria-hidden="true">←</span>
+                <span aria-hidden="true">‹</span> Previous
               </button>
-            )}
-            {currentSpread < spreadCount - 1 && (
+              <span className="journal-page-indicator" aria-live="polite">
+                Page {onePage.pageNumber} of {onePage.pageCount}
+              </span>
               <button
+                ref={nextPageRef}
                 type="button"
-                aria-label="Next spread"
-                onClick={() => setSpreadIndex(currentSpread + 1)}
+                aria-label="Next page"
+                disabled={onePage.currentPage >= onePage.pageCount - 1}
+                onClick={() => turnPage(1)}
               >
-                <span aria-hidden="true">→</span>
+                Next <span aria-hidden="true">›</span>
               </button>
+            </nav>
+          </>
+        ) : (
+          <>
+            <div className="journal-book-spread">
+              <BookPage
+                {...pageCopy(filter, "left")}
+                plants={leftPlants}
+                discoveredPlantIds={discoveredPlantIds}
+                pageKind={filter}
+                totalXp={totalXp}
+                pageNumber={currentSpread * 2 + 1}
+              />
+              <div className="journal-book-binding" aria-hidden="true"><span /></div>
+              <BookPage
+                {...pageCopy(filter, "right")}
+                plants={rightPlants}
+                discoveredPlantIds={discoveredPlantIds}
+                pageKind={filter}
+                totalXp={totalXp}
+                pageNumber={currentSpread * 2 + 2}
+              />
+            </div>
+            {spreadCount > 1 && (
+              <nav className="journal-book-navigation" aria-label="Journal spread navigation">
+                {currentSpread > 0 && (
+                  <button
+                    type="button"
+                    aria-label="Previous spread"
+                    onClick={() => setPageIndex((currentSpread - 1) * 2)}
+                  >
+                    <span aria-hidden="true">←</span>
+                  </button>
+                )}
+                {currentSpread < spreadCount - 1 && (
+                  <button
+                    type="button"
+                    aria-label="Next spread"
+                    onClick={() => setPageIndex((currentSpread + 1) * 2)}
+                  >
+                    <span aria-hidden="true">→</span>
+                  </button>
+                )}
+              </nav>
             )}
-          </nav>
+          </>
         )}
       </section>
 

@@ -119,6 +119,30 @@ export function getPlantJournalSpread(
   };
 }
 
+/**
+ * One page of the journal, for screens too narrow for a two-page spread. Pages hold the same plants as
+ * the spread's pages do (page 1 is the first spread's left page, page 2 its right page, and so on), but
+ * only pages with plants are counted, so a short filter never pages through empty ones. At least one page.
+ */
+export function getPlantJournalPage(
+  discoveredPlantIds: string[],
+  filter: PlantFilter,
+  pageIndex: number,
+  pendingPlantGiftIds: string[] = [],
+) {
+  const plants = getPlantFilterResults(discoveredPlantIds, filter, pendingPlantGiftIds);
+  const plantsPerPage = 4;
+  const pageCount = Math.max(1, Math.ceil(plants.length / plantsPerPage));
+  const currentPage = Math.max(0, Math.min(Math.trunc(pageIndex) || 0, pageCount - 1));
+  const start = currentPage * plantsPerPage;
+  return {
+    plants: plants.slice(start, start + plantsPerPage),
+    currentPage,
+    pageCount,
+    pageNumber: currentPage + 1,
+  };
+}
+
 export function getNextPlantProgress(totalXp: number, discoveredPlantIds: string[], pendingPlantGiftIds: string[]) {
   const discovered = new Set(discoveredPlantIds);
   const pending = new Set(pendingPlantGiftIds);

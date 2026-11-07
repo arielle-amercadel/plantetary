@@ -6,6 +6,7 @@ import {
   getNextPlantProgress,
   getPlantCollectionStatus,
   getPlantFilterResults,
+  getPlantJournalPage,
   getPlantJournalSpread,
   getPlantJournalSpreadCount,
   getPlantThresholdProgress,
@@ -377,6 +378,51 @@ describe("Plant Journal filters and next discovery", () => {
     const allDiscovered = plantCatalog.map((plant) => plant.id);
     expect(getPlantJournalSpreadCount(allDiscovered, "collected")).toBe(2);
     expect(getPlantJournalSpread(allDiscovered, "collected", 0).rightPlants).toHaveLength(4);
+  });
+
+  describe("one page at a time (narrow screens)", () => {
+    const pagesOf = (discovered: string[], filter: "all" | "collected" | "locked", pending: string[] = []) => {
+      const { pageCount } = getPlantJournalPage(discovered, filter, 0, pending);
+      return Array.from({ length: pageCount }, (_, index) => getPlantJournalPage(discovered, filter, index, pending));
+    };
+
+    it("shows the same plants on each page as the two-page spreads do, in order", () => {
+      for (const [discovered, filter] of [
+        [[], "all"],
+        [plantCatalog.slice(0, 5).map((plant) => plant.id), "collected"],
+        [["fern", "daisy"], "locked"],
+        [plantCatalog.map((plant) => plant.id), "collected"],
+      ] as const) {
+        const spreadCount = getPlantJournalSpreadCount([...discovered], filter);
+        const spreadPages = Array.from({ length: spreadCount }, (_, index) => getPlantJournalSpread([...discovered], filter, index))
+          .flatMap((spread) => [spread.leftPlants, spread.rightPlants]);
+        pagesOf([...discovered], filter).forEach((page, index) => {
+          expect(page.pageNumber).toBe(index + 1);
+          expect(page.plants).toEqual(spreadPages[index]);
+        });
+      }
+    });
+
+    it("counts only pages with plants, and at least one", () => {
+      expect(getPlantJournalPage([], "all", 0)).toMatchObject({ pageCount: 4, currentPage: 0, pageNumber: 1 });
+      expect(pagesOf([], "all").flatMap((page) => page.plants)).toEqual(plantCatalog);
+      // Five collected plants: two pages (4 + 1), never the empty third and fourth pages of the spreads.
+      expect(pagesOf(plantCatalog.slice(0, 5).map((plant) => plant.id), "collected").map((page) => page.plants.length)).toEqual([4, 1]);
+      // Nothing locked once everything is discovered: one empty page, not zero.
+      expect(getPlantJournalPage(plantCatalog.map((plant) => plant.id), "locked", 0)).toMatchObject({ plants: [], pageCount: 1, pageNumber: 1 });
+    });
+
+    it("keeps the page in range", () => {
+      expect(getPlantJournalPage([], "all", 9)).toMatchObject({ currentPage: 3, pageNumber: 4 });
+      expect(getPlantJournalPage([], "all", -2)).toMatchObject({ currentPage: 0, pageNumber: 1 });
+      expect(getPlantJournalPage([], "all", Number.NaN)).toMatchObject({ currentPage: 0 });
+      expect(getPlantJournalPage([], "all", 1.7)).toMatchObject({ currentPage: 1 });
+    });
+
+    it("counts waiting gifts as collected, as the filters do", () => {
+      const collected = pagesOf(["fern"], "collected", ["daisy"]).flatMap((page) => page.plants.map((plant) => plant.id));
+      expect(collected).toEqual(getPlantFilterResults(["fern"], "collected", ["daisy"]).map((plant) => plant.id));
+    });
   });
 
   it("flows locked plants left to right and keeps two spreads available", () => {
