@@ -304,6 +304,15 @@ export function findQuestForEditing(
   return personalQuest ? { quest: personalQuest, list: "personal" } : undefined;
 }
 
+/**
+ * The quest type a create-page link asks for (`/quests/new?type=daily` or `?type=personal`), or null for
+ * anything else, so a missing or unexpected value just leaves the type for the player to choose.
+ * Editing (`?edit=`) ignores it: the quest's own list decides.
+ */
+export function readQuestTypeParam(value: string | null): QuestListKey | null {
+  return value === "daily" || value === "personal" ? value : null;
+}
+
 export function hasQuestScheduleChanged(previous: Quest, updated: Quest): boolean {
   const previousDays = previous.selectedDays;
   const updatedDays = updated.selectedDays;

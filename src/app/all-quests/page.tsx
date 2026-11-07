@@ -10,7 +10,6 @@ export default function AllQuestsPage() {
     questLists,
     todayKey,
     dailyCompletedQuestIds,
-    addQuest,
     toggleQuest,
     deleteQuest,
   } = useQuestStore();
@@ -37,10 +36,7 @@ export default function AllQuestsPage() {
             note="Quests scheduled for today appear first. Your other routines are here, too."
             quests={dailyQuests}
             showAddButton={false}
-            isAdding={false}
-            onAddingChange={() => {}}
             onToggleQuest={(questId) => toggleQuest("daily", questId)}
-            onAddQuest={(quest) => addQuest("daily", quest)}
             onDeleteQuest={(questId) => deleteQuest("daily", questId)}
           />
           <QuestPanel
@@ -52,10 +48,7 @@ export default function AllQuestsPage() {
             note="Your personal goals, ordered by due date."
             quests={sortedQuestLists.personal}
             showAddButton={false}
-            isAdding={false}
-            onAddingChange={() => {}}
             onToggleQuest={(questId) => toggleQuest("personal", questId)}
-            onAddQuest={(quest) => addQuest("personal", quest)}
             onDeleteQuest={(questId) => deleteQuest("personal", questId)}
           />
         </div>

@@ -773,9 +773,7 @@ button {
   -webkit-line-clamp: 1;
 }
 
-.quest-copy input,
-.new-quest-form input,
-.new-quest-form select {
+.quest-copy input {
   min-width: 0;
   height: 30px;
   padding: 4px 8px;
@@ -836,29 +834,6 @@ button {
   font-size: 11px;
 }
 
-.new-quest-form {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 8px;
-  padding: 10px 16px;
-  border-top: 1px solid var(--border);
-  background: #f7f1e6;
-}
-
-.new-quest-form input,
-.new-quest-form select {
-  flex: 1 1 auto;
-}
-
-.new-quest-form > input {
-  flex: 2 1 180px;
-}
-
-.new-quest-form > select {
-  flex: 0 1 104px;
-}
-
 .category-picker {
   display: flex;
   width: 100%;
@@ -884,37 +859,6 @@ button {
   color: var(--terracotta);
   font-size: 10px;
   line-height: 1.4;
-}
-
-.new-quest-form .category-picker {
-  width: auto;
-  flex: 1 1 180px;
-  flex-wrap: wrap;
-}
-
-.new-quest-form .category-picker > select {
-  flex: 1 1 140px;
-  height: 30px;
-}
-
-.new-quest-form .category-custom-entry {
-  flex: 1 1 100%;
-}
-
-.new-quest-form button {
-  min-height: 30px;
-  padding: 4px 10px;
-  border: 1px solid #526d48;
-  border-radius: 3px;
-  color: white;
-  background: var(--leaf);
-  cursor: pointer;
-}
-
-.new-quest-form button[type="button"] {
-  border-color: #d8cbbf;
-  color: var(--foreground);
-  background: transparent;
 }
 
 .quest-history {
@@ -2366,15 +2310,6 @@ button {
   .quest-add-button {
     gap: 3px;
     font-size: 10px;
-  }
-
-  .new-quest-form > input,
-  .new-quest-form .category-picker {
-    flex-basis: 100%;
-  }
-
-  .new-quest-form > select {
-    flex: 1 1 100px;
   }
 
   .quest-row {

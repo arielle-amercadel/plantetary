@@ -18,10 +18,8 @@ import {
 } from "./settings-logic";
 
 export default function Home() {
-  const [isAddingDailyQuest, setIsAddingDailyQuest] = useState(false);
-  const [isAddingPersonalQuest, setIsAddingPersonalQuest] = useState(false);
   const [displayName, setDisplayName] = useState(defaultProfilePreferences.displayName);
-  const { questLists, todayKey, totalXp, completedTodayCounts, completedOverallCounts, discoveredPlantIds, pendingPlantGiftIds, currentStreak, dailyCompletedQuestIds, recoverableDailyQuestIds, hasRestored, addQuest, toggleQuest, deleteQuest, recoverOrphanedDailyQuest } = useQuestStore();
+  const { questLists, todayKey, totalXp, completedTodayCounts, completedOverallCounts, discoveredPlantIds, pendingPlantGiftIds, currentStreak, dailyCompletedQuestIds, recoverableDailyQuestIds, hasRestored, toggleQuest, deleteQuest, recoverOrphanedDailyQuest } = useQuestStore();
   const { level, xpIntoLevel, xpForNextLevel, xpProgressPercent } = getLevelProgress(totalXp);
   const homeQuestLists = getHomeQuestListsForDisplay(questLists, todayKey);
   const discoveredPlants = plantCatalog.filter((plant) => discoveredPlantIds.includes(plant.id));
@@ -157,10 +155,7 @@ export default function Home() {
                 noteIcon="/icon-refresh.svg"
                 note="A fresh start every day at midnight. Your history stays with you."
                 quests={getDailyQuestsForDisplay(homeQuestLists.daily, dailyCompletedQuestIds)}
-                isAdding={isAddingDailyQuest}
-                onAddingChange={setIsAddingDailyQuest}
                 onToggleQuest={(questId) => toggleQuest("daily", questId)}
-                onAddQuest={(quest) => addQuest("daily", quest)}
                 onDeleteQuest={(questId) => deleteQuest("daily", questId)}
               />
               <QuestPanel
@@ -171,10 +166,7 @@ export default function Home() {
                 noteIcon="/icon-flag.svg"
                 note="One-time adventures, at your own pace."
                 quests={homeQuestLists.personal}
-                isAdding={isAddingPersonalQuest}
-                onAddingChange={setIsAddingPersonalQuest}
                 onToggleQuest={(questId) => toggleQuest("personal", questId)}
-                onAddQuest={(quest) => addQuest("personal", quest)}
                 onDeleteQuest={(questId) => deleteQuest("personal", questId)}
               />
               <div className="quest-history">

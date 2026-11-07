@@ -3,6 +3,7 @@ import {
   VALID_BACKUP_KEY,
   INVALID_BACKUP_KEY,
   QUEST_SAVE_KEY,
+  addQuestFromHome,
   advanceToDay,
   chooseOption,
   completeQuest,
@@ -40,13 +41,9 @@ function expectExplicitEveryDay(quest: SavedQuest) {
   expect(quest).not.toHaveProperty("schedule");
 }
 
-async function quickAddDaily(page: Page, title = QUICK, difficulty?: "Easy" | "Medium" | "Hard") {
-  const panel = dailyPanel(page);
-  await panel.getByRole("button", { name: "Add habit" }).click();
-  await panel.getByLabel("New quest name").fill(title);
-  if (difficulty) await panel.getByLabel("Quest difficulty").selectOption(difficulty);
-  await panel.getByRole("button", { name: "Add", exact: true }).click();
-  await expect(questRow(panel, title)).toBeVisible();
+/** A Daily Quest added from Home's Daily Quests panel (Wellness, Every day). */
+async function addDailyFromHome(page: Page, title = QUICK, difficulty?: "Easy" | "Medium" | "Hard") {
+  await addQuestFromHome(page, "daily", title, difficulty ? { difficulty } : {});
 }
 
 test.describe("Starter Daily Quests", () => {
@@ -112,10 +109,10 @@ test.describe("Starter Daily Quests", () => {
   });
 });
 
-test.describe("Quick-add Daily Quests", () => {
+test.describe("Daily Quests added from Home", () => {
   test("save explicit recurrence with no legacy text, and survive a reload", async ({ page }) => {
     await openApp(page);
-    await quickAddDaily(page);
+    await addDailyFromHome(page);
 
     await expect(questRow(dailyPanel(page), QUICK)).toContainText("Wellness · Every day");
     expectExplicitEveryDay(await savedDaily(page, QUICK));
@@ -129,7 +126,7 @@ test.describe("Quick-add Daily Quests", () => {
   test("appear every day, with completion, streak, XP, and history unchanged", async ({ page }) => {
     await openApp(page);
     for (const title of STARTER_DAILY) await completeQuest(page, title);
-    await quickAddDaily(page, QUICK, "Hard");
+    await addDailyFromHome(page, QUICK, "Hard");
 
     // A quest added after finishing the day is part of today, so today is unfinished until it is done.
     await expectStreak(page, 0);
@@ -154,7 +151,7 @@ test.describe("Quick-add Daily Quests", () => {
 
   test("can be moved to selected days through the form", async ({ page }) => {
     await openApp(page);
-    await quickAddDaily(page);
+    await addDailyFromHome(page);
 
     await page.getByRole("button", { name: `Edit ${QUICK}`, exact: true }).click();
     await chooseOption(page, "Repeat", "Selected days");
@@ -171,15 +168,12 @@ test.describe("Quick-add Daily Quests", () => {
     await expect(questRow(dailyPanel(page), QUICK)).toHaveCount(0);
   });
 
-  test("do not change Personal quick-add quests", async ({ page }) => {
+  test("do not change Personal Quests added from Home", async ({ page }) => {
     const title = "Quick errand";
     await openApp(page);
 
-    const panel = personalPanel(page);
-    await panel.getByRole("button", { name: "Add quest" }).click();
-    await panel.getByLabel("New quest name").fill(title);
-    await panel.getByRole("button", { name: "Add", exact: true }).click();
-    await expect(questRow(panel, title).getByText("Personal", { exact: true })).toBeVisible();
+    await addQuestFromHome(page, "personal", title);
+    await expect(questRow(personalPanel(page), title).getByText("Personal", { exact: true })).toBeVisible();
 
     const save = JSON.parse((await readStorage(page, QUEST_SAVE_KEY))!);
     const saved = (save.questLists.personal as SavedQuest[]).find((quest) => quest.title === title)!;
@@ -193,7 +187,7 @@ test.describe("Quick-add Daily Quests", () => {
 test.describe("Full-form Daily Quests", () => {
   const TITLE = "Form habit";
 
-  test("every-day creation saves the same shape as starter and quick-add quests", async ({ page }) => {
+  test("every-day creation saves the same shape as starter quests", async ({ page }) => {
     await openApp(page, "/quests/new");
     await page.getByRole("button", { name: /Daily Quest/ }).click();
     await page.getByLabel("Quest title").fill(TITLE);

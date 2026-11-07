@@ -10,7 +10,7 @@ import QuestSelect from "./quest-select";
 import QuestDatePicker from "./quest-date-picker";
 import { isSavableDueDate } from "./quest-date-picker-logic";
 import { getCustomCategoryError, getQuestXp, useQuestStore } from "../../quest-store";
-import { findQuestForEditing, formatWeekdaySchedule, getDueDateLabel, scheduledDaysForQuest } from "../../quest-logic";
+import { findQuestForEditing, formatWeekdaySchedule, getDueDateLabel, readQuestTypeParam, scheduledDaysForQuest } from "../../quest-logic";
 import type {
   Difficulty,
   Quest,
@@ -32,6 +32,8 @@ export default function CreateQuestPage() {
 function CreateQuestRoute() {
   const searchParams = useSearchParams();
   const editId = searchParams.get("edit");
+  // A link from a quest panel can choose the type. Editing ignores it: the quest's own list decides.
+  const initialType = editId === null ? readQuestTypeParam(searchParams.get("type")) : null;
   const { questLists, hasRestored } = useQuestStore();
   const editSelection = editId === null ? undefined : findQuestForEditing(questLists, editId);
   const editingQuest = editSelection?.quest;
@@ -65,10 +67,11 @@ function CreateQuestRoute() {
 
   return (
     <CreateQuestForm
-      key={editId ?? "create"}
+      key={editId ?? `create-${initialType ?? ""}`}
       editId={editId}
       editingQuest={editingQuest}
       editingList={editingList}
+      initialType={initialType}
     />
   );
 }
@@ -77,16 +80,19 @@ function CreateQuestForm({
   editId,
   editingQuest,
   editingList,
+  initialType,
 }: {
   editId: string | null;
   editingQuest?: Quest;
   editingList?: QuestListKey;
+  /** Only the type is chosen in advance; category, difficulty and schedule are left for the player. */
+  initialType: QuestListKey | null;
 }) {
   const isEditing = editId !== null;
   const router = useRouter();
   const { addQuest, updateQuest, addCategory, categoryLists, todayKey } = useQuestStore();
   const [title, setTitle] = useState(editingQuest?.title ?? "");
-  const [questType, setQuestType] = useState<QuestListKey | "">(editingList ?? "");
+  const [questType, setQuestType] = useState<QuestListKey | "">(editingList ?? initialType ?? "");
   const [categorySelection, setCategorySelection] = useState(editingQuest?.category ?? "");
   const [customCategoryName, setCustomCategoryName] = useState("");
   const [difficulty, setDifficulty] = useState<Difficulty | "">(editingQuest?.difficulty ?? "");

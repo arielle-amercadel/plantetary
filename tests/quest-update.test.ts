@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   findQuestForEditing,
+  readQuestTypeParam,
   getAllQuestListsForDisplay,
   getHomeQuestListsForDisplay,
   getXpLedgerTotal,
@@ -197,6 +198,16 @@ describe("All Quests display data", () => {
     expect(displayed.daily).toHaveLength(1);
     expect(displayed.daily[0].title).toBe("New title");
     expect(displayed.daily[0].completed).toBe(true);
+  });
+});
+
+describe("choosing the quest type from the create page's URL", () => {
+  it("accepts only daily and personal; anything else leaves the type unchosen", () => {
+    expect(readQuestTypeParam("daily")).toBe("daily");
+    expect(readQuestTypeParam("personal")).toBe("personal");
+    for (const value of [null, "", "Daily", " daily", "habit", "daily-quests", "__proto__", "constructor"]) {
+      expect(readQuestTypeParam(value)).toBeNull();
+    }
   });
 });
 
