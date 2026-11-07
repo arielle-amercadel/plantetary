@@ -124,8 +124,13 @@ export function describeSaveStatus(storage: StorageControllerSnapshot): SaveStat
  * the short pause before a cloud write), a listed notice about changes from an account change that hasn't
  * been dismissed, or kept changes (listed or hidden) that only this page holds. The browser's prompt is
  * generic, so it reveals nothing about hidden entries.
+ *
+ * Also while an import is being sent or its outcome isn't confirmed yet: leaving is safe for the data
+ * (the browser garden is never changed, and a reload never resends the import), but this page is the only
+ * place that would tell the player whether it finished.
  */
 export function shouldWarnBeforeLeaving(storage: StorageControllerSnapshot): boolean {
+  if (storage.phase === "importing" || storage.phase === "import-unresolved") return true;
   if (storage.save?.hasUnsavedChanges) return true;
   if (storage.recoveriesAtRisk) return true;
   return storage.unsavedRecoveries.some((entry) => entry.reason === "account-changed");

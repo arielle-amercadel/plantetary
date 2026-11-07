@@ -104,9 +104,8 @@ than an upsert. The existing daily backup trigger and per-reason retention limit
 replacement imports. Its hosted-execution guard remains in place. See [game-storage.md](game-storage.md)
 for client verification after lost responses and the contract for later controller work.
 
-This new migration is **not applied to the hosted project** as part of Step 2. Apply it through the
-usual reviewed migration process before enabling the import feature there. Existing migrations must
-not be edited or reapplied manually.
+This migration is **not applied to the hosted project** yet. See **Stages 7 and 8: applying the new
+migrations** below. Existing migrations must not be edited or reapplied manually.
 
 ## Run the tests locally
 
@@ -195,13 +194,24 @@ If any test fails here but passes locally, don't connect the app until we've fou
 
 The app uses the project URL and **publishable** key only. The secret key bypasses every rule here and must never be put in the app or committed.
 
-## Stage 7: applying the new migration (not done yet)
+## Stages 7 and 8: applying the new migrations (not done yet)
 
-Stage 7 adds one migration: `20261106090000_add_upgrade_backups.sql`. It has been reviewed and passes the local tests, but hasn't been applied to the hosted project. Without it, a cloud save in an older format can't be backed up before it's upgraded, so it fails to load (safely: it's never replaced). The app should not be pointed at the hosted project for cloud saves until it's applied.
+Two migrations have been reviewed and pass the local tests but haven't been applied to the hosted project:
 
-Run these yourself, in order, from the project folder. Every hosted step has `--remote`; nothing here changes `.env.local`.
+| Migration | Stage | What it changes | Without it |
+| --- | --- | --- | --- |
+| `20261106090000_add_upgrade_backups.sql` | 7 | Allows a new backup reason, `upgrade` (kept once per revision, 5 per account), and adds it to the retention trigger. Changes two check constraints; existing rows already satisfy them. | A cloud save in an older format can't be backed up before it's upgraded, so it fails to load (safely: it's never replaced). |
+| `20261107090000_add_browser_import_rpc.sql` | 8 | Adds one function, `public.import_browser_save`, callable only by signed-in users. It runs with the caller's own permissions, so RLS still applies. No table changes. | Importing fails with "Importing isn't set up on the server yet". Nothing is written, and normal saving works. |
 
-1. **Check locally first.** Rebuild the local database from every migration and run the tests. They must end with `Result: PASS`.
+They're applied together, in this order (`db push` sorts them by name). Point the deployed app at the hosted project for cloud saves only after both are applied.
+
+Run these yourself, from the project folder, while the hosted project has no real players. Every hosted step has `--remote`; nothing here changes `.env.local`. If the project isn't linked on this computer yet, do steps 1–4 of **Apply the migrations to your hosted project** above first.
+
+### 1. Check
+
+1. **Be on the code you'll deploy.** These migrations are in `main` once Stage 8 Step 5 is merged. Check that `supabase/migrations/` lists all seven files, ending with the two above.
+
+2. **Test locally.** Rebuild the local database from every migration and run the tests. They must end with `Result: PASS`.
 
    ```bash
    npx supabase start
@@ -209,47 +219,78 @@ Run these yourself, in order, from the project folder. Every hosted step has `--
    npx supabase test db
    ```
 
-2. **See what the hosted project has (read-only).** Every migration up to `20261105223950_…` should be in both columns, and only `20261106090000_add_upgrade_backups` missing from Remote. If anything else differs, stop and find out why before going further.
+   If `start` stops because the `vector` or `studio` container is unhealthy, run `npx supabase start -x vector,studio`. The database tests don't need either.
+
+3. **See what the hosted project has (read-only).** Every migration up to `20261105223950_fix_revision_reuse_and_backup_retention` should be in both columns. Only the two above should be missing from Remote. If anything else differs (a migration missing that should be there, or one on Remote that isn't in the folder), stop and find out why first.
 
    ```bash
    npx supabase migration list --remote
    ```
 
-3. **Optional: keep a copy of the hosted data**, if it holds anything you care about. Save it outside the project folder so it's never committed.
+   If `20261106090000_add_upgrade_backups` is already in both columns, Stage 7's was applied earlier: only the Stage 8 migration is left, and the steps below are the same.
 
-   ```bash
-   npx supabase db dump --remote --data-only -f ~/plantetary-hosted-data-before-stage7.sql
-   ```
+### 2. Back up (if the hosted data matters)
 
-4. **Dry run.** It should list exactly one migration, `20261106090000_add_upgrade_backups.sql`, and apply nothing.
+Neither migration deletes or rewrites rows, but take a copy first if the project holds anything you'd miss. Save it outside the project folder so it's never committed, and delete it when you no longer need it: it contains players' saves.
+
+```bash
+npx supabase db dump --remote --data-only -f ~/plantetary-hosted-data-before-stage8.sql
+```
+
+On a paid plan, **Database → Backups** in the dashboard also shows the project's automatic backups.
+
+### 3. Review
+
+1. **Read the two files** (above) if you haven't already, so you know exactly what will run.
+2. **Dry run.** It should list exactly the migrations missing from Remote in step 1.3, in order, and apply nothing.
 
    ```bash
    npx supabase db push --remote --dry-run
    ```
 
-5. **Apply it** (later, when you're ready for hosted testing). The CLI asks for confirmation.
+   If it lists anything else, stop.
 
-   ```bash
-   npx supabase db push --remote
-   ```
+### 4. Apply
 
-6. **Confirm.** Every migration, including `20261106090000_add_upgrade_backups`, should now be in both columns.
+The CLI asks for confirmation, then applies the migrations in order and stops at the first one that fails.
+
+```bash
+npx supabase db push --remote
+```
+
+If it fails, don't retry by pasting SQL into the SQL Editor. Run step 1.3 again to see what was recorded, and find out why first.
+
+### 5. Verify
+
+1. **Recorded.** Every migration, including both new ones, should now be in both columns.
 
    ```bash
    npx supabase migration list --remote
    ```
 
-7. **Optional: run the database tests against the hosted project.** Each file is rolled back, and the concurrency file is skipped there.
+2. **Database tests against the hosted project.** Each file runs in a transaction that's rolled back. The concurrency file is skipped there. Expect `Result: PASS`.
 
    ```bash
    npx supabase test db --remote
    ```
 
-If the project isn't linked on this computer yet, do steps 3–4 of **Apply the migrations to your hosted project** above first.
+3. **Who can run the import (read-only).** In the dashboard's **SQL Editor**:
+
+   ```sql
+   select
+     has_function_privilege('anon', 'public.import_browser_save(uuid, bigint, json, integer)', 'execute') as anon_can,
+     has_function_privilege('authenticated', 'public.import_browser_save(uuid, bigint, json, integer)', 'execute') as signed_in_can;
+   ```
+
+   Expect `anon_can = false` and `signed_in_can = true`.
+
+4. **Dashboard checks.** Repeat **Check the dashboard** above. The Security Advisor should show no new warnings.
+
+5. **Try it by hand** with test accounts only (see **Controlled hosted testing** below).
 
 ## Controlled hosted testing (before inviting players)
 
-Once the migration is applied, you can try cloud saves against the hosted project on your own computer. Keep it controlled:
+Once both migrations are applied, you can try cloud saves and importing against the hosted project on your own computer. Keep it controlled:
 
 1. **Use the hosted project only while it has no real players**, and sign in only with your own test addresses. Without custom SMTP, Supabase only emails members of your Supabase organization, a few times an hour (see [supabase-auth.md](supabase-auth.md)).
 2. **Point the dev server at it** by putting the project URL and **publishable** key in `.env.local` (copied from `.env.example`). Never the secret or `service_role` key: Plantetary refuses to start sign-in with one. Restart `npm run dev` after changing it. **Redirect URLs** must include `http://localhost:3000/auth/confirm`.
@@ -261,12 +302,134 @@ Once the migration is applied, you can try cloud saves against the hosted projec
    - Sign in as B in another tab: A's garden disappears from the first tab; B gets the first-time choice. Sign in as A again: A's garden is back.
    - Turn the network off (browser dev tools), make a change: **Retrying…**, then **Not saved**; turn it back on and **Try saving again**.
    - Sign out with a change unsaved: the warning appears.
-5. **Check the dashboard:** **Table Editor → quest_saves** has one row per test account; **save_backups** has `conflict` rows from step 4. **Advisors → Security Advisor** has no new warnings.
+   - **Importing:** play as a guest, then sign in as a test account with no cloud garden. **Import my browser garden** on the first-time card: the cloud garden now matches, and the guest garden is unchanged (sign out to check).
+   - **Replacing:** in **Settings → Account**, change the cloud garden, then **Review and import…** → **Replace my cloud garden**: the message says the previous cloud garden was backed up. Import again: **Your cloud garden already matches this browser**, and no new backup is added.
+   - **Signing out during an import:** start one, then sign out from another tab: **Import interrupted**, and the guest garden is unchanged.
+   - After importing, complete a quest and reload: it's saved.
+5. **Check the dashboard:** **Table Editor → quest_saves** has one row per test account; **save_backups** has `conflict` rows from step 4, `daily` rows from saving, and one `browser_import` row per replacing import (none for an import into an empty account, or one that changed nothing). **Advisors → Security Advisor** has no new warnings.
 6. **Clean up** by deleting the test users in **Authentication → Users**. Their `quest_saves`, `save_backups` and `profiles` rows are deleted with them (`on delete cascade`).
+
+## Restoring a cloud garden from a backup (owner only)
+
+Players can't restore backups from the app. If a player asks to undo an import (or to get back an earlier garden), the project owner can do it from the dashboard's **SQL Editor**, which runs as the database owner and bypasses RLS. Be careful: a mistake here can show one player another player's garden. Only the owner should do this; never hand out the secret or `service_role` key to anyone else to do it.
+
+What a restore does: it puts a backup's exact garden back as the account's cloud garden, after keeping a copy of the garden it replaces. The database gives the restored garden a new revision, so any page the player still has open can't save over it: its next save is a conflict, and **Load latest garden** shows the restored one.
+
+Replace every `<…>` placeholder before running anything. Queries 1–3 only read.
+
+### 1. Identify the account
+
+Only act on a request you're sure came from the account's owner, for example one sent from that email address. Look the account up by its exact email:
+
+```sql
+select id, email, created_at, last_sign_in_at
+from auth.users
+where email = '<player@example.com>';
+```
+
+There should be exactly one row. Its `id` is the `<user-id>` below.
+
+### 2. Find the backup
+
+```sql
+select id, reason, created_at, source_revision, schema_version, octet_length(raw_data) as bytes
+from public.save_backups
+where user_id = '<user-id>'
+order by created_at desc;
+```
+
+- **Undoing an import:** the `browser_import` row from just before the import's time is the garden it replaced. Its `source_revision` is the revision that garden had. A `daily` row from the same moment may hold the same garden; either works, but prefer the `browser_import` one.
+- Other reasons: `daily` (the garden before the first change of a UTC day), `conflict` (the losing copy when two devices saved at once), and `upgrade` (a garden in an older format, before it was upgraded).
+- Only the newest backups are kept (`browser_import` 5, `conflict` 20, `daily` 14, `upgrade` 5 per account), so a very old garden may be gone.
+
+### 3. Compare the backup with the current garden
+
+```sql
+with gardens as (
+  select 'current' as which, revision as revision, schema_version, data::text as body
+  from public.quest_saves
+  where user_id = '<user-id>'
+  union all
+  select 'backup ' || id, source_revision, schema_version, raw_data
+  from public.save_backups
+  where user_id = '<user-id>' and id = <backup-id>
+)
+select which, revision, schema_version, octet_length(body) as bytes,
+       json_array_length(body::json -> 'questLists' -> 'daily') as daily_quests,
+       json_array_length(body::json -> 'questLists' -> 'personal') as personal_quests,
+       coalesce(json_array_length(body::json -> 'discoveredPlantIds'), 0) as plants,
+       coalesce((body::json ->> 'legacyXpBonus')::int, 0) as legacy_xp_bonus,
+       (select max(day) from json_object_keys(coalesce(body::json -> 'completionHistory', '{}'::json)) as day) as last_recorded_day
+from gardens;
+```
+
+Check, before going on:
+
+- **Two rows**, `current` and `backup <id>`. If the backup row is missing, the ID belongs to another account or doesn't exist: stop.
+- **The backup is the garden the player described** (quests, plants, last recorded day).
+- **`schema_version` is the same** in both rows. If the backup's is lower, stop: the database won't let a save's format go down, and restoring an older format by hand isn't supported.
+- **Note the current `revision`.** That's `<checked-revision>` below. If the player has kept playing since the import, the current garden has progress the restore would replace (it's kept as a backup in step 4, but tell the player first).
+
+### 4. Restore
+
+Ask the player to close Plantetary on every device first, so nothing is saving meanwhile. Then run this as one script. It changes nothing unless every check passes: if the garden has moved past `<checked-revision>`, or the backup isn't this account's or isn't the same format, it stops with an error and rolls everything back.
+
+```sql
+do $$
+declare
+  target_user      uuid   := '<user-id>';
+  checked_revision bigint := <checked-revision>;
+  restore_id       bigint := <backup-id>;
+  restored_revision bigint;
+begin
+  -- Keep a copy of the garden being replaced. `conflict` is the closest of the fixed backup reasons
+  -- (the copy that lost), and keeps the most copies (20; adding one may remove the account's oldest).
+  insert into public.save_backups (user_id, reason, raw_data, schema_version, source_revision)
+  select user_id, 'conflict', data::text, schema_version, revision
+  from public.quest_saves
+  where user_id = target_user and revision = checked_revision;
+  if not found then
+    raise exception 'The cloud garden is no longer at revision %. Nothing was changed: check it again (step 3).', checked_revision;
+  end if;
+
+  -- Put the backup back, only over the revision checked, only from this account's own backup, and
+  -- only in the same format.
+  update public.quest_saves as s
+  set data = b.raw_data::json, schema_version = b.schema_version
+  from public.save_backups as b
+  where s.user_id = target_user
+    and s.revision = checked_revision
+    and b.id = restore_id
+    and b.user_id = target_user
+    and b.schema_version = s.schema_version
+  returning s.revision into restored_revision;
+  if restored_revision is null then
+    raise exception 'Backup % is not this account''s, or not in the same format. Nothing was changed.', restore_id;
+  end if;
+
+  raise notice 'Restored backup % as revision %.', restore_id, restored_revision;
+end $$;
+```
+
+The result should end with `NOTICE: Restored backup <backup-id> as revision <n>`, where `<n>` is higher than `<checked-revision>`.
+
+### 5. Confirm
+
+```sql
+select s.revision, s.updated_at, s.data::text = b.raw_data as matches_backup
+from public.quest_saves as s
+join public.save_backups as b on b.user_id = s.user_id and b.id = <backup-id>
+where s.user_id = '<user-id>';
+```
+
+Expect the new revision and `matches_backup = true`. The replaced garden is the newest `conflict` backup in step 2's list, so this restore can itself be undone the same way.
+
+Then ask the player to open Plantetary and sign in: their cloud garden is the restored one. A page left open shows **Your garden changed somewhere else** on its next save; **Load latest garden** shows the restored garden. Their browser garden (guest progress) is never affected.
 
 ## Not done yet
 
 - `profiles` isn't read or written by the app; profile and reminder preferences stay in the browser.
-- Nothing imports browser progress into an account (Stage 8), or merges changes between devices (Stage 9).
+- Nothing merges changes between devices (Stage 9). Importing (Stage 8) replaces the cloud garden; it doesn't merge.
+- Backups (`browser_import`, `conflict`, `daily`, `upgrade`) can't be restored from the app. Only the project owner can, from the dashboard.
 - Account deletion and cloud reset from the app (Stage 10).
 - CI doesn't run these database tests. They need Docker, so they could be added as a separate CI job later.
