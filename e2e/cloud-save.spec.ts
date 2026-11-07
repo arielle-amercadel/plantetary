@@ -48,7 +48,8 @@ async function signInElsewhere(page: Page, cloud: FakeAuth["cloud"], email: stri
 /** Nothing on the page can be played: no quest can be completed, added, edited or removed. */
 async function expectNothingPlayable(page: Page) {
   await expect(page.getByRole("button", { name: /^(Complete|Mark incomplete): / })).toHaveCount(0);
-  await expect(page.getByRole("button", { name: /^(Add habit|Add quest|Edit |Remove )/ })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: /^(Edit |Remove )/ })).toHaveCount(0);
+  await expect(page.getByRole("link", { name: /^(Add habit to Daily Quests|Add quest to Personal Quests)$/ })).toHaveCount(0);
 }
 
 const accountSection = (page: Page) => page.getByRole("region", { name: "Account" });
@@ -412,7 +413,7 @@ test.describe("Nothing can be played before the garden has loaded (Codex Step 5 
     await page.getByRole("link", { name: "All Quests" }).click();
     await expect(page.getByRole("region", { name: "Personal Quests" })).toContainText("once your garden has loaded");
     await expectNothingPlayable(page);
-    await page.getByRole("link", { name: "Add quest" }).first().click();
+    await page.getByRole("link", { name: "Add quest", exact: true }).first().click();
     await expect(page.getByLabel("Quest title *")).toHaveCount(0);
     // No garden was written while it was loading.
     expect(garden(cloudWrites(auth))).toHaveLength(writesBefore);

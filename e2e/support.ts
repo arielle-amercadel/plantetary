@@ -119,6 +119,31 @@ export function questRow(panel: ReturnType<typeof dailyPanel>, title: string) {
   return panel.getByRole("listitem").filter({ hasText: title });
 }
 
+const difficultyXp = { Easy: 5, Medium: 10, Hard: 20 } as const;
+
+/**
+ * Adds a quest from Home the way a player would: the panel's add link opens the full form with the quest
+ * type already chosen (checked here), then the title, category, difficulty and, for a Daily Quest, "Every
+ * day" are filled in. A Personal Quest gets no due date. Ends back on Home with the quest shown.
+ */
+export async function addQuestFromHome(
+  page: Page,
+  list: "daily" | "personal",
+  title: string,
+  { category, difficulty = "Easy" }: { category?: string; difficulty?: keyof typeof difficultyXp } = {},
+) {
+  await page.getByRole("link", { name: list === "daily" ? "Add habit to Daily Quests" : "Add quest to Personal Quests", exact: true }).click();
+  await expect(page).toHaveURL(new RegExp(`/quests/new\\?type=${list}$`));
+  await expect(page.getByRole("button", { name: list === "daily" ? /Daily Quest/ : /Personal Quest/ })).toHaveAttribute("aria-pressed", "true");
+  await page.getByLabel("Quest title").fill(title);
+  await chooseOption(page, "Category", category ?? (list === "daily" ? "Wellness" : "Personal"));
+  if (list === "daily") await chooseOption(page, "Repeat", "Every day");
+  await chooseOption(page, "Difficulty", `${difficulty} · ${difficultyXp[difficulty]} XP`);
+  await page.getByRole("button", { name: "Save quest" }).click();
+  await expect(page).toHaveURL(/\/$/);
+  await expect(questRow(list === "daily" ? dailyPanel(page) : personalPanel(page), title)).toBeVisible();
+}
+
 export async function completeQuest(page: Page, title: string) {
   await page.getByRole("button", { name: `Complete: ${title}`, exact: true }).click();
   await expect(page.getByRole("button", { name: `Mark incomplete: ${title}`, exact: true })).toBeVisible();

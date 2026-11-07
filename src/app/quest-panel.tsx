@@ -1,11 +1,10 @@
 "use client";
 
 import Image from "next/image";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useState } from "react";
-import CategoryPicker, { CUSTOM_CATEGORY_VALUE } from "./category-picker";
-import { getDailyQuestScheduleLabel, getDueDateLabel, getQuestListProgress, isQuestPastDue, isQuestScheduledOnDate, weekdays } from "./quest-logic";
-import { getCustomCategoryError, getQuestXp, useQuestStore, type Difficulty, type Quest } from "./quest-store";
+import { getDailyQuestScheduleLabel, getDueDateLabel, getQuestListProgress, isQuestPastDue, isQuestScheduledOnDate } from "./quest-logic";
+import { getQuestXp, useQuestStore, type Quest } from "./quest-store";
 
 type QuestPanelProps = {
   id: string;
@@ -15,11 +14,9 @@ type QuestPanelProps = {
   noteIcon: string;
   note: string;
   quests: Quest[];
+  /** Shows the link to the full Create a quest form, with this panel's quest type chosen. */
   showAddButton?: boolean;
-  isAdding: boolean;
-  onAddingChange: (isAdding: boolean) => void;
   onToggleQuest: (questId: string) => void;
-  onAddQuest: (quest: Quest) => void;
   onDeleteQuest: (questId: string) => void;
 };
 
@@ -36,48 +33,13 @@ export default function QuestPanel({
   note,
   quests,
   showAddButton = true,
-  isAdding,
-  onAddingChange,
   onToggleQuest,
-  onAddQuest,
   onDeleteQuest,
 }: QuestPanelProps) {
   const router = useRouter();
   const list = id === "daily-quests" ? "daily" : "personal";
-  const defaultCategory = list === "daily" ? "Wellness" : "Personal";
-  const { categoryLists, addCategory, dailyScheduledQuestIds, todayKey, canPlay } = useQuestStore();
-  const [newTitle, setNewTitle] = useState("");
-  const [newDifficulty, setNewDifficulty] = useState<Difficulty>("Easy");
-  const [categorySelection, setCategorySelection] = useState(defaultCategory);
-  const [customCategoryName, setCustomCategoryName] = useState("");
+  const { dailyScheduledQuestIds, todayKey, canPlay } = useQuestStore();
   const progress = getQuestListProgress(quests, list, dailyScheduledQuestIds);
-  const customCategoryError = categorySelection === CUSTOM_CATEGORY_VALUE
-    ? getCustomCategoryError(categoryLists[list], customCategoryName)
-    : "";
-
-  function addQuest(event: React.FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    const trimmedTitle = newTitle.trim();
-    const category = categorySelection === CUSTOM_CATEGORY_VALUE
-      ? customCategoryName.trim()
-      : categorySelection;
-    if (!trimmedTitle || !category || customCategoryError) return;
-    if (categorySelection === CUSTOM_CATEGORY_VALUE && !addCategory(list, category)) return;
-
-    onAddQuest({
-      id: `${id}-${Date.now()}`,
-      title: trimmedTitle,
-      category,
-      ...(list === "daily" ? { repeatSchedule: "Every day" as const, selectedDays: [...weekdays] } : {}),
-      difficulty: newDifficulty,
-      completed: false,
-    });
-    setNewTitle("");
-    setNewDifficulty("Easy");
-    setCategorySelection(defaultCategory);
-    setCustomCategoryName("");
-    onAddingChange(false);
-  }
 
   // No quests to play until the garden has loaded: starter quests shown meanwhile must not be playable.
   if (!canPlay) {
@@ -109,55 +71,18 @@ export default function QuestPanel({
           </span>
         </div>
         {showAddButton && (
-          <button
+          // The accessible name starts with the visible label ("Add habit", "Add quest"), so speech control
+          // can use it (WCAG 2.5.3), and says which list, to tell it apart from the page's other "Add quest" links.
+          <Link
             className="quest-add-button"
-            type="button"
-            onClick={() => onAddingChange(!isAdding)}
-            aria-expanded={isAdding}
+            href={`/quests/new?type=${list}`}
+            aria-label={list === "daily" ? "Add habit to Daily Quests" : "Add quest to Personal Quests"}
           >
             <Image src="/icon-plus.svg" alt="" aria-hidden="true" width={15} height={15} />
             <span>{addLabel}</span>
-          </button>
+          </Link>
         )}
       </header>
-
-      {showAddButton && isAdding && (
-        <form className="new-quest-form" onSubmit={addQuest}>
-          <input
-            autoFocus
-            aria-label="New quest name"
-            placeholder="Name your quest"
-            value={newTitle}
-            onChange={(event) => setNewTitle(event.target.value)}
-          />
-          <CategoryPicker
-            id={`${id}-category`}
-            label={`${title} category`}
-            options={categoryLists[list]}
-            selection={categorySelection}
-            onSelectionChange={(selection) => {
-              setCategorySelection(selection);
-              if (selection !== CUSTOM_CATEGORY_VALUE) setCustomCategoryName("");
-            }}
-            customName={customCategoryName}
-            onCustomNameChange={setCustomCategoryName}
-            customNameError={customCategoryError}
-          />
-          <select
-            aria-label="Quest difficulty"
-            value={newDifficulty}
-            onChange={(event) => setNewDifficulty(event.target.value as Difficulty)}
-          >
-            <option value="Easy">Easy</option>
-            <option value="Medium">Medium</option>
-            <option value="Hard">Hard</option>
-          </select>
-          <button type="submit">Add</button>
-          <button type="button" onClick={() => onAddingChange(false)}>
-            Cancel
-          </button>
-        </form>
-      )}
 
       <ul className="quest-list">
         {quests.map((quest) => (
