@@ -14,7 +14,7 @@ import {
   userIdFromBearer,
   type FakeAuth,
 } from "./auth-support";
-import { QUEST_SAVE_KEY, buildSave, completeQuest, expect, expectHomeXp, openApp, readStorage, seedStorage, test } from "./support";
+import { QUEST_SAVE_KEY, buildSave, clickNavLink, completeQuest, expect, expectHomeXp, openApp, readStorage, seedStorage, test } from "./support";
 
 // Stage 8 Step 4: the guest-to-cloud import UI, what the screens show and do. Step 5 (further down):
 // reliability, lost replies, late commits, account changes and reloads while an import is under way.
@@ -48,9 +48,10 @@ async function playAsGuest(page: Page) {
  * every page, so without the wait a click could land on the previous page just before it's replaced.
  */
 async function openHome(page: Page) {
-  await page.getByRole("link", { name: "Home", exact: true }).click();
+  await clickNavLink(page, "Home", { exact: true });
   await expect(page).toHaveURL(/:\d+\/$/);
-  await expect(page.getByRole("link", { name: "Home", exact: true })).toHaveClass(/is-active/);
+  // Found by its address, not its role: on phones the link is tucked away in the closed menu.
+  await expect(page.locator('#main-navigation a[href="/"]')).toHaveClass(/is-active/);
 }
 
 /** Whether the account's cloud garden records this daily quest as done on the tests' Monday. */
@@ -72,7 +73,7 @@ async function guestAndCloudGarden(page: Page) {
   // until that save has been sent and answered, so it can't overlap anything the test does next.
   await expect.poll(() => cloudRequests(auth, "PATCH quest_saves").length).toBe(1);
   await expect(page.locator(".save-status")).toHaveAttribute("data-save-status", "saved");
-  await page.getByRole("link", { name: "Settings" }).click();
+  await clickNavLink(page, "Settings");
   await expect(importSection(page)).toBeVisible();
   return { auth, cloud, guestSave };
 }
@@ -309,7 +310,7 @@ test.describe("Settings → Account", () => {
     await signIn(page);
     await openHome(page);
     await expectHomeXp(page, 40);
-    await page.getByRole("link", { name: "Settings" }).click();
+    await clickNavLink(page, "Settings");
 
     await expect(importSection(page)).toContainText("only has the starter quests");
     await expect(importSection(page).getByRole("button", { name: "Review and import…" })).toHaveCount(0);

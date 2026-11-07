@@ -119,6 +119,16 @@ export function questRow(panel: ReturnType<typeof dailyPanel>, title: string) {
   return panel.getByRole("listitem").filter({ hasText: title });
 }
 
+/**
+ * Clicks a main navigation link the way a player would at this screen size: on phones and tablets the
+ * links are in the header's menu, so it's opened first; on desktop the sidebar shows them.
+ */
+export async function clickNavLink(page: Page, name: string | RegExp, options: { exact?: boolean } = {}) {
+  const menu = page.getByRole("button", { name: /^Menu/ });
+  if (await menu.isVisible() && (await menu.getAttribute("aria-expanded")) !== "true") await menu.click();
+  await page.getByRole("link", { name, ...options }).click();
+}
+
 const difficultyXp = { Easy: 5, Medium: 10, Hard: 20 } as const;
 
 /**
