@@ -90,6 +90,16 @@ describe("the warning before leaving the page", () => {
     expect(shouldWarnBeforeLeaving(storage(null, { phase: "waiting" }))).toBe(false);
   });
 
+  it("warns while an import is being sent, and while its outcome is unconfirmed, even with everything saved", () => {
+    const saved = { status: "saved" as const, hasUnsavedChanges: false };
+    expect(shouldWarnBeforeLeaving(storage(saved, { phase: "importing", loaded: null }))).toBe(true);
+    expect(shouldWarnBeforeLeaving(storage(saved, {
+      phase: "import-unresolved", loaded: null, unresolvedImport: { problem: "network", canRetry: true },
+    }))).toBe(true);
+    // Once settled, the usual rules apply again: a fresh, saved cloud garden doesn't warn.
+    expect(shouldWarnBeforeLeaving(storage(saved, { phase: "ready" }))).toBe(false);
+  });
+
   it("warns for changes kept from an account change, but not for ones already kept in this tab", () => {
     const saved = { status: "saved" as const, hasUnsavedChanges: false };
     expect(shouldWarnBeforeLeaving(storage(saved, { unsavedRecoveries: [recovery("account-changed")] }))).toBe(true);

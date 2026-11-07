@@ -22,6 +22,8 @@ function identityKey(auth: AuthState): string {
 
 /** A sign-out warning, tied to the session and identity whose unsaved changes it shows. */
 type SignOutWarning = { ticket: AccountChangeTicket | null; save: SaveSnapshot | null; identity: string };
+/** Asked before signing out while an import's outcome isn't confirmed, for that session and identity. */
+type UnresolvedImportWarning = { ticket: AccountChangeTicket | null; identity: string };
 
 const accountChangedMessage = "Your account changed in the meantime, so signing out was cancelled. Nothing was signed out.";
 
@@ -34,16 +36,45 @@ export default function AccountSection() {
   const [isError, setIsError] = useState(false);
   /** Set when signing out would leave changes unsaved; the player decides what happens next. */
   const [unsavedWarning, setUnsavedWarning] = useState<SignOutWarning | null>(null);
+  /** Set when signing out while an import is unresolved; the player decides what happens next. */
+  const [importWarning, setImportWarning] = useState<UnresolvedImportWarning | null>(null);
   const identity = identityKey(auth);
   // The newest identity, for async steps that must not act on an account that has changed since.
   const identityRef = useRef(identity);
+  // The newest storage phase, read after the save check below has finished.
+  const phaseRef = useRef(storage.phase);
   useEffect(() => {
     identityRef.current = identity;
-  }, [identity]);
+    phaseRef.current = storage.phase;
+  }, [identity, storage.phase]);
   // Recomputed on every render: an account or session change anywhere invalidates the warning at once.
   const warningIsCurrent = unsavedWarning !== null &&
     unsavedWarning.identity === identity &&
     storageActions.isTicketCurrent(unsavedWarning.ticket);
+  // Only while that import is still unresolved: once it's settled (or anything else changed), the question
+  // no longer applies and isn't shown. Signing out again asks again if needed.
+  const importWarningIsCurrent = importWarning !== null &&
+    importWarning.identity === identity &&
+    storage.phase === "import-unresolved" &&
+    storageActions.isTicketCurrent(importWarning.ticket);
+
+  const signOutRef = useRef<HTMLButtonElement>(null);
+  /** The open prompt's Cancel: the safe choice, focused when a prompt opens. Only one prompt shows at a time. */
+  const promptCancelRef = useRef<HTMLButtonElement>(null);
+  /**
+   * Where focus goes after the next render: into a prompt that just opened (Sign out is disabled while it
+   * shows, so focus would otherwise be lost), or back to Sign out after Cancel. Waits until the target
+   * exists and is enabled, as in import-flow-provider.tsx.
+   */
+  const pendingFocus = useRef<"prompt" | "sign-out" | null>(null);
+  useEffect(() => {
+    const target = pendingFocus.current === "prompt" ? promptCancelRef.current
+      : pendingFocus.current === "sign-out" ? signOutRef.current
+        : null;
+    if (!target || target.disabled) return;
+    target.focus();
+    pendingFocus.current = null;
+  });
 
   function show(text: string, error: boolean) {
     setMessage(text);
@@ -86,6 +117,7 @@ export default function AccountSection() {
     const forIdentity = identityRef.current;
     setBusy(true);
     setUnsavedWarning(null);
+    setImportWarning(null);
     show("", false);
     const { outcome, ticket, save } = await storageActions.prepareForAccountChange();
     // Saving took a moment; if the account or session changed meanwhile, this sign-out no longer applies.
@@ -97,9 +129,30 @@ export default function AccountSection() {
     if (outcome === "unsaved") {
       setBusy(false);
       setUnsavedWarning({ ticket, save, identity: forIdentity });
+      pendingFocus.current = "prompt";
+      return;
+    }
+    if (phaseRef.current === "import-unresolved") {
+      setBusy(false);
+      setImportWarning({ ticket, identity: forIdentity });
+      pendingFocus.current = "prompt";
       return;
     }
     await finishSignOut(ticket, forIdentity);
+  }
+
+  async function signOutDespiteImport() {
+    const warning = importWarning;
+    setImportWarning(null);
+    if (!warning || !importWarningIsCurrent) return;
+    setBusy(true);
+    await finishSignOut(warning.ticket, warning.identity);
+  }
+
+  function keepImportAndStay() {
+    setImportWarning(null);
+    pendingFocus.current = "sign-out";
+    show("You're still signed in. Nothing was changed.", false);
   }
 
   async function retryThenSignOut() {
@@ -123,13 +176,14 @@ export default function AccountSection() {
 
   function cancelSignOut() {
     setUnsavedWarning(null);
+    pendingFocus.current = "sign-out";
     show("You're still signed in. Nothing was changed.", false);
   }
 
   const signOutButton = (
     <div className="settings-form-row">
       <span />
-      <button className="settings-reset-button" type="button" disabled={busy || warningIsCurrent} onClick={submitSignOut}>
+      <button ref={signOutRef} className="settings-reset-button" type="button" disabled={busy || warningIsCurrent || importWarningIsCurrent} onClick={submitSignOut}>
         {busy ? "Signing out…" : "Sign out"}
       </button>
     </div>
@@ -142,6 +196,7 @@ export default function AccountSection() {
       className="storage-sign-out-warning"
       role="alertdialog"
       aria-labelledby="unsaved-sign-out-heading"
+      onKeyDown={(event) => { if (event.key === "Escape" && !busy) { event.preventDefault(); cancelSignOut(); } }}
       aria-describedby="unsaved-sign-out-text"
       data-save-status={unsavedWarning.save?.status}
     >
@@ -158,7 +213,32 @@ export default function AccountSection() {
         <button className="settings-reset-button" type="button" disabled={busy} onClick={signOutAnyway}>
           Sign out anyway
         </button>
-        <button className="settings-action-button" type="button" disabled={busy} onClick={cancelSignOut}>
+        <button ref={promptCancelRef} className="settings-action-button" type="button" disabled={busy} onClick={cancelSignOut}>
+          Cancel
+        </button>
+      </div>
+    </div>
+  );
+
+  const importPrompt = importWarningIsCurrent && (
+    <div
+      className="storage-sign-out-warning"
+      role="alertdialog"
+      aria-labelledby="import-sign-out-heading"
+      onKeyDown={(event) => { if (event.key === "Escape" && !busy) { event.preventDefault(); keepImportAndStay(); } }}
+      aria-describedby="import-sign-out-text"
+    >
+      <p className="settings-message is-error" id="import-sign-out-heading"><strong>Sign out before your import is confirmed?</strong></p>
+      <p className="settings-description" id="import-sign-out-text">
+        Plantetary couldn&apos;t confirm whether your browser garden was imported into this account. If you sign out now, the
+        import may still complete in this account, after backing up its previous cloud garden. Nothing goes to any other
+        account, and the garden in this browser stays unchanged. To find out first, choose Cancel, then Check my cloud garden.
+      </p>
+      <div className="storage-notice-actions">
+        <button className="settings-reset-button" type="button" disabled={busy} onClick={signOutDespiteImport}>
+          Sign out anyway
+        </button>
+        <button ref={promptCancelRef} className="settings-action-button" type="button" disabled={busy} onClick={keepImportAndStay}>
           Cancel
         </button>
       </div>
@@ -259,6 +339,7 @@ export default function AccountSection() {
       )}
 
       {unsavedPrompt}
+      {importPrompt}
 
       <p className={`settings-message${isError ? " is-error" : ""}`} role="status" aria-live="polite">{message}</p>
     </section>

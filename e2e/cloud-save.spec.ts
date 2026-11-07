@@ -318,6 +318,38 @@ test.describe("Signing out with unsaved changes", () => {
     expect(cloudCompleted(auth, "skincare")).toBe(true);
   });
 
+  test("works from the keyboard: focus moves to Cancel, Escape returns to Sign out, and Sign out anyway is reachable", async ({ page }) => {
+    await makeUnsavedCloudChange(page, await useFakeAuth(page));
+    const signOut = accountSection(page).getByRole("button", { name: "Sign out", exact: true });
+    const warning = accountSection(page).getByRole("alertdialog", { name: "Sign out with unsaved changes?" });
+
+    await signOut.focus();
+    await page.keyboard.press("Enter");
+    await expect(warning).toBeVisible();
+    // The safe choice is focused, inside the prompt, so it's announced and Sign out (disabled) doesn't lose focus.
+    await expect(warning.getByRole("button", { name: "Cancel" })).toBeFocused();
+
+    await page.keyboard.press("Escape");
+    await expect(warning).toHaveCount(0);
+    await expect(signOut).toBeFocused();
+    await expect(accountSection(page)).toContainText("You're still signed in");
+
+    await page.keyboard.press("Enter");
+    await expect(warning.getByRole("button", { name: "Cancel" })).toBeFocused();
+    await page.keyboard.press("Shift+Tab");
+    await expect(warning.getByRole("button", { name: "Sign out anyway" })).toBeFocused();
+    await page.keyboard.press("Enter");
+    await expect(accountSection(page)).toContainText("You're signed out");
+  });
+
+  test("Cancel by click also returns focus to Sign out", async ({ page }) => {
+    await makeUnsavedCloudChange(page, await useFakeAuth(page));
+    const signOut = accountSection(page).getByRole("button", { name: "Sign out", exact: true });
+    await signOut.click();
+    await accountSection(page).getByRole("alertdialog").getByRole("button", { name: "Cancel" }).click();
+    await expect(signOut).toBeFocused();
+  });
+
   test("Sign out anyway signs out, without a later notice about the same changes", async ({ page }) => {
     await makeUnsavedCloudChange(page, await useFakeAuth(page));
     await accountSection(page).getByRole("button", { name: "Sign out" }).click();

@@ -3,6 +3,7 @@ import type { Page } from "@playwright/test";
 import {
   TEST_EMAIL,
   answerSupabaseFor,
+  authRequests,
   cloudRequests,
   createFakeCloud,
   fakeSession,
@@ -756,5 +757,159 @@ test.describe("Saving after an import (Step 5)", () => {
     await page.reload();
     await expectHomeXp(page, 10);
     await expect(page.getByRole("button", { name: "Mark incomplete: Morning skincare", exact: true })).toBeVisible();
+  });
+});
+
+// Stage 8 Step 6: the page asks before it's left, and signing out asks first, while an import is being
+// sent or its outcome is unconfirmed.
+
+/** Every dialog the page opens from here on, dismissed (so a "Leave site?" prompt keeps the page). */
+function collectDialogs(page: Page) {
+  const dialogs: string[] = [];
+  page.on("dialog", (dialog) => {
+    dialogs.push(dialog.type());
+    void dialog.dismiss();
+  });
+  return dialogs;
+}
+
+async function expectLeavePrompt(page: Page) {
+  const dialog = page.waitForEvent("dialog");
+  await page.close({ runBeforeUnload: true });
+  const prompt = await dialog;
+  expect(prompt.type()).toBe("beforeunload");
+  // Dismissing it keeps the page open.
+  await prompt.dismiss();
+}
+
+const importSignOutPrompt = (page: Page) => page.getByRole("alertdialog", { name: "Sign out before your import is confirmed?" });
+
+test.describe("Leaving the page during an import (Step 6)", () => {
+  test("the browser asks before leaving while an import is being sent, and not once it's done", async ({ page }) => {
+    const { auth } = await guestAndCloudGarden(page);
+    const release = holdImport(auth);
+    await confirmReplace(page);
+    await expect(importDialog(page)).toContainText("Please keep this page open");
+
+    await expectLeavePrompt(page);
+    release();
+    await expect(resultNotice(page)).toContainText("now your cloud garden");
+
+    const dialogs = collectDialogs(page);
+    await page.reload();
+    await openHome(page);
+    await expectHomeXp(page, 5);
+    expect(dialogs).toEqual([]);
+  });
+
+  test("the browser asks before leaving while an import is unresolved, and not once the cloud garden is loaded", async ({ page }) => {
+    const { auth } = await guestAndCloudGarden(page);
+    auth.reply("POST rpc/import_browser_save", "network-error");
+    await confirmReplace(page);
+    await expect(unresolvedCard(page)).toBeVisible();
+
+    await expectLeavePrompt(page);
+    await expect(unresolvedCard(page)).toBeVisible();
+
+    await unresolvedCard(page).getByRole("button", { name: "Load my cloud garden without waiting" }).click();
+    await expect(unresolvedCard(page)).toHaveCount(0);
+    await expect(page.locator(".save-status")).toHaveAttribute("data-save-status", "saved");
+    const dialogs = collectDialogs(page);
+    await page.reload();
+    await openHome(page);
+    await expectHomeXp(page, 40);
+    expect(dialogs).toEqual([]);
+  });
+});
+
+test.describe("Signing out during an unresolved import (Step 6)", () => {
+  test("asks first and says the import may still complete in this account; Cancel stays signed in, Sign out anyway signs out", async ({ page }) => {
+    const { auth, guestSave } = await guestAndCloudGarden(page);
+    auth.reply("POST rpc/import_browser_save", "network-error");
+    await confirmReplace(page);
+    await expect(unresolvedCard(page)).toBeVisible();
+
+    await accountSection(page).getByRole("button", { name: "Sign out", exact: true }).click();
+    const prompt = importSignOutPrompt(page);
+    await expect(prompt).toBeVisible();
+    await expect(prompt).toContainText("couldn't confirm whether your browser garden was imported into this account");
+    await expect(prompt).toContainText("the import may still complete in this account");
+    await expect(prompt).toContainText("Nothing goes to any other account");
+    await expect(accountSection(page).getByRole("button", { name: "Sign out", exact: true })).toBeDisabled();
+
+    await prompt.getByRole("button", { name: "Cancel" }).click();
+    await expect(prompt).toHaveCount(0);
+    await expect(accountSection(page)).toContainText("You're still signed in. Nothing was changed.");
+    await expect(accountSection(page)).toContainText(`Signed in as ${TEST_EMAIL}`);
+    await expect(unresolvedCard(page)).toBeVisible();
+    expect(authRequests(auth, "POST /logout")).toHaveLength(0);
+
+    await accountSection(page).getByRole("button", { name: "Sign out", exact: true }).click();
+    await importSignOutPrompt(page).getByRole("button", { name: "Sign out anyway" }).click();
+    await expect(accountSection(page)).toContainText("You're playing as a guest");
+    await expect(unresolvedCard(page)).toHaveCount(0);
+    expect(authRequests(auth, "POST /logout")).toHaveLength(1);
+    expect(imports(auth)).toHaveLength(1);
+    expect(await readStorage(page, QUEST_SAVE_KEY)).toBe(guestSave);
+  });
+
+  test("the question goes away once the import is confirmed, and signing out is then as usual", async ({ page }) => {
+    const { auth } = await guestAndCloudGarden(page);
+    let held: Parameters<FakeAuth["answerAsDatabase"]>[0] | null = null;
+    auth.reply("POST rpc/import_browser_save", (request) => {
+      held = request;
+      return "network-error";
+    });
+    await confirmReplace(page);
+    await expect(unresolvedCard(page)).toBeVisible();
+    await accountSection(page).getByRole("button", { name: "Sign out", exact: true }).click();
+    await expect(importSignOutPrompt(page)).toBeVisible();
+
+    // The import commits after all, and the check finds it.
+    auth.answerAsDatabase(held!);
+    await unresolvedCard(page).getByRole("button", { name: "Check my cloud garden" }).click();
+    await expect(resultNotice(page)).toContainText("Your browser garden is now your cloud garden");
+    await expect(importSignOutPrompt(page)).toHaveCount(0);
+    await expect(accountSection(page)).toContainText(`Signed in as ${TEST_EMAIL}`);
+    expect(authRequests(auth, "POST /logout")).toHaveLength(0);
+
+    await expect(page.locator(".save-status")).toHaveAttribute("data-save-status", "saved");
+    await accountSection(page).getByRole("button", { name: "Sign out", exact: true }).click();
+    await expect(accountSection(page)).toContainText("You're playing as a guest");
+    await expect(importSignOutPrompt(page)).toHaveCount(0);
+  });
+
+  test("works from the keyboard: focus moves to Cancel, Escape returns to Sign out, and Sign out anyway is reachable", async ({ page }) => {
+    const { auth } = await guestAndCloudGarden(page);
+    auth.reply("POST rpc/import_browser_save", "network-error");
+    await confirmReplace(page);
+    await expect(unresolvedCard(page)).toBeVisible();
+    const signOut = accountSection(page).getByRole("button", { name: "Sign out", exact: true });
+    const prompt = importSignOutPrompt(page);
+
+    await signOut.focus();
+    await page.keyboard.press("Enter");
+    await expect(prompt.getByRole("button", { name: "Cancel" })).toBeFocused();
+
+    await page.keyboard.press("Escape");
+    await expect(prompt).toHaveCount(0);
+    await expect(signOut).toBeFocused();
+    expect(authRequests(auth, "POST /logout")).toHaveLength(0);
+
+    await page.keyboard.press("Enter");
+    await expect(prompt.getByRole("button", { name: "Cancel" })).toBeFocused();
+    await page.keyboard.press("Shift+Tab");
+    await expect(prompt.getByRole("button", { name: "Sign out anyway" })).toBeFocused();
+    await page.keyboard.press("Enter");
+    await expect(accountSection(page)).toContainText("You're playing as a guest");
+    expect(authRequests(auth, "POST /logout")).toHaveLength(1);
+  });
+
+  test("signing out with no import pending doesn't ask about one", async ({ page }) => {
+    const { auth } = await guestAndCloudGarden(page);
+    await accountSection(page).getByRole("button", { name: "Sign out", exact: true }).click();
+    await expect(accountSection(page)).toContainText("You're playing as a guest");
+    await expect(importSignOutPrompt(page)).toHaveCount(0);
+    expect(authRequests(auth, "POST /logout")).toHaveLength(1);
   });
 });

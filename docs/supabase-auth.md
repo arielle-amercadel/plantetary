@@ -64,7 +64,7 @@ Copy `.env.example` to `.env.local` and fill in:
 - **Never use a secret key (`sb_secret_…`) or the `service_role` key.** If any `NEXT_PUBLIC_` variable holds one, `npm run dev` and `npm run build` stop with an error that names the variable but never shows its value. If one is added while the dev server is running, pages stop rendering instead.
 - **How the values reach the browser:** browser code never reads these variables itself, so Next.js never builds them into JavaScript. The server checks them and passes them to the page.
 - **Rebuild after changing them** for production, because static pages are rendered when the app is built. The dev server picks up changes on the next page load.
-- **Hosting:** set the same two variables in your hosting provider's environment settings.
+- **Hosting:** set the same two variables in your hosting provider's environment settings. For Vercel, see [deployment.md](deployment.md).
 - **Without them:** the Account card says sign-in isn't set up, and guest mode works as usual.
 
 ## Supabase Dashboard settings
