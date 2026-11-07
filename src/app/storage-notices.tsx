@@ -1,22 +1,13 @@
 "use client";
 
 import { useState } from "react";
+import { downloadJson } from "./download-file";
+import { describeUnresolvedImport } from "./import-flow";
+import { GardenSummaryCard, useImportFlow } from "./import-flow-provider";
 import { getLocalDateKey } from "./quest-logic";
 import { useQuestStore } from "./quest-store";
 import { describeCloudLoadProblem, describeConflictBackup, describeSaveProblem } from "./storage-messages";
-import type { StoredQuestData } from "./quest-types";
 
-function downloadJson(data: StoredQuestData, fileName: string) {
-  const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement("a");
-  link.href = url;
-  link.download = fileName;
-  document.body.appendChild(link);
-  link.click();
-  link.remove();
-  window.setTimeout(() => URL.revokeObjectURL(url), 1000);
-}
 
 const timeLabel = (at: number) => new Date(at).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
 const unsavedFileName = (at: number, suffix = "") =>
@@ -30,6 +21,7 @@ const unsavedFileName = (at: number, suffix = "") =>
  */
 export default function StorageNotices() {
   const { storage, storageActions, getDataForExport } = useQuestStore();
+  const importFlow = useImportFlow();
   const [busy, setBusy] = useState(false);
   /** The generation whose conflict has the "Load latest garden?" confirmation open, so it never carries over. */
   const [confirmingGeneration, setConfirmingGeneration] = useState<number | null>(null);
@@ -86,17 +78,60 @@ export default function StorageNotices() {
           <h2 id="cloud-choice-heading">Start your cloud garden?</h2>
           <p className="settings-description">
             Your account doesn&apos;t have a saved garden yet. You can start a fresh garden saved to your account,
-            or keep playing with the progress saved in this browser. Your progress in this browser stays here,
-            unchanged, whichever you choose. Nothing from it is uploaded.
+            {importFlow.availability.available ? " bring the garden saved in this browser to your account," : ""}
+            {" "}or keep playing with the progress saved in this browser. Your progress in this browser stays here,
+            unchanged, whichever you choose. Nothing from it is uploaded unless you choose to import it.
           </p>
+          {importFlow.availability.available && (
+            <GardenSummaryCard title="The garden in this browser" summary={importFlow.availability.summary} emptyText="No garden" />
+          )}
           <div className="storage-notice-actions">
-            <button className="settings-action-button" type="button" disabled={busy} onClick={() => run(storageActions.startFreshCloudGarden)}>
+            {importFlow.availability.available && (
+              <button className="settings-action-button storage-import-action" type="button" disabled={busy || importFlow.busy} onClick={importFlow.openImport}>
+                Import my browser garden
+              </button>
+            )}
+            <button className="settings-action-button" type="button" disabled={busy || importFlow.busy} onClick={() => run(storageActions.startFreshCloudGarden)}>
               Start a fresh cloud garden
             </button>
-            <button className="settings-reset-button" type="button" disabled={busy} onClick={() => run(storageActions.keepPlayingOnDevice)}>
+            <button className="settings-reset-button" type="button" disabled={busy || importFlow.busy} onClick={() => run(storageActions.keepPlayingOnDevice)}>
               Keep playing on this device
             </button>
           </div>
+        </section>
+      )}
+
+      {storage.phase === "importing" && (
+        <section className="settings-section storage-notice" aria-labelledby="import-progress-heading">
+          <h2 id="import-progress-heading">Importing your browser garden…</h2>
+          <p className="settings-description" role="status">
+            Your garden will be back in a moment. Nothing can change it while this finishes, so nothing gets lost.
+          </p>
+        </section>
+      )}
+
+      {storage.phase === "import-unresolved" && storage.unresolvedImport && (
+        <section className="settings-section storage-notice is-warning import-recovery" aria-labelledby="import-unresolved-heading">
+          <h2 id="import-unresolved-heading" tabIndex={-1}>We couldn&apos;t confirm whether your import finished</h2>
+          <p className="settings-description" role="alert">
+            {describeUnresolvedImport(storage.unresolvedImport.problem, storage.unresolvedImport.canRetry)}
+          </p>
+          <div className="storage-notice-actions">
+            <button className="settings-action-button" type="button" disabled={importFlow.busy} onClick={() => importFlow.settleUnresolved("verify")}>
+              {importFlow.busy ? "Checking…" : "Check my cloud garden"}
+            </button>
+            {storage.unresolvedImport.canRetry && (
+              <button className="settings-action-button" type="button" disabled={importFlow.busy} onClick={() => importFlow.settleUnresolved("retry")}>
+                Try the same import again
+              </button>
+            )}
+            <button className="settings-reset-button" type="button" disabled={importFlow.busy} onClick={() => importFlow.settleUnresolved("leave")}>
+              Load my cloud garden without waiting
+            </button>
+          </div>
+          <p className="settings-description import-fine-print">
+            Loading without waiting is safe: if the import does finish later, your next save will notice and nothing will be overwritten.
+          </p>
         </section>
       )}
 

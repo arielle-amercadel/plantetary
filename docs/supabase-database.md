@@ -1,6 +1,6 @@
 # Supabase database
 
-Plantetary's database tables, access rules and tests (built in Stage 4, extended in Stage 7). Since Stage 7, a verified sign-in saves its garden in `quest_saves`, with `conflict` and `upgrade` copies in `save_backups` (see [game-storage.md](game-storage.md)). `profiles` isn't used by the app yet, and nothing writes `browser_import` or `daily`-on-import backups until Stage 8. Guests never touch the database.
+Plantetary's database tables, access rules and tests (built in Stage 4, extended in Stages 7–8). Since Stage 7, a verified sign-in saves its garden in `quest_saves`, with `conflict` and `upgrade` copies in `save_backups` (see [game-storage.md](game-storage.md)). Stage 8 Step 2 adds an explicit transactional import RPC and adapter; its UI/controller aren't wired yet. Imports back up the existing cloud garden as `browser_import`. `profiles` isn't used by the app yet. Guests never touch the database.
 
 ## What's in this folder
 
@@ -13,7 +13,8 @@ Plantetary's database tables, access rules and tests (built in Stage 4, extended
 | `supabase/migrations/20261105220300_create_save_backups.sql` | `save_backups` table, backup limits, the daily backup trigger and access rules |
 | `supabase/migrations/20261105223950_fix_revision_reuse_and_backup_retention.sql` | Review fixes: revisions never repeat, and backup limits hold under concurrent inserts |
 | `supabase/migrations/20261106090000_add_upgrade_backups.sql` | Stage 7: the `upgrade` backup reason, one per user and source revision, with its own limit |
-| `supabase/tests/database/*.test.sql` | 143 pgTAP tests across 8 files |
+| `supabase/migrations/20261107090000_add_browser_import_rpc.sql` | Stage 8: transactional, account-bound, revision-checked import RPC; reuses existing tables and `browser_import` backups |
+| `supabase/tests/database/*.test.sql` | 197 pgTAP tests across 9 files |
 
 Migrations run in filename order. Never edit one after it has been applied to your hosted project; add a new migration instead.
 
@@ -83,6 +84,29 @@ The core design is unchanged: one JSON record per user, stored as `json` rather 
 | Every grant is written out | A hosted project may expose new tables to logged-out visitors automatically. Explicit grants give the same result either way. |
 | Trigger functions live in a `private` schema | The browser can't reach them through the Data API. |
 | No automatic profile on sign-up | A profile created at sign-up with the default name "Mira" could compete with the browser profile the user imports in Stage 8. The app will create it instead. |
+
+## Transactional import (Stage 8 Step 2)
+
+`public.import_browser_save(uuid, bigint, json, integer)` is a `SECURITY INVOKER` RPC. Execution is
+revoked from `PUBLIC`, `anon`, and `service_role`, then granted only to `authenticated`. Its empty
+`search_path` and qualified relation names avoid caller-controlled relation resolution. The passed
+account must equal `auth.uid()`; RLS and existing column grants still apply to every table operation.
+No new table permissions or privileged helper functions are introduced.
+
+An existing save is locked and checked against the expected revision before any backup is made.
+The existing JSON text and metadata are backed up as `browser_import`, and replacement commits in
+the same transaction. Failure rolls back backup insertion and pruning as well as the save/revision.
+A backup that would itself be pruned fails safely. Importing exactly the garden the cloud already holds returns `unchanged` and writes nothing, so repeated imports never churn the five-backup window. Empty-account imports use the primary key rather
+than an upsert. The existing daily backup trigger and per-reason retention limits are preserved.
+
+`08_browser_import.test.sql` covers grants, RLS, exact backups, failure rollback and retention.
+`06_concurrency.test.sql` additionally races imports with normal saves, two first imports, and two
+replacement imports. Its hosted-execution guard remains in place. See [game-storage.md](game-storage.md)
+for client verification after lost responses and the contract for later controller work.
+
+This new migration is **not applied to the hosted project** as part of Step 2. Apply it through the
+usual reviewed migration process before enabling the import feature there. Existing migrations must
+not be edited or reapplied manually.
 
 ## Run the tests locally
 

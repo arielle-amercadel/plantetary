@@ -7,6 +7,7 @@ import type { SaveSnapshot } from "../game-data-session";
 import type { AccountChangeTicket } from "../game-storage-controller";
 import { useQuestStore } from "../quest-store";
 import { describeUnsavedChanges } from "../storage-messages";
+import CloudImportSection from "./cloud-import-section";
 
 const progressNote = "Your quests, XP, streaks and plants stay saved in this browser, exactly as they are now. Signing in or out doesn't move, upload or reset them.";
 const cloudNote = "Your quests, XP, streaks and plants are saved to your account. The progress saved in this browser stays here, unchanged, and isn't uploaded.";
@@ -253,6 +254,7 @@ export default function AccountSection() {
             </div>
           )}
           {signOutButton}
+          <CloudImportSection accountId={auth.user.id} />
         </>
       )}
 

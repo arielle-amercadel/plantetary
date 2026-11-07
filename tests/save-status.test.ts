@@ -19,6 +19,7 @@ function storage(save: SaveSnapshot | null, changes: Partial<StorageControllerSn
     loaded: { status: "ready", data: garden },
     problem: null,
     save,
+    unresolvedImport: null,
     unsavedRecoveries: [],
     recoveriesAtRisk: false,
     ...changes,

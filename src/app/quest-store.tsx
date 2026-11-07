@@ -1,6 +1,7 @@
 "use client";
 
-import { createContext, useContext, useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { createContext, useContext, useEffect, useState, useSyncExternalStore } from "react";
+import { initialStoredQuestData } from "./quest-defaults";
 import type { ReactNode } from "react";
 import type {
   CategoryLists,
@@ -27,7 +28,6 @@ import {
   getStreakValues,
   hasQuestScheduleChanged,
   isDailyQuestScheduledForToggle,
-  migrateStoredData,
   clearPersonalCompletionDate,
   preserveDeletedLegacyPersonalCompletionCount,
   recordPersonalCompletionDate,
@@ -42,12 +42,10 @@ import {
   toggleDailyQuestCompletionWithDetails,
   updateQuestInLists,
   weekdayNames,
-  weekdays,
 } from "./quest-logic";
 import {
   mergeDiscoveredPlantIds,
   mergePendingPlantGiftIds,
-  migratePlantDiscoveries,
   unwrapPlantGift as unwrapPlantGiftState,
 } from "./plant-journal-logic";
 import { useAuth } from "./auth/auth-provider";
@@ -84,80 +82,7 @@ export {
   getLevelProgress,
 } from "./quest-logic";
 
-const initialCategoryLists: CategoryLists = {
-  daily: ["Wellness", "Self-care", "Personal growth"],
-  personal: ["Study", "Projects", "Chores", "Personal"],
-};
-
-export const initialQuestLists: QuestLists = {
-  daily: [
-    {
-      id: "water",
-      title: "Drink a glass of water",
-      category: "Wellness",
-      repeatSchedule: "Every day",
-      selectedDays: [...weekdays],
-      difficulty: "Easy",
-      completed: false,
-    },
-    {
-      id: "skincare",
-      title: "Morning skincare",
-      category: "Self-care",
-      repeatSchedule: "Every day",
-      selectedDays: [...weekdays],
-      difficulty: "Easy",
-      completed: false,
-    },
-    {
-      id: "reading",
-      title: "Read for 20 minutes",
-      category: "Personal growth",
-      repeatSchedule: "Every day",
-      selectedDays: [...weekdays],
-      difficulty: "Medium",
-      completed: false,
-    },
-    {
-      id: "stretch",
-      title: "Evening stretch",
-      category: "Wellness",
-      repeatSchedule: "Every day",
-      selectedDays: [...weekdays],
-      difficulty: "Easy",
-      completed: false,
-    },
-  ],
-  personal: [
-    {
-      id: "biology",
-      title: "Review biology notes",
-      category: "Study",
-      difficulty: "Medium",
-      completed: false,
-    },
-    {
-      id: "moodboard",
-      title: "Finish portfolio moodboard",
-      category: "Projects",
-      difficulty: "Hard",
-      completed: false,
-    },
-    {
-      id: "desk",
-      title: "Tidy the desk",
-      category: "Chores",
-      difficulty: "Easy",
-      completed: false,
-    },
-  ],
-};
-
-const initialStoredQuestData = migratePlantDiscoveries(migrateStoredData({
-  questLists: initialQuestLists,
-  categoryLists: initialCategoryLists,
-  starterPlantGiftPending: true,
-}));
+export { initialQuestLists } from "./quest-defaults";
 
 type QuestStoreValue = {
   questLists: QuestLists;
@@ -208,6 +133,7 @@ type QuestStoreValue = {
 };
 
 export type StorageActions = {
+  readCloudGardenForDownload: GameStorageController["readCloudGardenForDownload"];
   startFreshCloudGarden: () => boolean;
   keepPlayingOnDevice: () => boolean;
   useCloudGarden: () => boolean;
@@ -222,6 +148,12 @@ export type StorageActions = {
   dismissUnsavedRecovery: (id: string) => void;
   /** A listed recovery's changes, for download, or null if it can't be shown now. */
   getRecoveryData: (id: string) => StoredQuestData | null;
+  /** Importing this browser's garden into the account (see game-storage-controller.ts). */
+  prepareBrowserImport: GameStorageController["prepareBrowserImport"];
+  importBrowserGarden: GameStorageController["importBrowserGarden"];
+  verifyBrowserImport: GameStorageController["verifyBrowserImport"];
+  retryBrowserImport: GameStorageController["retryBrowserImport"];
+  leaveUnresolvedImport: GameStorageController["leaveUnresolvedImport"];
 };
 
 const QuestStoreContext = createContext<QuestStoreValue | null>(null);
@@ -258,6 +190,7 @@ const serverStorageSnapshot: StorageControllerSnapshot = {
   loaded: null,
   problem: null,
   save: null,
+  unresolvedImport: null,
   unsavedRecoveries: [],
   recoveriesAtRisk: false,
 };
@@ -290,7 +223,6 @@ export function QuestProvider({ children }: { children: ReactNode }) {
   /** The generation of the data now in React state. Saves are only sent for the controller's current one. */
   const [appliedGeneration, setAppliedGeneration] = useState(-1);
   const { auth, getSupabaseClient } = useAuth();
-  const authRef = useRef(auth);
   const [controller] = useState<GameStorageController>(() => {
     const deviceChoices = new Set<string>();
     let restoredChoices = false;
@@ -304,12 +236,14 @@ export function QuestProvider({ children }: { children: ReactNode }) {
     return createGameStorageController({
       fallbackData: initialStoredQuestData,
       createBrowserSession: () => createGameDataSession(createBrowserGameStorage()),
-      createCloudSession: (signIn) => {
+      createCloudSession: (signIn, getAuth) => {
         const client = getSupabaseClient();
         if (!client) return null;
-        // Reads the newest auth state on every request, so a changed account is never used.
-        const storage = createCloudGameStorage({ client, signIn, getAuth: () => authRef.current });
-        return createGameDataSession(storage, cloudSessionOptions);
+        // Reads current auth only while this session is current. A retired storage cannot resume
+        // delayed requests even if the same account signs back in before they finish.
+        const storage = createCloudGameStorage({ client, signIn, getAuth });
+        // The same storage serves the session and imports, so an unresolved import also holds back saves.
+        return { session: createGameDataSession(storage, cloudSessionOptions), importer: storage };
       },
       // Download-only copies of unsaved cloud changes, for this tab, if the page closes before they're saved.
       recoveryStore: createRecoveryStore(() => (typeof window === "undefined" ? null : window.sessionStorage)),
@@ -331,7 +265,6 @@ export function QuestProvider({ children }: { children: ReactNode }) {
   const canPlay = hasRestored && isGardenPlayable(storage, appliedGeneration);
 
   useEffect(() => {
-    authRef.current = auth;
     controller.setAuth(auth);
   }, [auth, controller]);
 
@@ -671,6 +604,7 @@ export function QuestProvider({ children }: { children: ReactNode }) {
   }
 
   const storageActions: StorageActions = {
+    readCloudGardenForDownload: controller.readCloudGardenForDownload,
     startFreshCloudGarden: controller.startFreshCloudGarden,
     keepPlayingOnDevice: controller.keepPlayingOnDevice,
     useCloudGarden: controller.useCloudGarden,
@@ -683,6 +617,11 @@ export function QuestProvider({ children }: { children: ReactNode }) {
     acknowledgeUnsavedLoss: controller.acknowledgeUnsavedLoss,
     dismissUnsavedRecovery: controller.dismissUnsavedRecovery,
     getRecoveryData: controller.getRecoveryData,
+    prepareBrowserImport: controller.prepareBrowserImport,
+    importBrowserGarden: controller.importBrowserGarden,
+    verifyBrowserImport: controller.verifyBrowserImport,
+    retryBrowserImport: controller.retryBrowserImport,
+    leaveUnresolvedImport: controller.leaveUnresolvedImport,
   };
 
   function getDataForExport(): StoredQuestData {

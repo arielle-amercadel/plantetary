@@ -7,6 +7,7 @@ import ProfileAvatarArtwork from "./profile-avatar-artwork";
 import { getLevelProgress, useQuestStore } from "./quest-store";
 import SaveStatusIndicator from "./save-status-indicator";
 import StorageNotices from "./storage-notices";
+import { ImportResult } from "./import-flow-provider";
 import { dateFromKey, formatLocalDateLabel } from "./quest-logic";
 import {
   defaultProfilePreferences,
@@ -171,6 +172,7 @@ export default function AppShell({
             </div>
           </div>
         </header>
+        <ImportResult />
         <StorageNotices />
         {children}
       </div>
