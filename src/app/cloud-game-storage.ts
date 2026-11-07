@@ -104,6 +104,7 @@ export function describeCloudError(error: DatabaseError, status: number): GameSt
   const code = error?.code ?? "";
   const message = error?.message ?? "";
   if (status === 0) return "network";
+  if (isMissingFunction(error, status)) return "server-outdated";
   // PGRST301–303: the access token is missing, expired or otherwise not accepted.
   if (status === 401 || /^PGRST30\d$/.test(code)) return "signed-out";
   // 42501: the access rules (RLS or grants) refused it.
@@ -117,6 +118,16 @@ export function describeCloudError(error: DatabaseError, status: number): GameSt
   }
   if (status === 429 || status >= 500) return "server";
   return "unknown";
+}
+
+/**
+ * The database doesn't have the function that was called: PostgREST's PGRST202 ("Could not find the
+ * function ... in the schema cache", HTTP 404), or PostgreSQL's 42883 (undefined_function). Either way
+ * the call was refused before anything ran, so nothing was written. A pending migration, for example.
+ */
+export function isMissingFunction(error: DatabaseError, status: number): boolean {
+  if (status < 400 || status >= 600) return false;
+  return (error?.code === "PGRST202" && status === 404) || error?.code === "42883";
 }
 
 /** 23505 on the primary key: the account already has a save. */
@@ -259,8 +270,11 @@ export function createCloudGameStorage({ client, signIn, getAuth }: CloudGameSto
       // doesn't need a verification gate (unless an earlier request was already uncertain).
       // Only an answer from PostgREST itself (an HTTP error status) carries a PostgreSQL SQLSTATE; a
       // transport error can also have a short code (for example from the network stack), so the
-      // status is checked too.
-      if (!retryingUncertain && error?.code && /^[A-Z0-9]{5}$/.test(error.code) && status >= 400 && status < 600) {
+      // status is checked too. A missing function (PGRST202, before a migration is applied) is refused by
+      // PostgREST before any transaction starts, so it's just as certain.
+      const definite = error?.code && status >= 400 && status < 600 &&
+        (/^[A-Z0-9]{5}$/.test(error.code) || isMissingFunction(error, status));
+      if (!retryingUncertain && definite) {
         uncertainImport = null;
         return importFailure(attempt.problem);
       }

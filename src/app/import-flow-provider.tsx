@@ -8,6 +8,7 @@ import type { BrowserImportPlan } from "./game-storage-controller";
 import {
   browserImportAvailability,
   describeGardenSummary,
+  describeCancelledImport,
   describeImportOutcome,
   describeImportRefusal,
   formatActivityDate,
@@ -162,7 +163,7 @@ export function ImportFlowProvider({ children }: { children: ReactNode }) {
     }
     const now = storageRef.current;
     if (accountRef.current !== scope.accountId || !isConfirmationCurrent(scope, now)) {
-      close(describeImportOutcome({ status: "cancelled" }, false), true);
+      close(describeCancelledImport("confirming"), true);
       return;
     }
     // The cloud garden on screen is this account's, just saved by the preparation. Never shown when the
@@ -186,9 +187,11 @@ export function ImportFlowProvider({ children }: { children: ReactNode }) {
     (accountId !== flow.scope.accountId || !isConfirmationCurrent(flow.scope, storage));
   const workLost = flow.step === "importing" && flow.scope.accountId !== accountId;
   const scopeLost = confirmationLost || workLost;
+  // Nothing was sent while confirming; once importing, the request may still have been applied.
+  const lostMessage = scopeLost ? describeCancelledImport(workLost ? "importing" : "confirming") : null;
   const shownFlow: Flow = scopeLost ? { step: "closed" } : flow;
-  const shownResult = scopeLost
-    ? { ...describeImportOutcome({ status: "cancelled" }, false)!, id: 0, accountId }
+  const shownResult = lostMessage
+    ? { ...lostMessage, id: 0, accountId }
     : result && (result.accountId === undefined || result.accountId === accountId) ? result : null;
 
   function dismissResult() {
@@ -322,7 +325,7 @@ export function ImportFlowProvider({ children }: { children: ReactNode }) {
         flow={shownFlow}
         browser={availability.summary}
         onCancel={() => close(null, true)}
-        onClosed={() => { if (scopeLost) close(describeImportOutcome({ status: "cancelled" }, false), true); }}
+        onClosed={() => { if (lostMessage) close(lostMessage, true); }}
         onConfirm={() => void confirm()}
         onDownload={() => void downloadCloudGarden()}
         downloading={downloading}

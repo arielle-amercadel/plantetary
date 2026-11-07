@@ -47,6 +47,8 @@ export function describeSaveProblem(problem: GameStorageProblem): string {
       return "Your garden was saved by a newer version of Plantetary. Refresh the page to update.";
     case "identity-changed":
       return "The signed-in account changed.";
+    case "server-outdated":
+      return "The server isn't set up for this yet.";
     default:
       return "Something went wrong.";
   }

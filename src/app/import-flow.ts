@@ -71,9 +71,9 @@ export type ImportMessage = {
 };
 
 function describeImportProblem(problem: GameStorageProblem): string {
-  return problem === "network"
-    ? "Plantetary couldn't reach the server."
-    : describeSaveProblem(problem);
+  if (problem === "network") return "Plantetary couldn't reach the server.";
+  if (problem === "server-outdated") return "Importing isn't set up on the server yet.";
+  return describeSaveProblem(problem);
 }
 
 /**
@@ -117,15 +117,35 @@ export function describeImportOutcome(outcome: BrowserImportOutcome, replacing: 
     case "refused":
       return { tone: needsFreshReview(outcome) ? "warning" : "info", title: "Nothing was imported", message: describeImportRefusal(outcome.reason) };
     case "cancelled":
-      return {
-        accountIndependent: true,
-        tone: "info",
-        title: "Import cancelled",
-        message: "The signed-in account changed, so nothing more was done here. Nothing was added to any other account.",
-      };
+      return describeCancelledImport("importing");
     case "unresolved":
       return null;
   }
+}
+
+/**
+ * What to tell the player when the account changes (or they sign out) part-way through. Generic, with no
+ * account data, so it can stay on screen for whoever is signed in next.
+ * - `confirming`: the confirmation was still open, so nothing was sent.
+ * - `importing`: the import had been sent. The server may still have applied it, but only to the account
+ *   that started it (the request carries that account's ID and token), after backing up its cloud garden.
+ */
+export function describeCancelledImport(stage: "confirming" | "importing"): ImportMessage {
+  return stage === "confirming"
+    ? {
+      accountIndependent: true,
+      tone: "info",
+      title: "Import cancelled",
+      message: "The signed-in account changed before the import was confirmed, so nothing was imported. Nothing was added to any account.",
+    }
+    : {
+      accountIndependent: true,
+      tone: "info",
+      title: "Import interrupted",
+      message: "The signed-in account changed before the import finished, so this page stopped following it. " +
+        "It may still have completed in the account that started it; if so, that account's previous cloud garden was backed up first. " +
+        "Nothing was added to any other account, and the garden in this browser hasn't changed.",
+    };
 }
 
 /** Why an import's outcome isn't known yet, for the unresolved-import card. */

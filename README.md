@@ -71,11 +71,11 @@ Then run the tests:
 npm run test:e2e
 ```
 
-Playwright starts a development server on port 3100 and stops it when the tests finish, so you don't need to start one yourself.
+Playwright makes a production build of the app (in `.next/e2e`, so it never replaces your own build in `.next`), serves it on port 3100, and stops it when the tests finish, so you don't need to start anything yourself. A production build is used because the development server's hot reloading can interrupt page navigations while several tests run at once. To debug against the development server instead, run `E2E_DEV=1 npm run test:e2e`.
 
 The browser tests never use a real Supabase project: Playwright's server points the app at a fake project that the tests answer themselves.
 
-Next.js allows only one development server per project, so stop yours (`npm run dev`) before running the tests. You can point the tests at a running server instead with `E2E_PORT=3000 npm run test:e2e`, but **only if that server has no Supabase values in `.env.local`**: a reused server keeps its own settings, so the tests would sign in to, and write to, your real project.
+With `E2E_DEV=1`, stop your own development server first: Next.js allows only one per project. You can point the tests at a running server instead with `E2E_PORT=3000 npm run test:e2e`, but **only if that server has no Supabase values in `.env.local`**: a reused server keeps its own settings, so the tests would sign in to, and write to, your real project.
 
 ## Database Tests
 
