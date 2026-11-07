@@ -104,8 +104,16 @@ than an upsert. The existing daily backup trigger and per-reason retention limit
 replacement imports. Its hosted-execution guard remains in place. See [game-storage.md](game-storage.md)
 for client verification after lost responses and the contract for later controller work.
 
-This migration is **not applied to the hosted project** yet. See **Stages 7 and 8: applying the new
-migrations** below. Existing migrations must not be edited or reapplied manually.
+This migration is applied to the hosted project (see **Hosted project status** below). Existing
+migrations must not be edited or reapplied manually.
+
+## Hosted project status
+
+Plantetary is live at https://plantetary.vercel.app, using the hosted Supabase project **plantetary** (Postgres 17, matching `major_version` in `supabase/config.toml`).
+
+- **Migrations:** all seven files in `supabase/migrations/` are applied, through Stage 8's `20261107090000_add_browser_import_rpc.sql`. `npx supabase migration list --remote` shows each in both the Local and Remote columns.
+- **Checked from outside, as an anonymous visitor (read-only):** requests for `quest_saves`, `save_backups` and `profiles` with only the publishable key are refused (HTTP 401, permission denied); the `private` schema isn't exposed; only email sign-in is enabled, with email confirmation on.
+- **Real players' data lives here now.** Apply any new migration with **Applying a new migration to the hosted project** below, backup first, and test by hand only with your own test addresses.
 
 ## Run the tests locally
 
@@ -194,22 +202,22 @@ If any test fails here but passes locally, don't connect the app until we've fou
 
 The app uses the project URL and **publishable** key only. The secret key bypasses every rule here and must never be put in the app or committed.
 
-## Stages 7 and 8: applying the new migrations (not done yet)
+## Applying a new migration to the hosted project
 
-Two migrations have been reviewed and pass the local tests but haven't been applied to the hosted project:
+Every migration so far is applied (see **Hosted project status**). This is the procedure for the next one; it's the one Stages 7 and 8 were applied with. Those two, for reference:
 
 | Migration | Stage | What it changes | Without it |
 | --- | --- | --- | --- |
 | `20261106090000_add_upgrade_backups.sql` | 7 | Allows a new backup reason, `upgrade` (kept once per revision, 5 per account), and adds it to the retention trigger. Changes two check constraints; existing rows already satisfy them. | A cloud save in an older format can't be backed up before it's upgraded, so it fails to load (safely: it's never replaced). |
 | `20261107090000_add_browser_import_rpc.sql` | 8 | Adds one function, `public.import_browser_save`, callable only by signed-in users. It runs with the caller's own permissions, so RLS still applies. No table changes. | Importing fails with "Importing isn't set up on the server yet". Nothing is written, and normal saving works. |
 
-They're applied together, in this order (`db push` sorts them by name). Point the deployed app at the hosted project for cloud saves only after both are applied.
+`db push` applies pending migrations in order, sorted by name. If the app needs a new migration, apply it **before** deploying the code that uses it, and make the old code keep working with it (add things; don't remove what the deployed app still uses), so a rollback stays safe.
 
-Run these yourself, from the project folder, while the hosted project has no real players. Every hosted step has `--remote`; nothing here changes `.env.local`. If the project isn't linked on this computer yet, do steps 1–4 of **Apply the migrations to your hosted project** above first.
+Run these yourself, from the project folder. Every hosted step has `--remote`; nothing here changes `.env.local`. If the project isn't linked on this computer yet, do steps 1–4 of **Apply the migrations to your hosted project** above first.
 
 ### 1. Check
 
-1. **Be on the code you'll deploy.** These migrations are in `main` once Stage 8 Step 5 is merged. Check that `supabase/migrations/` lists all seven files, ending with the two above.
+1. **Be on the code you'll deploy,** with the new migration reviewed and merged. Check that `supabase/migrations/` lists it after the seven already applied.
 
 2. **Test locally.** Rebuild the local database from every migration and run the tests. They must end with `Result: PASS`.
 
@@ -221,27 +229,25 @@ Run these yourself, from the project folder, while the hosted project has no rea
 
    If `start` stops because the `vector` or `studio` container is unhealthy, run `npx supabase start -x vector,studio`. The database tests don't need either.
 
-3. **See what the hosted project has (read-only).** Every migration up to `20261105223950_fix_revision_reuse_and_backup_retention` should be in both columns. Only the two above should be missing from Remote. If anything else differs (a migration missing that should be there, or one on Remote that isn't in the folder), stop and find out why first.
+3. **See what the hosted project has (read-only).** Every migration already applied (through `20261107090000_add_browser_import_rpc`) should be in both columns, and only the new one(s) missing from Remote. If anything else differs (a migration missing that should be there, or one on Remote that isn't in the folder), stop and find out why first.
 
    ```bash
    npx supabase migration list --remote
    ```
 
-   If `20261106090000_add_upgrade_backups` is already in both columns, Stage 7's was applied earlier: only the Stage 8 migration is left, and the steps below are the same.
+### 2. Back up
 
-### 2. Back up (if the hosted data matters)
-
-Neither migration deletes or rewrites rows, but take a copy first if the project holds anything you'd miss. Save it outside the project folder so it's never committed, and delete it when you no longer need it: it contains players' saves.
+The project holds players' saves now, so take a copy first, even if the migration only adds things. Save it outside the project folder so it's never committed, and delete it when you no longer need it: it contains players' data.
 
 ```bash
-npx supabase db dump --remote --data-only -f ~/plantetary-hosted-data-before-stage8.sql
+npx supabase db dump --remote --data-only -f ~/plantetary-hosted-data-before-<migration-name>.sql
 ```
 
 On a paid plan, **Database → Backups** in the dashboard also shows the project's automatic backups.
 
 ### 3. Review
 
-1. **Read the two files** (above) if you haven't already, so you know exactly what will run.
+1. **Read the new file(s)** if you haven't already, so you know exactly what will run, and whether it deletes or rewrites rows, or locks a busy table for long.
 2. **Dry run.** It should list exactly the migrations missing from Remote in step 1.3, in order, and apply nothing.
 
    ```bash
@@ -262,7 +268,7 @@ If it fails, don't retry by pasting SQL into the SQL Editor. Run step 1.3 again 
 
 ### 5. Verify
 
-1. **Recorded.** Every migration, including both new ones, should now be in both columns.
+1. **Recorded.** Every migration, including the new one(s), should now be in both columns.
 
    ```bash
    npx supabase migration list --remote
@@ -274,7 +280,7 @@ If it fails, don't retry by pasting SQL into the SQL Editor. Run step 1.3 again 
    npx supabase test db --remote
    ```
 
-3. **Who can run the import (read-only).** In the dashboard's **SQL Editor**:
+3. **Permissions, if the migration changed any (read-only).** For example, who can run Stage 8's import, in the dashboard's **SQL Editor**:
 
    ```sql
    select
@@ -286,14 +292,14 @@ If it fails, don't retry by pasting SQL into the SQL Editor. Run step 1.3 again 
 
 4. **Dashboard checks.** Repeat **Check the dashboard** above. The Security Advisor should show no new warnings.
 
-5. **Try it by hand** with test accounts only (see **Controlled hosted testing** below).
+5. **Try it by hand** with test accounts only (see **Testing against the hosted project by hand** below).
 
-## Controlled hosted testing (before inviting players)
+## Testing against the hosted project by hand
 
-Once both migrations are applied, you can try cloud saves and importing against the hosted project on your own computer. Keep it controlled:
+After a migration or a release, check the flows by hand: on https://plantetary.vercel.app itself, or from a dev server on your own computer pointed at the hosted project. Real players' data lives there, so keep it controlled:
 
-1. **Use the hosted project only while it has no real players**, and sign in only with your own test addresses. Without custom SMTP, Supabase only emails members of your Supabase organization, a few times an hour (see [supabase-auth.md](supabase-auth.md)).
-2. **Point the dev server at it** by putting the project URL and **publishable** key in `.env.local` (copied from `.env.example`). Never the secret or `service_role` key: Plantetary refuses to start sign-in with one. Restart `npm run dev` after changing it. **Redirect URLs** must include `http://localhost:3000/auth/confirm`.
+1. **Sign in only with your own test addresses,** never a player's. Without custom SMTP, Supabase only emails members of your Supabase organization, a few times an hour (see [supabase-auth.md](supabase-auth.md)).
+2. **To use a dev server, point it at the project** by putting the project URL and **publishable** key in `.env.local` (copied from `.env.example`). Never the secret or `service_role` key: Plantetary refuses to start sign-in with one. Restart `npm run dev` after changing it. **Redirect URLs** must include `http://localhost:3000/auth/confirm`.
 3. **Don't run the browser tests against that server.** `npm run test:e2e` starts its own server with a fake project, which is safe. `E2E_PORT=3000 npm run test:e2e` would reuse your server, and the tests would sign in and write to the real project.
 4. **Try the flows by hand,** with two test addresses (A and B):
    - Play as a guest, then sign in as A: **Start your cloud garden?** appears, and the guest progress is untouched.
