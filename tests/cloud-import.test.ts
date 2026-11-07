@@ -396,6 +396,39 @@ describe("transactional browser imports", () => {
     expect(env.events).toEqual(["rpc", "read"]);
   });
 
+  it("a missing import function (PGRST202, migration not applied) is a definite failure: no verification gate, saves continue", async () => {
+    const env = setup(garden(40));
+    const missing = { data: null, error: { code: "PGRST202", message: "Could not find the function public.import_browser_save in the schema cache" }, status: 404 };
+    env.rpc(() => missing);
+    expect(await env.storage.importSave(garden(), 1)).toEqual({ status: "failed", problem: "server-outdated", verificationRequired: false });
+    // Refused before anything ran: no read to check, nothing unresolved, the cloud garden untouched.
+    expect(env.events).toEqual(["rpc"]);
+    expect(env.storage.hasUnresolvedImport()).toBe(false);
+    expect(await env.storage.verifyImport()).toBeNull();
+    expect(env.row()).toMatchObject({ revision: 1, data: { legacyXpBonus: 40 } });
+    expect(env.backups).toEqual([]);
+    // Nothing held back: once the migration is applied, the same import goes straight through.
+    env.rpc();
+    expect(await env.storage.importSave(garden(), 1)).toMatchObject({ status: "imported", verified: false });
+    expect(env.backups).toHaveLength(1);
+  });
+
+  it("PostgreSQL's undefined_function (42883) is just as definite", async () => {
+    const env = setup(garden(40));
+    env.rpc(() => ({ data: null, error: { code: "42883" }, status: 404 }));
+    expect(await env.storage.importSave(garden(), 1)).toEqual({ status: "failed", problem: "server-outdated", verificationRequired: false });
+    expect(env.storage.hasUnresolvedImport()).toBe(false);
+  });
+
+  it("a missing-function reply to a retry of an uncertain import keeps the gate: the original may still commit", async () => {
+    const env = setup(garden(40));
+    env.rpc(() => lost());
+    await env.storage.importSave(garden(), 1);
+    env.rpc(() => ({ data: null, error: { code: "PGRST202" }, status: 404 }));
+    expect(await env.storage.importSave(garden(), 1)).toMatchObject({ status: "failed" });
+    expect(env.storage.hasUnresolvedImport()).toBe(true);
+  });
+
   it("a transport error with a short code (no HTTP status) is still treated as uncertain", async () => {
     const env = setup(garden(40));
     env.rpc((args, sentAs) => { env.apply(args, sentAs); return { data: null, error: { code: "EPIPE" }, status: 0 }; });

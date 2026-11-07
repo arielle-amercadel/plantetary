@@ -26,7 +26,7 @@ function nowSeconds() {
  * Each email gets its own stable user ID, so tests can tell accounts apart, as the database does. It's
  * derived from the whole address: two different emails never share an ID.
  */
-function fakeUserId(email: string) {
+export function fakeUserId(email: string) {
   const hex = createHash("sha256").update(email).digest("hex");
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-4${hex.slice(13, 16)}-8${hex.slice(17, 20)}-${hex.slice(20, 32)}`;
 }
@@ -116,6 +116,11 @@ export type FakeAuth = {
   reply: (endpoint: string, handler: Handler | Reply) => void;
   /** Removes a database override so subsequent requests use the real fake-table rules again. */
   restoreDatabaseReply: (endpoint: string) => void;
+  /**
+   * Answers a database request exactly as the fake tables would, applying any write. For handlers that
+   * apply a request but lose its reply, or that hold a request and apply it later (a delayed commit).
+   */
+  answerAsDatabase: (request: Request) => Reply;
   /** The fake project's database, shared by every tab given the same one. */
   cloud: FakeCloud;
 };
@@ -160,7 +165,7 @@ export function createFakeCloud(): FakeCloud {
 }
 
 /** The account a request's bearer token was issued for, or null for no sign-in. */
-function userIdFromBearer(request: Request): string | null {
+export function userIdFromBearer(request: Request): string | null {
   const token = request.headers()["authorization"]?.replace(/^Bearer /, "") ?? "";
   try {
     const claims = JSON.parse(Buffer.from(token.split(".")[1] ?? "", "base64url").toString("utf8")) as { sub?: unknown };
@@ -286,6 +291,11 @@ export async function useFakeAuth(page: Page, cloud: FakeCloud = createFakeCloud
     requests,
     reply(endpoint, handler) {
       handlers.set(endpoint, typeof handler === "function" ? handler : () => handler);
+    },
+    answerAsDatabase(request) {
+      const pathname = new URL(request.url()).pathname;
+      if (!pathname.startsWith("/rest/v1/")) throw new Error("Not a database request");
+      return answerDatabase(cloud, request, pathname.slice("/rest/v1/".length));
     },
     restoreDatabaseReply(endpoint) {
       if (!/ (quest_saves|save_backups|rpc\/import_browser_save)$/.test(endpoint)) throw new Error("Only database overrides can be restored");

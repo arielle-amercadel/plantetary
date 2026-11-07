@@ -5,6 +5,7 @@ import type { BrowserImportOutcome, BrowserImportRefusal, StorageControllerSnaps
 import {
   browserImportAvailability,
   describeGardenSummary,
+  describeCancelledImport,
   describeImportOutcome,
   describeImportRefusal,
   describeUnresolvedImport,
@@ -76,7 +77,7 @@ describe("messages", () => {
     [{ status: "conflict" }, "warning", "changed somewhere else"],
     [{ status: "backup-failed" }, "error", "Nothing was imported"],
     [{ status: "failed", problem: "network" }, "error", "didn't go through"],
-    [{ status: "cancelled" }, "info", "cancelled"],
+    [{ status: "cancelled" }, "info", "interrupted"],
     [{ status: "refused", reason: "stale" }, "warning", "Nothing was imported"],
     [{ status: "refused", reason: "unsaved" }, "info", "Nothing was imported"],
   ] as const)("describes %j", (outcome, tone, title) => {
@@ -89,6 +90,29 @@ describe("messages", () => {
     expect(describeImportOutcome({ status: "failed", problem: "network" }, true)?.message).toBe(
       "Plantetary couldn't reach the server. Nothing was imported. The garden in this browser hasn't changed.",
     );
+  });
+
+  it("a missing database function (a pending migration) says importing isn't set up, and that nothing changed", () => {
+    expect(describeImportOutcome({ status: "failed", problem: "server-outdated" }, true)?.message).toBe(
+      "Importing isn't set up on the server yet. Nothing was imported. The garden in this browser hasn't changed.",
+    );
+  });
+
+  it("an import interrupted by an account change says it may have completed in the account that started it", () => {
+    const interrupted = describeCancelledImport("importing");
+    expect(describeImportOutcome({ status: "cancelled" }, true)).toEqual(interrupted);
+    expect(interrupted).toMatchObject({ accountIndependent: true, title: "Import interrupted" });
+    expect(interrupted.message).toContain("may still have completed in the account that started it");
+    expect(interrupted.message).toContain("backed up first");
+    expect(interrupted.message).toContain("Nothing was added to any other account");
+    expect(interrupted.message).not.toMatch(/nothing was imported/i);
+  });
+
+  it("a confirmation cancelled by an account change says nothing was imported", () => {
+    const cancelled = describeCancelledImport("confirming");
+    expect(cancelled).toMatchObject({ accountIndependent: true, title: "Import cancelled" });
+    expect(cancelled.message).toContain("nothing was imported");
+    expect(cancelled.message).not.toContain("may still have completed");
   });
 
   it("leaves unresolved imports to their own card", () => {

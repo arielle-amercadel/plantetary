@@ -1063,6 +1063,12 @@ describe("describeCloudError", () => {
     [409, "23503", "unknown"],
     [413, "", "too-large"],
     [400, "22P02", "unknown"],
+    // A function the database doesn't have yet (a pending migration): from PostgREST, and from PostgreSQL.
+    [404, "PGRST202", "server-outdated"],
+    [400, "42883", "server-outdated"],
+    // Only as an answer from the server: a 200 or a status-0 transport error with that code isn't one.
+    [0, "PGRST202", "network"],
+    [404, "PGRST205", "unknown"],
   ] as const)("reads status %i, code %s as %s", (status, code, problem) => {
     expect(describeCloudError({ code }, status)).toBe(problem);
   });

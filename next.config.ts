@@ -7,7 +7,9 @@ import { assertNoExposedPrivilegedKeys } from "./src/app/auth/privileged-key-gua
 assertNoExposedPrivilegedKeys(process.env);
 
 const nextConfig: NextConfig = {
-  /* config options here */
+  // Normally `.next`. The browser tests build into `.next/e2e` (see playwright.config.ts), so their
+  // build, made with a fake Supabase project, never replaces the real production build.
+  distDir: process.env.PLANTETARY_DIST_DIR || ".next",
   turbopack: {
     rules: {
       "*.css": {

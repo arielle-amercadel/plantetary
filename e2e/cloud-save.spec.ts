@@ -831,6 +831,8 @@ test.describe("Leaving the page with unsaved changes (Step 6)", () => {
   });
 
   test("changes left by a reload are hidden, never downloadable, while another account is signed in, and kept for their own", async ({ page }) => {
+    // Several sign-ins and reloads: more time than one page's test, like the other multi-sign-in flows.
+    test.slow();
     const { auth } = await openSettledCloudGarden(page);
     auth.reply("PATCH quest_saves", tooLarge);
     await completeQuest(page, "Morning skincare");
@@ -863,6 +865,8 @@ test.describe("Leaving the page with unsaved changes (Step 6)", () => {
   });
 
   test("signing out hides changes left by a reload, and signing back in offers them again", async ({ page }) => {
+    // Several sign-ins and reloads: more time than one page's test, like the other multi-sign-in flows.
+    test.slow();
     const { auth } = await openSettledCloudGarden(page);
     auth.reply("PATCH quest_saves", tooLarge);
     await completeQuest(page, "Morning skincare");

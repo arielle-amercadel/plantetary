@@ -352,6 +352,23 @@ describe("imports that don't go through", () => {
     expect(env.browserItems.get(questStorageKey)).toBe(BROWSER_TEXT);
   });
 
+  it("a missing import function (migration not applied) fails definitely: no unresolved card, saves continue", async () => {
+    const env = await signedInAs(40);
+    env.cloud.onImport(() => ({ data: null, error: { code: "PGRST202", message: "Could not find the function" }, status: 404 }));
+    expect(await env.controller.importBrowserGarden(await prepared(env))).toEqual({ status: "failed", problem: "server-outdated" });
+    await settle();
+    expect(env.snap()).toMatchObject({ phase: "ready", unresolvedImport: null });
+    expect(env.cloud.rpcCalls).toHaveLength(1);
+    expect(env.cloud.backups).toEqual([]);
+    expect(xpOf(env.snap().loaded?.data)).toBe(40);
+    expect(env.playable()).toBe(true);
+    env.play(garden(41));
+    await settle();
+    expect(env.snap().save).toMatchObject({ status: "saved", hasUnsavedChanges: false });
+    expect(xpOf(env.cloud.gardenOf(A))).toBe(41);
+    expect(env.browserItems.get(questStorageKey)).toBe(BROWSER_TEXT);
+  });
+
   it("does not show stale playable data when the fresh load after success fails", async () => {
     const env = await signedInAs(40);
     const plan = await prepared(env);

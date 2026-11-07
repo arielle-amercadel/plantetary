@@ -6,14 +6,17 @@ import {
   cloudRequests,
   createFakeCloud,
   fakeSession,
+  fakeUserId,
   openOtherTab,
+  readGameStorage,
   useFakeAuth,
+  userIdFromBearer,
   type FakeAuth,
 } from "./auth-support";
-import { QUEST_SAVE_KEY, completeQuest, expect, expectHomeXp, openApp, readStorage, test } from "./support";
+import { QUEST_SAVE_KEY, buildSave, completeQuest, expect, expectHomeXp, openApp, readStorage, seedStorage, test } from "./support";
 
-// Stage 8 Step 4: the guest-to-cloud import UI. Focused on what the screens show and do; the full
-// browser test matrix is Step 5.
+// Stage 8 Step 4: the guest-to-cloud import UI, what the screens show and do. Step 5 (further down):
+// reliability, lost replies, late commits, account changes and reloads while an import is under way.
 
 const SIGN_IN_LINK = "/auth/confirm?token_hash=pkce_0123456789abcdef&type=email";
 const OTHER_EMAIL = "other-player@example.com";
@@ -64,7 +67,10 @@ async function guestAndCloudGarden(page: Page) {
   await signIn(page);
   await openHome(page);
   await expectHomeXp(page, 40);
-  await page.waitForTimeout(1000);
+  // Loading this garden records today's starting state, which is saved straight away (one PATCH). Wait
+  // until that save has been sent and answered, so it can't overlap anything the test does next.
+  await expect.poll(() => cloudRequests(auth, "PATCH quest_saves").length).toBe(1);
+  await expect(page.locator(".save-status")).toHaveAttribute("data-save-status", "saved");
   await page.getByRole("link", { name: "Settings" }).click();
   await expect(importSection(page)).toBeVisible();
   return { auth, cloud, guestSave };
@@ -424,6 +430,7 @@ test.describe("An account change during the confirmation", () => {
     release();
     await expect(accountSection(page)).toContainText(OTHER_EMAIL);
     await expect(resultNotice(page)).toContainText("Import cancelled");
+    await expect(resultNotice(page)).not.toContainText("may still have completed");
     expect(downloads).toEqual([]);
     expect(imports(auth)).toEqual([]);
     await expect(page.getByText("40 XP", { exact: false })).toHaveCount(0);
@@ -441,6 +448,7 @@ test.describe("An account change during the confirmation", () => {
     await other.close();
     await expect(importDialog(page)).toBeHidden();
     await expect(resultNotice(page)).toContainText("Import cancelled");
+    await expect(resultNotice(page)).not.toContainText("may still have completed");
     await expect(resultNotice(page).getByRole("heading")).toBeFocused();
     expect(imports(auth)).toEqual([]);
     expect(importBackups(auth)).toEqual([]);
@@ -462,8 +470,291 @@ test.describe("An account change during the confirmation", () => {
 
     await expect(importDialog(page)).toBeHidden();
     await expect(resultNotice(page)).toContainText("Import cancelled");
+    await expect(resultNotice(page)).not.toContainText("may still have completed");
     await expect(page.getByText("40 XP", { exact: false })).toHaveCount(0);
     expect(imports(auth)).toEqual([]);
     expect(cloud.saveOf(OTHER_EMAIL)).toBeUndefined();
+  });
+});
+
+// Stage 8 Step 5: reliability. Lost replies, late commits, duplicates, account changes and navigation
+// while an import is under way, reloading or closing during an unresolved import, a large garden, and
+// saving afterwards.
+
+/** Holds the next import until the test releases it, then answers as the database would. */
+function holdImport(auth: FakeAuth) {
+  let release!: () => void;
+  const released = new Promise<void>((resolve) => { release = resolve; });
+  auth.reply("POST rpc/import_browser_save", async (request) => {
+    await released;
+    return auth.answerAsDatabase(request);
+  });
+  return release;
+}
+
+/** Signs `email` in from a second tab of this browser, which this tab then follows. */
+async function signInElsewhere(page: Page, cloud: FakeAuth["cloud"], email: string) {
+  const otherTab = await openOtherTab(page);
+  const otherAuth = await answerSupabaseFor(otherTab, cloud);
+  otherAuth.reply("POST /verify", { status: 200, body: fakeSession(email) });
+  otherAuth.reply("POST /token", { status: 200, body: fakeSession(email) });
+  await otherTab.goto(SIGN_IN_LINK);
+  await otherTab.getByRole("button", { name: "Finish signing in" }).click();
+  await expect(otherTab.getByRole("region", { name: "Account" })).toContainText(`Signed in as ${email}`);
+  await otherTab.close();
+}
+
+/**
+ * The import reached `email`'s account and no other: sent once, with that account's ID and token; that
+ * account's cloud garden is now exactly the browser garden that was sent (5 XP, water done); and its
+ * earlier 40 XP garden was backed up exactly once, as that account's browser_import backup.
+ */
+function expectImportedOnlyInto(auth: FakeAuth, cloud: FakeAuth["cloud"], email: string) {
+  const sent = auth.requests.filter((request) => new URL(request.url()).pathname === "/rest/v1/rpc/import_browser_save");
+  expect(sent).toHaveLength(1);
+  const owner = fakeUserId(email);
+  const args = sent[0].postDataJSON() as { p_user_id: string; p_data: unknown };
+  expect(args.p_user_id).toBe(owner);
+  expect(userIdFromBearer(sent[0])).toBe(owner);
+  const saved = cloud.saveOf(email)?.data as { legacyXpBonus?: number; completionHistory?: Record<string, { completedQuestIds?: string[] }> };
+  expect(saved).toEqual(args.p_data);
+  expect(saved.legacyXpBonus ?? 0).toBe(0);
+  expect(saved.completionHistory?.["2026-10-19"]?.completedQuestIds).toContain("water");
+  const backups = importBackups(auth);
+  expect(backups).toHaveLength(1);
+  expect(backups[0].user_id).toBe(owner);
+  expect((JSON.parse(backups[0].raw_data) as { legacyXpBonus?: number }).legacyXpBonus).toBe(40);
+  // No backup of any kind was made in any other account.
+  expect(cloud.backups.filter((backup) => backup.user_id !== owner)).toEqual([]);
+}
+
+async function confirmReplace(page: Page) {
+  await importSection(page).getByRole("button", { name: "Review and import…" }).click();
+  await importDialog(page).getByRole("button", { name: "Replace my cloud garden" }).click();
+}
+
+test.describe("Lost replies and late commits (Step 5)", () => {
+  test("a reply lost after the import was saved is verified from the cloud: imported once, backed up once", async ({ page }) => {
+    const { auth } = await guestAndCloudGarden(page);
+    auth.reply("POST rpc/import_browser_save", (request) => {
+      auth.answerAsDatabase(request);
+      return "network-error";
+    });
+    await confirmReplace(page);
+
+    await expect(resultNotice(page)).toContainText("Your browser garden is now your cloud garden");
+    expect(imports(auth)).toHaveLength(1);
+    expect(importBackups(auth)).toHaveLength(1);
+    expect(cloudCompleted(auth, "water")).toBe(true);
+    await expect(unresolvedCard(page)).toHaveCount(0);
+  });
+
+  test("an import that commits only after the reply was lost is found by Check, without sending it again", async ({ page }) => {
+    const { auth } = await guestAndCloudGarden(page);
+    let held: Parameters<FakeAuth["answerAsDatabase"]>[0] | null = null;
+    auth.reply("POST rpc/import_browser_save", (request) => {
+      held = request;
+      return "network-error";
+    });
+    await confirmReplace(page);
+    await expect(unresolvedCard(page)).toBeVisible();
+    expect(cloudCompleted(auth, "water")).toBe(false);
+
+    // The original transaction commits late, after the app's own check saw the old garden.
+    auth.answerAsDatabase(held!);
+    await unresolvedCard(page).getByRole("button", { name: "Check my cloud garden" }).click();
+
+    await expect(resultNotice(page)).toContainText("Your browser garden is now your cloud garden");
+    expect(imports(auth)).toHaveLength(1);
+    expect(importBackups(auth)).toHaveLength(1);
+    await openHome(page);
+    await expectHomeXp(page, 5);
+  });
+});
+
+test.describe("Duplicate requests (Step 5)", () => {
+  test("a double click on Replace sends one import", async ({ page }) => {
+    const { auth } = await guestAndCloudGarden(page);
+    const release = holdImport(auth);
+    await importSection(page).getByRole("button", { name: "Review and import…" }).click();
+    await importDialog(page).getByRole("button", { name: "Replace my cloud garden" }).click({ clickCount: 2 });
+    await expect(importDialog(page)).toContainText("Please keep this page open");
+    release();
+
+    await expect(resultNotice(page)).toContainText("now your cloud garden");
+    expect(imports(auth)).toHaveLength(1);
+    expect(importBackups(auth)).toHaveLength(1);
+  });
+
+  test("importing again after a successful import changes nothing and adds no backup", async ({ page }) => {
+    const { auth } = await guestAndCloudGarden(page);
+    await confirmReplace(page);
+    await expect(resultNotice(page)).toContainText("now your cloud garden");
+    await resultNotice(page).getByRole("button", { name: "Dismiss" }).click();
+
+    await confirmReplace(page);
+    await expect(resultNotice(page)).toContainText("already matches this browser");
+    expect(imports(auth)).toHaveLength(2);
+    expect(importBackups(auth)).toHaveLength(1);
+  });
+});
+
+test.describe("Account changes while an import is under way (Step 5)", () => {
+  test("signing out mid-import: the guest garden comes back unchanged, and the import only ever reached its own account", async ({ page }) => {
+    const { auth, cloud, guestSave } = await guestAndCloudGarden(page);
+    const guestStorage = await readGameStorage(page);
+    const release = holdImport(auth);
+    await confirmReplace(page);
+    await expect(importDialog(page)).toContainText("Please keep this page open");
+
+    const otherTab = await openOtherTab(page);
+    await answerSupabaseFor(otherTab, auth.cloud);
+    await otherTab.goto("/settings");
+    await otherTab.getByRole("region", { name: "Account" }).getByRole("button", { name: "Sign out" }).click();
+    await expect(otherTab.getByRole("region", { name: "Account" })).toContainText("You're signed out");
+    await otherTab.close();
+    release();
+
+    await expect(resultNotice(page)).toContainText("Import interrupted");
+    await expect(resultNotice(page)).toContainText("may still have completed in the account that started it");
+    await expect(accountSection(page)).toContainText("You're playing as a guest");
+    await openHome(page);
+    await expectHomeXp(page, 5);
+    expect(await readStorage(page, QUEST_SAVE_KEY)).toBe(guestSave);
+    expect(await readGameStorage(page)).toEqual(guestStorage);
+    expectImportedOnlyInto(auth, cloud, TEST_EMAIL);
+  });
+
+  test("another account signing in mid-import never shows or receives the first account's gardens", async ({ page }) => {
+    const { auth, cloud } = await guestAndCloudGarden(page);
+    const release = holdImport(auth);
+    await confirmReplace(page);
+    await expect(importDialog(page)).toContainText("Please keep this page open");
+
+    await signInElsewhere(page, cloud, OTHER_EMAIL);
+    release();
+
+    await expect(resultNotice(page)).toContainText("Import interrupted");
+    await expect(choiceCard(page)).toBeVisible();
+    await expect(page.getByText(/40 \/ 100 XP/)).toHaveCount(0);
+    expectImportedOnlyInto(auth, cloud, TEST_EMAIL);
+    expect(cloud.saveOf(OTHER_EMAIL)).toBeUndefined();
+  });
+});
+
+test.describe("Reloading or closing during an unresolved import (Step 5)", () => {
+  test("a reload never resends it; the cloud garden loads; a late commit then shows as a conflict, never an overwrite", async ({ page }) => {
+    const { auth } = await guestAndCloudGarden(page);
+    let held: Parameters<FakeAuth["answerAsDatabase"]>[0] | null = null;
+    auth.reply("POST rpc/import_browser_save", (request) => {
+      held = request;
+      return "network-error";
+    });
+    await confirmReplace(page);
+    await expect(unresolvedCard(page)).toBeVisible();
+
+    await page.reload();
+    await openHome(page);
+    await expectHomeXp(page, 40);
+    await expect(unresolvedCard(page)).toHaveCount(0);
+    expect(imports(auth)).toHaveLength(1);
+
+    // The import commits after all. This page still has the older garden: its next save is refused.
+    auth.answerAsDatabase(held!);
+    await completeQuest(page, "Morning skincare");
+    await expect(page.getByRole("region", { name: "Your garden changed somewhere else" })).toBeVisible({ timeout: 20_000 });
+    expect(cloudCompleted(auth, "water")).toBe(true);
+    expect(cloudCompleted(auth, "skincare")).toBe(false);
+    expect(imports(auth)).toHaveLength(1);
+  });
+
+  test("closing the page and coming back loads the cloud garden, and sends nothing more", async ({ page, context }) => {
+    const { auth, guestSave } = await guestAndCloudGarden(page);
+    auth.reply("POST rpc/import_browser_save", "network-error");
+    await confirmReplace(page);
+    await expect(unresolvedCard(page)).toBeVisible();
+    await page.close();
+
+    const next = await context.newPage();
+    await next.clock.install({ time: "2026-10-19T10:00:00Z" });
+    const nextAuth = await answerSupabaseFor(next, auth.cloud);
+    await next.goto("/");
+    await expectHomeXp(next, 40);
+    await expect(unresolvedCard(next)).toHaveCount(0);
+    expect(cloudRequests(nextAuth, "POST rpc/import_browser_save")).toEqual([]);
+    expect(await readStorage(next, QUEST_SAVE_KEY)).toBe(guestSave);
+  });
+});
+
+test.describe("A large browser garden (Step 5)", () => {
+  test("a garden of about 3 MB, close to what a browser can store, imports intact", async ({ page }) => {
+    const notes = "A long journal entry about the garden. ".repeat(20_000);
+    const large = JSON.parse(buildSave({ legacyXpBonus: 25 })) as { questLists: { personal: unknown[] } };
+    large.questLists.personal = Array.from({ length: 4 }, (_, index) => ({
+      id: `journal-${index}`, title: `Journal ${index}`, category: "Study", difficulty: "Easy", completed: false, notes,
+    }));
+    const text = JSON.stringify(large);
+    expect(text.length).toBeGreaterThan(3_000_000);
+    await seedStorage(page, { [QUEST_SAVE_KEY]: text });
+    const cloud = createFakeCloud();
+    const auth = await useFakeAuth(page, cloud);
+    await openApp(page);
+    await signIn(page);
+    await openHome(page);
+
+    await choiceCard(page).getByRole("button", { name: "Import my browser garden" }).click();
+    await importDialog(page).getByRole("button", { name: "Import my browser garden" }).click();
+
+    await expect(resultNotice(page)).toContainText("Your browser garden is now your cloud garden", { timeout: 20_000 });
+    const saved = cloud.saveOf()?.data as { legacyXpBonus?: number; questLists: { personal: Array<{ notes?: string }> } };
+    expect(saved.legacyXpBonus).toBe(25);
+    expect(saved.questLists.personal.map((quest) => quest.notes)).toEqual([notes, notes, notes, notes]);
+    expect(imports(auth)).toHaveLength(1);
+    await expectHomeXp(page, 25);
+  });
+});
+
+test.describe("A server without the import function (Step 5 review)", () => {
+  test("before the migration is applied, the import fails plainly: no unresolved card, nothing changed, saving continues", async ({ page }) => {
+    const { auth, guestSave } = await guestAndCloudGarden(page);
+    // What PostgREST answers for a function it doesn't have (hosted Supabase before the Step 2 migration).
+    auth.reply("POST rpc/import_browser_save", {
+      status: 404,
+      body: { code: "PGRST202", details: null, hint: null, message: "Could not find the function public.import_browser_save(p_data, p_expected_revision, p_schema_version, p_user_id) in the schema cache" },
+    });
+    await confirmReplace(page);
+
+    await expect(resultNotice(page)).toContainText("The import didn't go through");
+    await expect(resultNotice(page)).toContainText("Importing isn't set up on the server yet. Nothing was imported.");
+    await expect(unresolvedCard(page)).toHaveCount(0);
+    expect(imports(auth)).toHaveLength(1);
+    expect(importBackups(auth)).toEqual([]);
+    expect(cloudCompleted(auth, "water")).toBe(false);
+    expect(await readStorage(page, QUEST_SAVE_KEY)).toBe(guestSave);
+
+    // Not held back: the cloud garden is playable and saves as usual.
+    await openHome(page);
+    await expectHomeXp(page, 40);
+    await completeQuest(page, "Morning skincare");
+    await expect.poll(() => cloudCompleted(auth, "skincare")).toBe(true);
+    await expect(page.locator(".save-status")).toHaveAttribute("data-save-status", "saved");
+    expect(imports(auth)).toHaveLength(1);
+  });
+});
+
+test.describe("Saving after an import (Step 5)", () => {
+  test("after replacing the cloud garden, changes save to it normally and survive a reload", async ({ page }) => {
+    const { auth } = await guestAndCloudGarden(page);
+    await confirmReplace(page);
+    await expect(resultNotice(page)).toContainText("now your cloud garden");
+    await openHome(page);
+    await expectHomeXp(page, 5);
+
+    await completeQuest(page, "Morning skincare");
+    await expect.poll(() => cloudCompleted(auth, "skincare")).toBe(true);
+    await expect(page.locator(".save-status")).toHaveAttribute("data-save-status", "saved");
+    await page.reload();
+    await expectHomeXp(page, 10);
+    await expect(page.getByRole("button", { name: "Mark incomplete: Morning skincare", exact: true })).toBeVisible();
   });
 });

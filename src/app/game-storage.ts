@@ -34,6 +34,8 @@ export type GameStorage = {
  * - `newer-version`: the stored save was made by a newer version of Plantetary. It's shown, never replaced.
  * - `backup-failed`: an older save couldn't be backed up before its upgrade, so it's never replaced.
  * - `not-loaded`: a save was attempted before a successful load, so nothing was written blindly.
+ * - `server-outdated`: the database doesn't have a function this needs yet (for example, a migration that
+ *   hasn't been applied). The server refused the call before running anything, so nothing was written.
  * - `unknown`: anything else.
  */
 export type GameStorageProblem =
@@ -49,6 +51,7 @@ export type GameStorageProblem =
   | "newer-version"
   | "backup-failed"
   | "not-loaded"
+  | "server-outdated"
   | "unknown";
 
 export type GameStorageLoadResult =
