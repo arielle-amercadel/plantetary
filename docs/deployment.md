@@ -1,21 +1,41 @@
 # Deploying Plantetary (Vercel + Supabase)
 
-How to put Plantetary online with sign-in and cloud saves. Nothing here has been done yet. Without the Supabase variables, the deployed app works in guest mode only, as before.
+How Plantetary is put online with sign-in and cloud saves, and how to release changes. Without the Supabase variables, the deployed app works in guest mode only.
+
+## Current status
+
+Plantetary is live at **https://plantetary.vercel.app**, deployed by Vercel from `main`.
+
+**Done:**
+
+- **Database:** all seven migrations applied to the hosted Supabase project **plantetary**, through Stage 8 (see [supabase-database.md → Hosted project status](supabase-database.md#hosted-project-status)).
+- **Vercel:** the two Supabase variables set for Production (below), and the site redeployed with them.
+- **Supabase Auth:** Site URL and Redirect URLs set for https://plantetary.vercel.app.
+- **Checked by hand on the live site:** sign-in, cloud saving and loading, guest progress staying in the browser, and the mobile layout.
+- **Checked from outside (read-only):** the live pages receive the publishable key and project URL; no secret key is in any JavaScript sent to browsers; anonymous requests to the game tables are refused.
+- **Security headers** (from `next.config.ts`): clickjacking protection (`frame-ancestors 'none'` and `X-Frame-Options: DENY`), `X-Content-Type-Options: nosniff`, `Referrer-Policy: strict-origin-when-cross-origin`, and a `Permissions-Policy`. Vercel adds `Strict-Transport-Security`. They reach the live site with the first deployment after they're merged.
+
+**To confirm** (dashboard settings this repository can't check):
+
+- **Email templates:** **Magic Link** and **Confirm signup** use the repository's `{{ .TokenHash }}` versions (below). With Supabase's defaults, sign-in still works, but only in the browser that asked for the link, and email scanners can use links up.
+
+**Before inviting players:**
+
+1. **Custom SMTP** in Supabase ([supabase-auth.md](supabase-auth.md#supabase-dashboard-settings), step 4), then review **Rate Limits**. Until then, sign-in emails only reach members of your Supabase organization, a few an hour.
+2. **A privacy notice** saying what's stored (email address, game saves and backups), where (Supabase and Vercel), and how to ask for an account to be deleted. There's no account deletion in the app yet (Stage 10); until then, delete the user in **Authentication → Users**, and their saves and backups are deleted with them.
+3. **Your Supabase plan:** free projects pause after a period without activity, and their automatic backups can't be downloaded. Consider a paid plan, or take regular copies (`npx supabase db dump --remote --data-only`, kept outside the repository).
 
 No secret belongs anywhere in this setup. The app uses the project URL and the **publishable** key, both public. The secret key (`sb_secret_…`) and the `service_role` key bypass every database rule: never put them in Vercel, `.env.local`, or the repository.
 
-## Deployment order
+## Releasing a change
 
-Each step depends on the one before it. Don't deploy the app with sign-in turned on before the database and Auth settings are ready.
+The first deployment followed these steps in this order; later releases use the same order. Merging to `main` deploys it, so everything before step 4 happens first.
 
-1. **Merge the finished work into `main`**, with CI passing (unit tests, type check, lint). Stage 8 Step 5 must be in `main`: it makes a missing import function fail plainly instead of leaving an import unresolved.
-2. **Check `main` locally:** `npm test`, `npx tsc --noEmit`, `npm run lint`, `npm run build`, `npm run test:e2e`, and `npx supabase db reset && npx supabase test db` (see [game-storage.md](game-storage.md#testing) and [supabase-database.md](supabase-database.md#run-the-tests-locally)).
-3. **Apply the database migrations** to the hosted project, with a dry run first: [supabase-database.md → Stages 7 and 8](supabase-database.md#stages-7-and-8-applying-the-new-migrations-not-done-yet).
-4. **Configure Supabase Auth** for the production address (below).
-5. **Try it by hand from your own computer** against the hosted project, with test accounts: [supabase-database.md → Controlled hosted testing](supabase-database.md#controlled-hosted-testing-before-inviting-players).
-6. **Set the Vercel environment variables** (below), then **deploy** `main`.
-7. **Check the live site** (below).
-8. **Before inviting players:** set up custom SMTP in Supabase ([supabase-auth.md](supabase-auth.md#supabase-dashboard-settings), step 4). Until then, sign-in emails only reach members of your Supabase organization.
+1. **Check the branch locally:** `npm test`, `npx tsc --noEmit`, `npm run lint`, `npm run build`, `npm run test:e2e`, and, if it touches the database, `npx supabase db reset && npx supabase test db` (see [game-storage.md](game-storage.md#testing) and [supabase-database.md](supabase-database.md#run-the-tests-locally)). CI only runs the unit tests, type check and lint.
+2. **If it includes a migration, apply it to the hosted project first,** with a backup and a dry run: [supabase-database.md → Applying a new migration](supabase-database.md#applying-a-new-migration-to-the-hosted-project). The deployed code must keep working with it until the new code is live.
+3. **If it needs new Supabase Auth or Vercel settings,** change them first (below).
+4. **Merge to `main`.** Vercel deploys it to https://plantetary.vercel.app.
+5. **Check the live site** (below), with test accounts: [supabase-database.md → Testing against the hosted project by hand](supabase-database.md#testing-against-the-hosted-project-by-hand).
 
 ## Vercel project settings
 
@@ -39,11 +59,11 @@ Set these in **Settings → Environment Variables**:
 
 ## Supabase Auth settings for production
 
-The full steps are in [supabase-auth.md → Supabase Dashboard settings](supabase-auth.md#supabase-dashboard-settings). For Vercel, use your production address (your custom domain, or `https://<project>.vercel.app`):
+The full steps are in [supabase-auth.md → Supabase Dashboard settings](supabase-auth.md#supabase-dashboard-settings). The production address is https://plantetary.vercel.app; if you add a custom domain, add it alongside:
 
 - **Authentication → URL Configuration:**
-  - **Site URL:** `https://<your-production-address>`
-  - **Redirect URLs:** `https://<your-production-address>/auth/confirm`. Add each domain the site is served from (for example both the custom domain and the `vercel.app` one), and keep `http://localhost:3000/auth/confirm` for local development.
+  - **Site URL:** `https://plantetary.vercel.app`
+  - **Redirect URLs:** `https://plantetary.vercel.app/auth/confirm`, plus `/auth/confirm` on any custom domain, and `http://localhost:3000/auth/confirm` for local development.
   - Sign-in links return to the address the player requested them from, plus `/auth/confirm`. An address that isn't listed is sent to the Site URL instead.
   - Don't add a wildcard for preview addresses while previews have no Supabase variables (above).
 - **Email templates:** paste `supabase/templates/magic-link.html` and `confirmation.html` into the Dashboard, as described there, so links work from any browser and can't be used up by email scanners.
@@ -51,19 +71,20 @@ The full steps are in [supabase-auth.md → Supabase Dashboard settings](supabas
 
 ## After deploying
 
-With a test account (not a player's):
+After each release, with a test account (not a player's):
 
 1. The site loads as a guest, with existing guest progress unchanged.
-2. **Settings → Account:** request a sign-in link. The email's link opens `https://<your-production-address>/auth/confirm`, and **Finish signing in** signs you in.
+2. **Settings → Account:** request a sign-in link. The email's link opens `https://plantetary.vercel.app/auth/confirm?token_hash=…`, and **Finish signing in** signs you in.
 3. The first-time card appears for a new account. Start a fresh cloud garden, complete a quest, reload: it's still there, and the status says **Saved**.
 4. With guest progress in this browser and a test account: **Import my browser garden** works, and the guest garden is unchanged.
 5. Sign out: the guest garden is shown again.
 6. Supabase dashboard: **Table Editor → quest_saves** has the test account's row; **Advisors → Security Advisor** shows no new warnings.
+7. The security headers are there: in the browser's developer tools, **Network** → the page request → **Response Headers** include `content-security-policy: frame-ancestors 'none'; …` and `x-frame-options: DENY`.
 
 Delete the test users afterwards (**Authentication → Users**); their saves and backups are deleted with them.
 
 ## If something goes wrong
 
-- **The app:** use Vercel's **Instant Rollback** to the previous deployment. Both new migrations only add things (a backup reason, a function), so an earlier version of the app keeps working with them.
+- **The app:** use Vercel's **Instant Rollback** to the previous deployment. Every migration so far only adds things, so an earlier version of the app keeps working with them; keep it that way for new ones (see **Releasing a change**).
 - **Sign-in only:** removing the two variables and redeploying turns sign-in off. Everyone plays in guest mode; cloud saves stay in the database, untouched.
 - **The database:** don't edit or re-run migrations by hand. Check `npx supabase migration list --remote` and find out what happened first.
