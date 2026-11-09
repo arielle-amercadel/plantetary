@@ -1,6 +1,6 @@
 /**
  * Reads the Privacy Notice (privacy-notice.md) into blocks the page renders. The notice is kept as
- * Markdown so its approved wording lives in one file, unchanged by the page. Only what the notice uses
+ * Markdown so its source wording lives in one file, unchanged by the page. Only what the notice uses
  * is supported: `#` and `##` headings, paragraphs, `-` lists (nested by two spaces), `1.` lists, and
  * `**bold**`, `` `code` `` and `[links](https://…)` within text. Links must be `https:`. Anything else
  * is an error, so a formatting slip can't quietly change what players read, or point them somewhere unsafe.
@@ -115,7 +115,7 @@ export function parsePrivacyMarkdown(markdown: string): Block[] {
   return blocks;
 }
 
-/** The text a reader sees, for comparing the page with the approved notice. */
+/** The text a reader sees, for comparing the page with the notice source. */
 export function plainText(blocks: Block[]): string {
   const inline = (content: Inline[]) => content.map((piece) => piece.text).join("");
   const items = (list: ListItem[]): string[] => list.flatMap((item) => [inline(item.content), ...items(item.children)]);

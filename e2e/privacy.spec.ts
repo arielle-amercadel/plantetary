@@ -3,11 +3,11 @@ import { join } from "node:path";
 import type { Page } from "@playwright/test";
 import { parsePrivacyMarkdown, plainText } from "../src/app/privacy/privacy-markdown";
 import { TEST_EMAIL, useFakeAuth } from "./auth-support";
-import { clickNavLink, expect, openApp, test } from "./support";
+import { clickNavLink, expect, openApp, test, QUEST_SAVE_KEY } from "./support";
 
 // The Privacy Notice at /privacy, its links, and Settings → Your data.
 
-const approved = parsePrivacyMarkdown(readFileSync(join(process.cwd(), "src/app/privacy/privacy-notice.md"), "utf8"));
+const noticeSource = parsePrivacyMarkdown(readFileSync(join(process.cwd(), "src/app/privacy/privacy-notice.md"), "utf8"));
 const SIGN_IN_LINK = "/auth/confirm?token_hash=pkce_0123456789abcdef&type=email";
 const CONTACT = "hello.plantetary@gmail.com";
 
@@ -24,21 +24,52 @@ async function signIn(page: Page) {
 }
 
 test.describe("The Privacy Notice page", () => {
-  test("opens without signing in and shows the whole approved notice, word for word", async ({ page }) => {
+  test("opens without signing in and shows the whole notice source, word for word", async ({ page }) => {
     await openApp(page, "/privacy");
     await expect(page).toHaveTitle("Privacy Notice | Plantetary");
     await expect(page.getByRole("heading", { level: 1, name: "Plantetary Privacy Notice" })).toBeVisible();
     // The title is shown in capitals by CSS; its actual text is checked as written.
-    const [title, ...rest] = approved;
+    const [title, ...rest] = noticeSource;
     await expect(notice(page).getByRole("heading", { level: 1 })).toHaveText(title.kind === "heading" ? title.text : "", { useInnerText: false });
     // Everything after the title, as a reader sees it: every word, in order.
     const shown = (await notice(page).innerText()).split("\n").slice(1).join(" ").replace(/\s+/g, " ").trim();
     expect(shown).toBe(plainText(rest));
   });
 
+  test("privacy stays accessible during garden read failure without enabling garden writes", async ({ page }) => {
+    await page.addInitScript((key) => {
+      const get = Storage.prototype.getItem;
+      const set = Storage.prototype.setItem;
+      Storage.prototype.getItem = function (name) {
+        if (this === window.localStorage && name === key) throw new Error("Simulated garden read failure");
+        return get.call(this, name);
+      };
+      Storage.prototype.setItem = function (name, value) {
+        if (this === window.localStorage && name === key) {
+          set.call(window.sessionStorage, "privacy-test-garden-write", "attempted");
+          throw new Error("Unexpected garden write");
+        }
+        return set.call(this, name, value);
+      };
+    }, QUEST_SAVE_KEY);
+    await page.goto("/privacy");
+    await expect(page.getByRole("heading", { name: "Your browser garden couldn't be loaded" })).toBeVisible();
+    await expect(notice(page)).toBeVisible();
+    await expect(notice(page).getByRole("heading", { level: 2 })).toHaveCount(12);
+    await clickNavLink(page, "Home", { exact: true });
+    await expect(page.getByRole("heading", { name: "Garden unavailable" })).toBeVisible();
+    await expect(page.getByRole("button", { name: /^(Complete|Mark incomplete):/ })).toHaveCount(0);
+    await clickNavLink(page, "Settings", { exact: true });
+    await expect(page.getByRole("button", { name: "Reset Plantetary data", exact: true })).toBeDisabled();
+    await expect(yourData(page)).toContainText("Reset is currently blocked");
+    await yourData(page).getByRole("link", { name: "Read the Privacy Notice" }).click();
+    await expect(notice(page)).toBeVisible();
+    expect(await page.evaluate(() => sessionStorage.getItem("privacy-test-garden-write"))).toBeNull();
+  });
+
   test("has one heading per section, in order, the effective-date placeholder, and working contact links", async ({ page }) => {
     await openApp(page, "/privacy");
-    const expectedSections = approved.filter((block) => block.kind === "heading" && block.level === 2).map((block) => block.kind === "heading" ? block.text : "");
+    const expectedSections = noticeSource.filter((block) => block.kind === "heading" && block.level === 2).map((block) => block.kind === "heading" ? block.text : "");
     await expect(notice(page).getByRole("heading", { level: 2 })).toHaveText(expectedSections);
     for (const name of expectedSections) await expect(notice(page).getByRole("region", { name, exact: true })).toBeVisible();
     await expect(notice(page).getByText("Effective date: [DATE — to be set when published]")).toBeVisible();
@@ -58,8 +89,8 @@ test.describe("The Privacy Notice page", () => {
     }
   });
 
-  test("works without sign-in set up at all, too", async ({ page }) => {
-    // The browser tests' server has sign-in set up; the page reads nothing from it, so it's the same either way.
+  test("opens directly without a signed-in session", async ({ page }) => {
+    // This checks a signed-out session, not a separate server configuration.
     await page.goto("/privacy");
     await expect(page.getByRole("heading", { level: 1, name: "Plantetary Privacy Notice" })).toBeVisible();
     await expect(notice(page).getByRole("heading", { level: 2 })).toHaveCount(12);
@@ -124,7 +155,9 @@ test.describe("Settings → Your data", () => {
   test("a guest sees how browser data works, Export and Reset, and no account-deletion steps", async ({ page }) => {
     await openApp(page, "/settings");
     const section = yourData(page);
-    await expect(section).toContainText("Your garden, profile and reminder settings are saved in this browser on this device.");
+    await expect(section).toContainText("As a guest, your garden stays in browser storage on this device.");
+    await expect(section).toContainText("only when you explicitly choose to import it");
+    await expect(section).toContainText("Profile and reminder preferences remain local even when you use a cloud garden.");
     await expect(section).toContainText("Export data as JSON");
     await expect(section).toContainText("Reset Plantetary data");
     await expect(section).toContainText("If you have a Plantetary account, the Privacy Notice explains how to ask for it to be deleted.");
@@ -145,7 +178,7 @@ test.describe("Settings → Your data", () => {
 
     await choiceCard(page).getByRole("button", { name: "Start a fresh cloud garden" }).click();
     const section = yourData(page);
-    await expect(section).toContainText("Your garden is saved to your Plantetary account, with its backups.");
+    await expect(section).toContainText("You're using a cloud garden. Changes are sent to your Plantetary account when saving succeeds; storage notices explain failures and conflicts.");
     await expect(section.getByRole("heading", { name: "Deleting your account" })).toBeVisible();
     await expect(section).toContainText("Deleting your account is different from resetting this browser.");
     await expect(section).toContainText(`from ${TEST_EMAIL} and say you'd like it deleted`);
@@ -167,6 +200,21 @@ test.describe("Settings → Your data", () => {
     await expect(section).toContainText("Reset Plantetary data");
     await expect(section.getByRole("heading", { name: "Deleting your account" })).toBeVisible();
     await expect(page.getByRole("button", { name: "Reset Plantetary data" })).toBeEnabled();
+  });
+
+  test("a read-only follower is not told reset is available", async ({ page }) => {
+    await openApp(page, "/settings");
+    await expect(page.getByRole("button", { name: "Reset Plantetary data", exact: true })).toBeEnabled();
+    const other = await page.context().newPage();
+    await openApp(other, "/settings");
+    await expect(other.getByRole("region", { name: "Browser garden editing" })).toBeVisible();
+    await expect(other.getByRole("button", { name: "Reset Plantetary data", exact: true })).toBeDisabled();
+    await expect(yourData(other)).toContainText("Reset is currently blocked");
+    await expect(yourData(other)).not.toContainText("use Reset Plantetary data");
+    await page.close();
+    await expect(other.getByRole("button", { name: "Reset Plantetary data", exact: true })).toBeEnabled();
+    await expect(yourData(other)).toContainText("use Reset Plantetary data");
+    await expect(yourData(other)).not.toContainText("Reset is currently blocked");
   });
 
   test("sits just above Data management, whose Export and Reset are unchanged", async ({ page }) => {

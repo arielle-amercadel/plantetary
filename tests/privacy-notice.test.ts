@@ -8,14 +8,14 @@ const notice = readFileSync(resolve(__dirname, "../src/app/privacy/privacy-notic
 const blocks = parsePrivacyMarkdown(notice);
 const headings = (list: Block[]) => list.filter((block) => block.kind === "heading").map((block) => block.text);
 
-describe("the approved Privacy Notice", () => {
-  it("is exactly the approved wording", () => {
-    // The notice's wording is reviewed before it's published. Any change to privacy-notice.md, including
-    // setting the effective date, must be approved; then update this fingerprint in the same change.
-    expect(createHash("sha256").update(notice).digest("hex")).toBe("1c30f9413f7662c69bbecafe0ad67546c4950664733753d60986952a03cb976f");
+describe("the Privacy Notice source", () => {
+  it("is an exact match for the reviewed source text", () => {
+    // Detect unintended source changes; update this fingerprint alongside intentional wording edits.
+    // Matching this text is not legal review or publication approval.
+    expect(createHash("sha256").update(notice).digest("hex")).toBe("0304e1d935c1d5b81ee37260868c20d723bb3840cad45d9edaa7d42cb86c57aa");
   });
 
-  it("has its title and every approved section, in order", () => {
+  it("has its title and every expected section, in order", () => {
     expect(blocks[0]).toEqual({ kind: "heading", level: 1, text: "Plantetary Privacy Notice" });
     expect(headings(blocks.slice(1))).toEqual([
       "The short version",
@@ -43,7 +43,7 @@ describe("the approved Privacy Notice", () => {
     expect(text.match(/hello\.plantetary@gmail\.com/g)).toHaveLength(5);
   });
 
-  it("says what the final audit approved", () => {
+  it("describes documented data practices", () => {
     const text = plainText(blocks);
     // 13+, as an acknowledgment only.
     expect(text).toContain("Plantetary accounts are for people 13 and older; teenagers aged 13 to 17 are welcome.");
@@ -69,7 +69,17 @@ describe("the approved Privacy Notice", () => {
     expect(text).toContain("We may update this notice from time to time. When we do, we'll update the effective date shown on this page.");
   });
 
-  it("doesn't say anything the audit found inaccurate or unsupported", () => {
+  it("describes best-effort conflict copies, local recovery and retained reset metadata", () => {
+    const text = plainText(blocks);
+    expect(text).toContain("Plantetary attempts to keep a copy of the unsaved version. This attempt can fail.");
+    expect(text).toContain("Up to 20 successfully stored conflict copies are kept");
+    expect(text).not.toContain("the version that couldn't be saved is kept");
+    expect(text).toContain("Closing or reloading the page before downloading can lose this recovery copy.");
+    expect(text).toContain("resetting does not remove this marker");
+    expect(text).toContain("Reset may be blocked during conflicts or storage failures");
+  });
+
+  it("avoids the listed unsupported claims", () => {
     const text = plainText(blocks);
     expect(text).not.toMatch(/One cookie/i);
     expect(text).not.toContain("doesn't ask for your age");

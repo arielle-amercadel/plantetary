@@ -275,7 +275,7 @@ export default function AppShell({
         </header>
         <ImportResult />
         <StorageNotices />
-        {browserLoadFailed && page !== "settings" ? (
+        {browserLoadFailed && page !== "settings" && page !== "privacy" ? (
           <main className="settings-content">
             <h1>Garden unavailable</h1>
             <p className="settings-description">Use the recovery controls above to keep your unsaved changes or try loading again. Your progress is not shown until it can be loaded safely.</p>

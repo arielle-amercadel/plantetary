@@ -275,7 +275,7 @@ export default function SettingsPage() {
         <section className="settings-section" aria-labelledby="settings-data-heading">
           <h2 id="settings-data-heading">Data management</h2>
           <p className="settings-description">
-            Export includes your quests, custom categories, completion history, XP ledger, discoveries, and local preferences. Reset removes Plantetary data and its safety backups from this device.
+            Export includes your quests, custom categories, completion history, XP ledger, discoveries, and local preferences. A successful reset removes the browser garden, its safety backups, profile and reminder preferences. A reset marker remains to protect open tabs; cloud data, sign-in cookies and downloaded files are not deleted.
             {storage.mode === "cloud" && " Your garden is saved to your account, which Reset can't change yet, so it's turned off while you're using your cloud garden."}
             {storage.mode === "browser" && storage.phase === "browser-failed" && resetUnavailable && " Reset is blocked until this garden can be safely loaded and validated. Restore browser storage access or update the app if this save needs a newer version, then try loading again. If changes are unsaved, download them first."}
             {storage.mode === "browser" && storage.loaded?.problem === "backup-failed" && !resetUnavailable && " Your older garden was validated, but its safety copy could not be stored. Export it first. A confirmed reset permanently removes the garden and its backups. A small amount of free browser storage is required to reset safely."}

@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { canResetBrowserData } from "../game-storage-controller";
 import { useAuth } from "../auth/auth-provider";
 import { useQuestStore } from "../quest-store";
 
@@ -22,8 +23,8 @@ export default function YourDataSection() {
   const cloud = signedIn && storage.mode === "cloud";
   // Still choosing on the "Start your cloud garden?" card: the account has no cloud garden yet.
   const noCloudGardenYet = cloud && storage.phase === "choose";
-  // As the Reset button itself: off while the cloud is the storage.
-  const resetAvailable = storage.mode !== "cloud";
+  // Match the controller eligibility used by the Reset button.
+  const resetAvailable = canResetBrowserData(storage);
 
   return (
     <section className="settings-section your-data" aria-labelledby="settings-your-data-heading">
@@ -35,7 +36,7 @@ export default function YourDataSection() {
         </p>
       ) : cloud ? (
         <p className="settings-description">
-          Your garden is saved to your Plantetary account, with its backups. Your profile and reminder settings stay in this
+          You&apos;re using a cloud garden. Changes are sent to your Plantetary account when saving succeeds; storage notices explain failures and conflicts. Your profile and reminder settings stay in this
           browser on this device.
         </p>
       ) : signedIn ? (
@@ -45,14 +46,20 @@ export default function YourDataSection() {
         </p>
       ) : (
         <p className="settings-description">
-          Your garden, profile and reminder settings are saved in this browser on this device. They aren&apos;t sent to
-          Plantetary unless you sign in and choose to use a cloud garden.
+          As a guest, your garden stays in browser storage on this device. Your profile and reminder settings also stay in this browser.
         </p>
       )}
       <p className="settings-description">
+        Your browser garden is copied into a cloud account only when you explicitly choose to import it.
+        Profile and reminder preferences remain local even when you use a cloud garden.
+        Local saving depends on browser storage and editing control in one tab; cloud saving sends garden changes to your account.
+      </p>
+      <p className="settings-description">
         To keep a copy, use <strong>Export data as JSON</strong> in Data management below: it downloads the garden you&apos;re
         playing, with your profile and reminder settings.
-        {resetAvailable && <> To remove it from this device, use <strong>Reset Plantetary data</strong>, or clear this site&apos;s data in your browser.</>}
+        {resetAvailable && <> To remove it from this device, use <strong>Reset Plantetary data</strong>, after confirming. A successful reset removes the browser garden, its safety copies, profile and reminder preferences; a reset marker remains.</>}
+        {storage.mode === "browser" && !resetAvailable && <> Reset is currently blocked to protect your garden. Follow the storage notices before trying again.</>}
+        {storage.mode === "browser" && <> You can also clear this site&apos;s data in your browser. Reset does not delete cloud data, sign-in cookies or downloaded files.</>}
       </p>
       {signedIn ? (
         <div className="your-data-deletion">

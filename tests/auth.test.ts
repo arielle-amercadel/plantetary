@@ -181,7 +181,7 @@ describe("requesting a magic link", () => {
     expect(client.signInWithOtp).not.toHaveBeenCalled();
   });
 
-  it("asks for the approved 13+ acknowledgment, and says why nothing was sent without it", () => {
+  it("asks for the documented 13+ acknowledgment, and says why nothing was sent without it", () => {
     expect(ageAcknowledgmentText).toBe("By continuing, you confirm that you are at least 13 years old.");
     expect(authProblemMessages["age-not-confirmed"]).toBe("Please confirm that you're at least 13 years old to get a sign-in link.");
   });

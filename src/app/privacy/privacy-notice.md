@@ -41,7 +41,7 @@ Plantetary doesn't require your real name, birthday, phone number, address, paym
 
 Plantetary uses your browser's storage to work:
 
-- **Local storage:** your browser garden and its safety copies, your profile and your reminder settings. These stay until you reset them in **Settings** or clear your browser's site data.
+- **Local storage:** your browser garden and its safety copies, your profile and your reminder settings. A successful reset in **Settings** removes these. A reset marker also stays in local storage so open tabs can recognize a reset and reject older drafts; resetting does not remove this marker. Clearing the site's data in your browser removes the marker too.
 - **Session storage** (cleared when you close the tab):
   - your choice to keep playing on this device;
   - if some cloud changes hadn't been saved yet (for example, a save failed or the page closed before it finished), a temporary copy of them, so you can download them. It's labelled with a partly hidden version of your email address, for example `mi•••@example.com`.
@@ -52,12 +52,14 @@ Plantetary uses your browser's storage to work:
 
 Plantetary doesn't use advertising or analytics cookies, and doesn't track you across other websites. Because there's no cross-site tracking, Plantetary doesn't respond differently to browser "Do Not Track" signals.
 
+When local saving becomes unsafe, Plantetary may temporarily keep unsaved garden progress in memory on the page and offer it for download. Closing or reloading the page before downloading can lose this recovery copy. Downloaded files stay wherever you save them.
+
 ## Cloud saves, backups and how long they're kept
 
 If you use a cloud garden, Supabase stores your garden for your account. Plantetary also keeps **backup copies** of your cloud garden in your account. These help protect your progress against data loss, for example if two devices save at the same time, or if something goes wrong while importing or updating a save:
 
 - **Daily copies:** when your garden changes, the previous version is copied, at most once a day. The newest 14 are kept.
-- **Conflict copies:** if two devices save at once, the version that couldn't be saved is kept. The newest 20 are kept.
+- **Conflict copies:** if a cloud save conflicts with another save, Plantetary attempts to keep a copy of the unsaved version. This attempt can fail. Up to 20 successfully stored conflict copies are kept, with the oldest removed when newer copies exceed that limit.
 - **Import copies:** if you import your browser garden, your previous cloud garden is copied first. The newest 5 are kept.
 - **Upgrade copies:** if a newer version of Plantetary updates an older save's format, the original is kept. The newest 5 are kept.
 
@@ -89,7 +91,7 @@ No system is completely secure, but we work to keep your information safe.
 
 **Take a copy yourself:** **Settings → Data management → Export data as JSON** downloads the garden you're currently playing, with your profile and reminder settings. It doesn't include your email address or other sign-in information, or your cloud backups.
 
-**Delete the data in your browser:** while you're playing the garden saved in your browser, **Settings → Reset Plantetary data** removes it from this device, along with its safety copies and your profile and reminder settings. You can also clear the site's data in your browser settings at any time.
+**Delete the data in your browser:** when you have editing control of the browser garden and reset is available, a confirmed, successful **Settings → Reset Plantetary data** removes that garden, its safety copies and your profile and reminder settings from this browser. Reset may be blocked during conflicts or storage failures to protect your progress. The reset marker remains, and reset does not delete your cloud garden, sign-in cookies or downloaded files. You can also clear the site's data in your browser settings.
 
 **Delete your account:**
 

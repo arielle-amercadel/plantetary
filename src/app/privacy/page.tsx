@@ -11,7 +11,7 @@ export const metadata: Metadata = {
 };
 
 /**
- * The approved Privacy Notice, word for word from privacy-notice.md, read when the site is built. Open to
+ * The Privacy Notice source, word for word from privacy-notice.md, read when the site is built. Open to
  * everyone: guests and signed-in players alike, with or without sign-in set up.
  */
 function readNotice(): Block[] {

@@ -27,6 +27,20 @@ Plantetary is live at **https://plantetary.vercel.app**, deployed by Vercel from
 
 No secret belongs anywhere in this setup. The app uses the project URL and the **publishable** key, both public. The secret key (`sb_secret_…`) and the `service_role` key bypass every database rule: never put them in Vercel, `.env.local`, or the repository.
 
+## Privacy Notice publication blockers
+
+The notice remains a draft; tests check source text and behavior, not legal or publication approval.
+Before publication, the owner must confirm:
+
+- The hosted migration state and effective grants/RLS, especially whether `20261108090000_remove_player_delete_permissions.sql` is applied. Repository migrations and tests do not establish production permissions.
+- Ownership and monitoring of the support mailbox, request handling capacity for the stated 30-day aim, and the ownership-verification process.
+- Actual maintenance-copy retention procedures supporting the stated 30-day deletion practice.
+- A verified production account-deletion procedure, including checking application rows are removed and identifying provider-held copies.
+- Incident-response responsibility, access and readiness, plus deployed email/provider settings matching the notice.
+- Final wording review and publication approval. Replace the effective-date placeholder only when the actual publication date is known.
+
+These items have not been verified by the wording or integration tests. Public commitments in the draft must be confirmed or revised before release.
+
 ## Releasing a change
 
 The first deployment followed these steps in this order; later releases use the same order. Merging to `main` deploys it, so everything before step 4 happens first.
