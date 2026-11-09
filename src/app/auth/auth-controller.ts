@@ -46,7 +46,8 @@ export type ControllerClient = AuthClient & Pick<SupabaseClient["auth"], "onAuth
 export type AuthController = {
   /** Resolves once the saved session has been checked (or a newer change made the check moot). */
   readonly restored: Promise<void>;
-  sendMagicLink: (email: string, origin: string) => Promise<MagicLinkResult>;
+  /** `ageConfirmed`: the player confirmed they're at least 13. Without it, nothing is sent. */
+  sendMagicLink: (email: string, origin: string, ageConfirmed: boolean) => Promise<MagicLinkResult>;
   /** Finishes a sign-in link, after the saved-session check, so the two never overlap in this tab. */
   completeSignIn: (link: Extract<ConfirmLink, { kind: "token-hash" | "code" }>) => Promise<FinishSignInResult>;
   signOut: () => Promise<SignOutResult>;
@@ -206,7 +207,7 @@ export function createAuthController(
 
   return {
     restored,
-    sendMagicLink: (email, origin) => requestMagicLink(client, email, origin),
+    sendMagicLink: (email, origin, ageConfirmed) => requestMagicLink(client, email, origin, ageConfirmed),
     async completeSignIn(link) {
       const waitMs = options.restoreWaitMs ?? defaultRestoreWaitMs;
       let timer: ReturnType<typeof setTimeout> | undefined;

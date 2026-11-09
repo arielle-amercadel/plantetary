@@ -8,12 +8,19 @@ Plantetary is live at **https://plantetary.vercel.app**, deployed by Vercel from
 
 **Done:**
 
-- **Database:** the first seven migrations applied to the hosted Supabase project **plantetary**, through Stage 8 (see [supabase-database.md → Hosted project status](supabase-database.md#hosted-project-status)). The eighth, which removes players' delete permissions, is next to apply.
+- **Production database metadata:** verified read-only on November 8, 2026 (U.S. Central time). All eight migrations and the expected permissions, RLS policies, function settings, cascade constraints and trigger wiring were confirmed. See [the production verification record](supabase-database.md#production-metadata-verification--november-8-2026) for scope and limitations. Production account deletion and two-account behavioral isolation were not tested.
 - **Vercel:** the two Supabase variables set for Production (below), and the site redeployed with them.
 - **Supabase Auth:** Site URL and Redirect URLs set for https://plantetary.vercel.app.
 - **Checked by hand on the live site:** sign-in, cloud saving and loading, guest progress staying in the browser, and the mobile layout.
 - **Checked from outside (read-only):** the live pages receive the publishable key and project URL; no secret key is in any JavaScript sent to browsers; anonymous requests to the game tables are refused.
 - **Security headers** (from `next.config.ts`): clickjacking protection (`frame-ancestors 'none'` and `X-Frame-Options: DENY`), `X-Content-Type-Options: nosniff`, `Referrer-Policy: strict-origin-when-cross-origin`, and a `Permissions-Policy`. Vercel adds `Strict-Transport-Security`. They reach the live site with the first deployment after they're merged.
+
+**Separate staging:** all eight existing migrations were applied to
+**plantetary-staging** (`rfivrsnzzhgximesvnyz`), and Codex verified matching remote
+history, public-table RLS and account-deletion cascade constraints. The first
+single-account deletion test has a Codex-verified baseline and owner-reported
+zero counts afterward: [test record and limitations](account-deletion.md#staging-account-deletion-test-record).
+This does not verify production migration state or production deletion.
 
 **To confirm** (dashboard settings this repository can't check):
 
@@ -22,10 +29,26 @@ Plantetary is live at **https://plantetary.vercel.app**, deployed by Vercel from
 **Before inviting players:**
 
 1. **Custom SMTP** in Supabase ([supabase-auth.md](supabase-auth.md#supabase-dashboard-settings), step 4), then review **Rate Limits**. Until then, sign-in emails only reach members of your Supabase organization, a few an hour.
-2. **A privacy notice** saying what's stored (email address, game saves and backups), where (Supabase and Vercel), and how to ask for an account to be deleted. There's no account deletion in the app yet (Stage 10); until then, delete the user in **Authentication → Users**, and their saves and backups are deleted with them.
+2. **Publish the privacy notice.** The page is built (`/privacy`, from `src/app/privacy/privacy-notice.md`, linked from the sidebar, the mobile menu, the sign-in form and Settings → Your data), but publication remains blocked until the complete [Privacy Notice publication checklist](#privacy-notice-publication-blockers) is satisfied, including legal review and replacing the effective-date placeholder (`[DATE — to be set when published]`) when the publication date is known. Requests to see, correct or delete information go to hello.plantetary@gmail.com and are handled by hand: [account-deletion.md](account-deletion.md). There's no account deletion in the app yet (Stage 10). Players confirm they're at least 13 before asking for a sign-in link (an acknowledgment, not age verification). If something goes wrong, see [security-incident-response.md](security-incident-response.md).
 3. **Your Supabase plan:** free projects pause after a period without activity, and their automatic backups can't be downloaded. Consider a paid plan, or take regular copies (`npx supabase db dump --remote --data-only`, kept outside the repository).
 
 No secret belongs anywhere in this setup. The app uses the project URL and the **publishable** key, both public. The secret key (`sb_secret_…`) and the `service_role` key bypass every database rule: never put them in Vercel, `.env.local`, or the repository.
+
+## Privacy Notice publication blockers
+
+The notice remains a draft; tests check source text and behavior, not legal or publication approval.
+Before publication, the owner must confirm:
+
+- Production metadata verification is [recorded separately](supabase-database.md#production-metadata-verification--november-8-2026). Remaining database verification gaps include independent function-body review, trigger `WHEN` expressions and behavioral isolation testing. Metadata checks do not establish successful production account deletion.
+- Ownership and monitoring of the support mailbox, request handling capacity for the stated 30-day aim, and the ownership-verification process.
+- Actual maintenance-copy retention procedures supporting the stated 30-day deletion practice.
+- A verified production account-deletion procedure, including checking application rows are removed and identifying provider-held copies. The [single-account staging test](account-deletion.md#staging-account-deletion-test-record) provides limited staging evidence only; it does not complete this requirement.
+- Incident-response responsibility, access and readiness, plus deployed email/provider settings matching the notice.
+- Final wording review and publication approval. Replace the effective-date placeholder only when the actual publication date is known.
+
+Keep the Privacy Notice PR unmerged until publication requirements and independent review are complete. The effective-date placeholder remains unchanged.
+
+These items have not been verified by the wording or integration tests. Public commitments in the draft must be confirmed or revised before release.
 
 ## Releasing a change
 

@@ -38,7 +38,7 @@ export default function AppShell({
   page,
 }: {
   children: ReactNode;
-  page: "home" | "create" | "journal" | "history" | "all-quests" | "settings";
+  page: "home" | "create" | "journal" | "history" | "all-quests" | "settings" | "privacy";
 }) {
   const { totalXp, todayKey, pendingPlantGiftIds, hasRestored, storage } = useQuestStore();
   const browserLoadFailed = storage.mode === "browser" && storage.phase === "browser-failed";
@@ -184,6 +184,14 @@ export default function AppShell({
             <FigmaIcon src="/icon-settings.svg" />
             <span>Settings</span>
           </Link>
+          <Link
+            className={`nav-link nav-link-menu-only${page === "privacy" ? " is-active" : ""}`}
+            href="/privacy"
+            aria-current={page === "privacy" ? "page" : undefined}
+          >
+            <FigmaIcon src="/icon-heart.svg" />
+            <span>Privacy</span>
+          </Link>
         </nav>
 
         {!browserLoadFailed && <section className="player-summary" aria-label="Player progress">
@@ -238,6 +246,15 @@ export default function AppShell({
             <FigmaIcon src="/icon-settings.svg" />
           </Link>
         </div>
+
+        {/* The desktop sidebar's quiet link to the Privacy Notice; phones and tablets have it in the menu. */}
+        <Link
+          className={`sidebar-privacy-link${page === "privacy" ? " is-active" : ""}`}
+          href="/privacy"
+          aria-current={page === "privacy" ? "page" : undefined}
+        >
+          Privacy
+        </Link>
       </aside>
 
       <div className="workspace">
@@ -246,7 +263,7 @@ export default function AppShell({
             <FigmaIcon src="/icon-sprout.svg" size={17} />
             <span>Your cozy corner</span>
             <span className="breadcrumb-divider">/</span>
-            <strong>{page === "home" ? "Home" : page === "all-quests" ? "All Quests" : page === "journal" ? "Plant Journal" : page === "history" ? "Completion History" : page === "settings" ? "Settings" : "Create Quest"}</strong>
+            <strong>{page === "home" ? "Home" : page === "all-quests" ? "All Quests" : page === "journal" ? "Plant Journal" : page === "history" ? "Completion History" : page === "settings" ? "Settings" : page === "privacy" ? "Privacy" : "Create Quest"}</strong>
           </div>
           <div className="workspace-topbar-status">
             <SaveStatusIndicator />
@@ -258,7 +275,7 @@ export default function AppShell({
         </header>
         <ImportResult />
         <StorageNotices />
-        {browserLoadFailed && page !== "settings" ? (
+        {browserLoadFailed && page !== "settings" && page !== "privacy" ? (
           <main className="settings-content">
             <h1>Garden unavailable</h1>
             <p className="settings-description">Use the recovery controls above to keep your unsaved changes or try loading again. Your progress is not shown until it can be loaded safely.</p>

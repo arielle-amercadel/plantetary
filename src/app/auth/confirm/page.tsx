@@ -99,6 +99,9 @@ export default function AuthConfirmPage() {
                   Finish signing in
                 </button>
               </div>
+              <p className="settings-description auth-confirm-note">
+                <Link className="text-link" href="/privacy">How Plantetary handles your data</Link>
+              </p>
             </>
           )}
 

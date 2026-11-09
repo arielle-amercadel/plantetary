@@ -133,6 +133,31 @@ button {
   display: none;
 }
 
+/* The desktop sidebar's quiet link to the Privacy Notice, under the account row. */
+.sidebar-privacy-link {
+  flex: 0 0 auto;
+  align-self: flex-start;
+  margin-top: -18px;
+  color: var(--sidebar-muted);
+  font-size: 11px;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.sidebar-privacy-link:hover,
+.sidebar-privacy-link.is-active {
+  color: #fffdf6;
+}
+
+/* A link within text: the global reset removes underlines from every link. */
+.text-link {
+  color: var(--leaf-dark);
+  font-weight: 600;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  overflow-wrap: anywhere;
+}
+
 .journal-nav-badge {
   display: grid;
   width: 18px;
@@ -2078,7 +2103,8 @@ button {
   .player-summary,
   .sidebar-spacer,
   .encouragement,
-  .player-account {
+  .player-account,
+  .sidebar-privacy-link {
     display: none;
   }
 
@@ -3287,6 +3313,95 @@ button {
   background: var(--surface);
 }
 
+/* The Privacy Notice (/privacy): settings cards, with text sized for reading at length. */
+.privacy-heading > p {
+  max-width: 68ch;
+  color: var(--foreground);
+  font-size: 14px;
+  line-height: 1.65;
+}
+
+.privacy-heading .privacy-effective-date {
+  display: inline-block;
+  margin-top: 10px;
+  padding: 4px 10px;
+  border: 1px dashed #b9a98f;
+  border-radius: 4px;
+  color: var(--foreground);
+  background: var(--surface-muted);
+  font-size: 13px;
+}
+
+.privacy-heading .privacy-effective-date + p {
+  margin-top: 12px;
+}
+
+.privacy-section {
+  color: var(--foreground);
+  font-size: 14px;
+  line-height: 1.65;
+}
+
+.privacy-section h2 {
+  margin-bottom: 10px;
+}
+
+.privacy-section p,
+.privacy-section ul,
+.privacy-section ol {
+  max-width: 68ch;
+  margin: 0 0 12px;
+}
+
+.privacy-section > :last-child,
+.privacy-section > div:last-child > :last-child {
+  margin-bottom: 0;
+}
+
+.privacy-section ul {
+  padding-left: 20px;
+  list-style: disc;
+}
+
+.privacy-section ol {
+  padding-left: 22px;
+  list-style: decimal;
+}
+
+.privacy-section li + li {
+  margin-top: 6px;
+}
+
+.privacy-section li > ul {
+  margin: 6px 0 0;
+  list-style: circle;
+}
+
+.privacy-section strong {
+  font-weight: 600;
+}
+
+.privacy-section code {
+  padding: 1px 4px;
+  border-radius: 3px;
+  background: var(--surface-muted);
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+
+/* Settings: Your data, and the sign-in form's privacy note. */
+.your-data-deletion h3 {
+  margin: 4px 0 6px;
+  color: var(--foreground);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.your-data-privacy,
+.account-privacy-note {
+  margin: 14px 0 0;
+}
+
 /* Notices about where the garden is saved (storage-notices.tsx), above each page's content. */
 .storage-notice {
   margin: 16px 22px 0;
@@ -3857,6 +3972,32 @@ button {
 .account-email {
   color: var(--foreground);
   overflow-wrap: anywhere;
+}
+
+/* The 13+ acknowledgment before a sign-in link is requested. */
+.account-age-row {
+  align-items: center;
+}
+
+.account-age-confirmation {
+  display: flex;
+  flex: 1;
+  align-items: flex-start;
+  gap: 8px;
+  max-width: 420px;
+  color: var(--foreground);
+  font-size: 12px;
+  line-height: 1.5;
+  cursor: pointer;
+}
+
+.account-age-confirmation input {
+  flex: 0 0 auto;
+  width: 18px;
+  height: 18px;
+  margin: 0;
+  accent-color: var(--leaf-dark);
+  cursor: pointer;
 }
 
 .auth-confirm .settings-message {

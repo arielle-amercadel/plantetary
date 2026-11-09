@@ -18,7 +18,8 @@ export type { AuthState } from "./auth-controller";
 
 type AuthContextValue = {
   auth: AuthState;
-  sendMagicLink: (email: string) => Promise<MagicLinkResult>;
+  /** `ageConfirmed`: the player confirmed they're at least 13. Without it, nothing is sent. */
+  sendMagicLink: (email: string, ageConfirmed: boolean) => Promise<MagicLinkResult>;
   completeSignIn: (link: Extract<ConfirmLink, { kind: "token-hash" | "code" }>) => Promise<FinishSignInResult>;
   signOut: () => Promise<SignOutResult>;
   /** The browser's Supabase client for this project, or null if sign-in isn't set up. The same one auth uses. */
@@ -68,11 +69,11 @@ export function AuthProvider({ config, children }: { config: SupabaseBrowserConf
     };
   }, [config, ready]);
 
-  const sendMagicLink = useCallback(async (email: string): Promise<MagicLinkResult> => {
+  const sendMagicLink = useCallback(async (email: string, ageConfirmed: boolean): Promise<MagicLinkResult> => {
     await ready.promise;
     const controller = controllerRef.current;
     if (!controller) return { ok: false, problem: "email-sign-in-disabled" };
-    return controller.sendMagicLink(email, window.location.origin);
+    return controller.sendMagicLink(email, window.location.origin, ageConfirmed);
   }, [ready]);
 
   const completeSignIn = useCallback(async (link: Extract<ConfirmLink, { kind: "token-hash" | "code" }>): Promise<FinishSignInResult> => {

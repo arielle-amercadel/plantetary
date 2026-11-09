@@ -31,7 +31,7 @@ All three tables belong to a user through `user_id`, which points at Supabase's 
 
 ## Who can do what
 
-Row Level Security (RLS) is on for every table. The database checks every request.
+Row Level Security (RLS) is on for all three public application tables. The database checks every request.
 
 | | Logged-out visitor | Signed-in user, own rows | Signed-in user, someone else's rows |
 | --- | --- | --- | --- |
@@ -43,7 +43,7 @@ Signed-in users can only write the columns they're meant to. `user_id`, `revisio
 
 **Nothing in the app deletes a save or a backup**, so players have no permission to (`20261108090000_remove_player_delete_permissions.sql`). Someone holding a stolen session therefore can't wipe a player's save and the backups that would restore it. Rows are still removed in two ways, neither of which uses the player's permissions:
 
-- **Deleting an account** (**Authentication → Users**) deletes its save, backups and profile (the foreign keys cascade).
+- **Deleting an account** (**Authentication → Users**) deletes its save, backups and profile (the foreign keys cascade). For a player's request, follow [account-deletion.md](account-deletion.md).
 - **Backup limits** remove the oldest backups beyond each reason's limit (the trigger runs as its owner).
 
 The import RPC runs with the player's own permissions, so it relies on players being able to read and add their own backups: it checks that its backup was kept before replacing the save. Those permissions stay. `profiles` keeps its delete permission until the app uses the table. A cloud reset from the app (Stage 10) will need its own checked function.
@@ -119,10 +119,44 @@ migrations must not be edited or reapplied manually.
 
 Plantetary is live at https://plantetary.vercel.app, using the hosted Supabase project **plantetary** (Postgres 17, matching `major_version` in `supabase/config.toml`).
 
-- **Migrations:** the first seven files in `supabase/migrations/` are applied, through Stage 8's `20261107090000_add_browser_import_rpc.sql`. `npx supabase migration list --remote` shows each in both the Local and Remote columns.
-- **Next to apply:** `20261108090000_remove_player_delete_permissions.sql`, with **Applying a new migration to the hosted project** below. It changes no rows: every save and backup stays exactly as it is. Afterwards, a signed-in player who tries to delete their save or a backup through the API gets `permission denied`; nothing in the app does that, so players notice nothing. Saving, loading, conflict and upgrade backups, imports, backup limits and deleting an account all work as before. The deployed app needs no change, so it can be applied before or after any release; to undo it, a new migration would grant `delete` again and recreate the two policies.
+### Production metadata verification — November 8, 2026
+
+Read-only production metadata verification was completed on November 8, 2026
+(U.S. Central time) for **plantetary** (`egtqukzfpuegqzsheehv`). The recorded
+results were:
+
+- All eight expected migrations are recorded as applied, including `20261108090000_remove_player_delete_permissions.sql`.
+- Effective table and column permissions match the repository configuration.
+- RLS is enabled on all three public application tables, and all nine policies contain the expected `auth.uid()` ownership checks.
+- The two private tables have RLS disabled; private-schema restrictions and denied application-role grants protect them. Neither `anon` nor `authenticated` has private-schema USAGE/CREATE, superuser or BYPASSRLS privileges.
+- All five expected functions have the intended security settings, ownership, search paths and execution permissions.
+- All five account-related foreign keys are validated and configured with `ON DELETE CASCADE`.
+- All four expected application triggers are present, enabled and connected to the expected helpers.
+
+**Limits:** these were metadata inspections, not penetration tests or behavioral
+isolation tests. No production accounts were created or deleted. Function
+bodies were not independently reviewed. Trigger `WHEN` expressions remain
+unverified: the original inspection query failed, and the corrected query
+omitted them. Provider retention and external deletion behavior were not verified.
+
+### Historical production observations
+
 - **Checked from outside, as an anonymous visitor (read-only):** requests for `quest_saves`, `save_backups` and `profiles` with only the publishable key are refused (HTTP 401, permission denied); the `private` schema isn't exposed; only email sign-in is enabled, with email confirmation on.
 - **Real players' data lives here now.** Apply any new migration with **Applying a new migration to the hosted project** below, backup first, and test by hand only with your own test addresses.
+
+### Separate staging status
+
+All eight existing migration files, including
+`20261108090000_remove_player_delete_permissions.sql`, were applied to
+**plantetary-staging** (`rfivrsnzzhgximesvnyz`). Codex verified all eight in remote
+history, the three public tables with RLS enabled, both private helper tables,
+and account foreign keys with `ON DELETE CASCADE` on all five tables. Private
+helper tables do not have RLS enabled; the public-table RLS statement above does
+not describe those private tables.
+
+See the [staging deletion test record](account-deletion.md#staging-account-deletion-test-record)
+for the verified baseline, owner-reported post-deletion counts and limitations.
+Staging results do not establish production migration or permission state.
 
 ## Run the tests locally
 
@@ -459,5 +493,5 @@ Then ask the player to open Plantetary and sign in: their cloud garden is the re
 - `profiles` isn't read or written by the app; profile and reminder preferences stay in the browser.
 - Nothing merges changes between devices (Stage 9). Importing (Stage 8) replaces the cloud garden; it doesn't merge.
 - Backups (`browser_import`, `conflict`, `daily`, `upgrade`) can't be restored from the app. Only the project owner can, from the dashboard.
-- Account deletion and cloud reset from the app (Stage 10).
+- Account deletion and cloud reset from the app (Stage 10). Until then, deletion is by email request, handled by hand: [account-deletion.md](account-deletion.md).
 - CI doesn't run these database tests. They need Docker, so they could be added as a separate CI job later.
