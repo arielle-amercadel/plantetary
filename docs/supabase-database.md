@@ -31,7 +31,7 @@ All three tables belong to a user through `user_id`, which points at Supabase's 
 
 ## Who can do what
 
-Row Level Security (RLS) is on for every table. The database checks every request.
+Row Level Security (RLS) is on for all three public application tables. The database checks every request.
 
 | | Logged-out visitor | Signed-in user, own rows | Signed-in user, someone else's rows |
 | --- | --- | --- | --- |
@@ -119,10 +119,24 @@ migrations must not be edited or reapplied manually.
 
 Plantetary is live at https://plantetary.vercel.app, using the hosted Supabase project **plantetary** (Postgres 17, matching `major_version` in `supabase/config.toml`).
 
-- **Migrations:** the first seven files in `supabase/migrations/` are applied, through Stage 8's `20261107090000_add_browser_import_rpc.sql`. `npx supabase migration list --remote` shows each in both the Local and Remote columns.
-- **Next to apply:** `20261108090000_remove_player_delete_permissions.sql`, with **Applying a new migration to the hosted project** below. It changes no rows: every save and backup stays exactly as it is. Afterwards, a signed-in player who tries to delete their save or a backup through the API gets `permission denied`; nothing in the app does that, so players notice nothing. Saving, loading, conflict and upgrade backups, imports, backup limits and deleting an account all work as before. The deployed app needs no change, so it can be applied before or after any release; to undo it, a new migration would grant `delete` again and recreate the two policies.
+- **Previously recorded production migrations (not reverified during staging testing):** the first seven files in `supabase/migrations/` were recorded as applied, through Stage 8's `20261107090000_add_browser_import_rpc.sql`, with each in both the Local and Remote columns of the migration listing.
+- **Previously recorded as pending in production; verify current production history before applying:** `20261108090000_remove_player_delete_permissions.sql`, with **Applying a new migration to the hosted project** below. It changes no rows: every save and backup stays exactly as it is. Afterwards, a signed-in player who tries to delete their save or a backup through the API gets `permission denied`; nothing in the app does that, so players notice nothing. Saving, loading, conflict and upgrade backups, imports, backup limits and deleting an account all work as before. The deployed app needs no change, so it can be applied before or after any release; to undo it, a new migration would grant `delete` again and recreate the two policies.
 - **Checked from outside, as an anonymous visitor (read-only):** requests for `quest_saves`, `save_backups` and `profiles` with only the publishable key are refused (HTTP 401, permission denied); the `private` schema isn't exposed; only email sign-in is enabled, with email confirmation on.
 - **Real players' data lives here now.** Apply any new migration with **Applying a new migration to the hosted project** below, backup first, and test by hand only with your own test addresses.
+
+### Separate staging status
+
+All eight existing migration files, including
+`20261108090000_remove_player_delete_permissions.sql`, were applied to
+**plantetary-staging** (`rfivrsnzzhgximesvnyz`). Codex verified all eight in remote
+history, the three public tables with RLS enabled, both private helper tables,
+and account foreign keys with `ON DELETE CASCADE` on all five tables. Private
+helper tables do not have RLS enabled; the public-table RLS statement above does
+not describe those private tables.
+
+See the [staging deletion test record](account-deletion.md#staging-account-deletion-test-record)
+for the verified baseline, owner-reported post-deletion counts and limitations.
+Staging results do not establish production migration or permission state.
 
 ## Run the tests locally
 

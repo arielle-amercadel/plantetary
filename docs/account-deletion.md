@@ -25,16 +25,18 @@ Reply soon after a request arrives, even just to say it's being looked at and th
 
 ## 2. Find the account
 
-In the Supabase Dashboard for the **plantetary** project: **Authentication → Users**, then search for the exact address. There must be exactly one match. Note its **User UID**: that's `<user-id>` below. An account whose sign-in link was never used still appears here (not yet confirmed).
+First verify the intended project name and reference. Production uses **plantetary**; staging uses **plantetary-staging** (`rfivrsnzzhgximesvnyz`). Never use production for a staging test. In that project's Supabase Dashboard: **Authentication → Users**, then search for the exact address. There must be exactly one match. Note its **User UID**: that's `<user-id>` below. An account whose sign-in link was never used still appears here (not yet confirmed).
 
 To see what's stored (read-only), in the **SQL Editor**:
 
 ```sql
 select
+  (select count(*) from auth.users where id = '<user-id>') as accounts,
   (select count(*) from public.quest_saves where user_id = '<user-id>') as saves,
   (select count(*) from public.save_backups where user_id = '<user-id>') as backups,
   (select count(*) from public.profiles where user_id = '<user-id>') as profiles,
-  (select count(*) from private.quest_save_revisions where user_id = '<user-id>') as revision_counters;
+  (select count(*) from private.quest_save_revisions where user_id = '<user-id>') as revision_counters,
+  (select count(*) from private.save_backup_retention_locks where user_id = '<user-id>') as retention_locks;
 ```
 
 A player who never used a cloud garden has `0` saves and backups; that's fine.
@@ -73,9 +75,9 @@ Confirm ownership (section 1) and find the account (section 2), then delete it (
 
 ## 6. Delete the account
 
-**Authentication → Users**, open the account found in section 2, then **Delete user**, and confirm. Check the address and UID once more first: this can't be undone.
+**Authentication → Users**, open the account found in section 2, then **Delete user**, and confirm. Check the address and UID once more first: this can't be undone. If the Dashboard offers both soft deletion and permanent deletion, choose permanent deletion for the documented account-deletion cascade test. Soft deletion does not exercise removal of the account row and its cascading foreign keys.
 
-Deleting the user removes, in the same step, everything Plantetary's database holds for them: their save, all backups, any profile row, and their revision counter (every table's `user_id` is `on delete cascade`; see [supabase-database.md](supabase-database.md)). Players can't delete their save or backups themselves; only deleting the account (or the owner) can.
+Deleting the user removes, in the same step, everything Plantetary's database holds for them: their save, all backups, any profile row, their revision counter, and backup-retention lock rows (every table's `user_id` is `on delete cascade`; see [supabase-database.md](supabase-database.md)). Players can't delete their save or backups themselves; only deleting the account (or the owner) can.
 
 Don't delete rows table by table instead, and don't use the `service_role` or secret key from anywhere outside the dashboard.
 
@@ -122,3 +124,48 @@ These aren't controlled by Plantetary and can't be verified from this repository
 - Vercel's request and runtime logs.
 
 The Privacy Notice says only that providers "may keep information for a time in their own backups, security logs or other systems". If you learn their exact practices for your plans, consider making the notice more specific.
+
+## Staging account-deletion test record
+
+This first test used only the separate **plantetary-staging** project
+(`rfivrsnzzhgximesvnyz`) from the `plantetary-staging` checkout. Production was
+not accessed for this test.
+
+The owner created one account through Plantetary's normal email sign-in flow,
+started a fresh cloud garden, added two test quests, and completed one. Settings
+showed **9 quests and 5 XP**. Codex's read-only staging queries independently
+confirmed one confirmed authentication account, its saved cloud garden with
+9 quests and 5 XP, a matching revision counter, and one daily backup.
+
+Codex verified the baseline counts below using read-only queries. The owner then
+reported permanently deleting the account through **Supabase Dashboard →
+Authentication → Users** and reported that all six post-deletion counts were zero.
+**Codex did not execute the deletion or independently query the post-deletion
+state.**
+
+| Table | Before (Codex verified) | After (owner reported) |
+| --- | ---: | ---: |
+| `auth.users` | 1 | 0 |
+| `public.quest_saves` | 1 | 0 |
+| `public.save_backups` | 1 | 0 |
+| `public.profiles` | 0 | 0 |
+| `private.quest_save_revisions` | 1 | 0 |
+| `private.save_backup_retention_locks` | 1 | 0 |
+
+Before the test, Codex also verified that all eight existing migrations appeared
+in staging's remote history, RLS was enabled on the three public application
+tables, and all five application/helper tables had account foreign keys with
+`ON DELETE CASCADE`. These findings establish staging state only.
+
+### Limits of this test
+
+- Only one staging account was used; multi-account isolation was not tested.
+- `profiles` was empty before deletion, so its cascade was not exercised.
+- Only a daily backup was present; conflict, browser-import and upgrade backup
+  deletion were not exercised.
+- Browser-local gardens and settings are separate from cloud data. This test
+  does not establish their removal or immediate browser-session invalidation.
+- Production account deletion and an in-app account-deletion flow were not tested.
+- This does not verify provider backup/log retention, maintenance-copy deletion,
+  or all Privacy Notice obligations. It does not clear the
+  [Privacy Notice publication blockers](deployment.md#privacy-notice-publication-blockers).
