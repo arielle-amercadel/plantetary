@@ -115,6 +115,8 @@ export type GameDataSession = {
    * any write already sent finishes on its own. Unsaved changes stay readable with `getUnsavedData`.
    */
   close: (problem?: GameStorageProblem) => void;
+  /** Stop queued browser writes. A retained garden also invalidates the saved baseline after an unverified reset. */
+  pauseForConflict?: (retainedGarden?: StoredQuestData) => void;
 };
 
 /**
@@ -478,6 +480,16 @@ export function createGameDataSession(storage: GameStorage, options: GameDataSes
       if (!applied || closed) return cancelled();
       const discardedUnsavedChanges = hadUnsavedChanges && !unsavedChange();
       return { ...outcome, discardedUnsavedChanges, cancelled: false };
+    },
+    pauseForConflict(retainedGarden) {
+      if (retainedGarden) {
+        latest = latest ?? { data: retainedGarden, text: JSON.stringify(retainedGarden) };
+        savedText = null;
+      }
+      clearTimers();
+      pending = undefined;
+      conflictBackup = undefined;
+      publish({ status: "conflict", backup: "failed" });
     },
     close,
   };

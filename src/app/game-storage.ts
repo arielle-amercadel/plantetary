@@ -3,6 +3,7 @@ import { inspectBrowserGarden, type BrowserSavePreview } from "./browser-save-pr
 import {
   questStorageKey,
   loadQuestData,
+  readQuestSaveText,
   saveQuestData,
   type GetQuestStorage,
   type QuestStorage,
@@ -103,26 +104,74 @@ export type BrowserGameStorage = GameStorage & {
   inspect: () => Promise<BrowserSavePreview>;
 };
 
-export function createBrowserGameStorage(getStorage: GetQuestStorage = getBrowserStorage): BrowserGameStorage {
+export function createBrowserGameStorage(
+  getStorage: GetQuestStorage = getBrowserStorage,
+  access: { canWrite: () => boolean; pause?: () => void; remember?: (text: string | null) => void } = { canWrite: () => false },
+): BrowserGameStorage {
+  let loaded = false;
+  let expectedText: string | null = null;
+  let conflicted = false;
   return {
     async inspect() {
       return inspectBrowserGarden(getStorage);
     },
     async load(fallbackData) {
-      const { data, canPersist } = loadQuestData(fallbackData, getStorage);
-      if (!canPersist) return { status: "failed", data };
+      loaded = false;
+      conflicted = false;
+      let parsed: ReturnType<typeof readQuestSaveText> | null = null;
+      try {
+        const storage = getStorage();
+        if (!storage) return { status: "failed", data: fallbackData };
+        expectedText = storage.getItem(questStorageKey);
+        parsed = expectedText === null ? null : readQuestSaveText(expectedText);
+        if (!access.canWrite()) {
+          // Followers must not create migration/invalid-save backups or seed starter data.
+          return { status: "ready", data: parsed?.status === "valid" ? parsed.data : fallbackData, storedText: expectedText };
+        }
+        if (parsed?.status === "valid" && parsed.newerVersion) {
+          return { status: "failed", data: parsed.data, problem: "newer-version" };
+        }
+      } catch { return { status: "failed", data: fallbackData, problem: "storage" }; }
+      const { data, canPersist, problem } = loadQuestData(fallbackData, getStorage);
+      if (!canPersist) {
+        // Only a known backup-write failure on an inspected, unchanged valid save is resettable.
+        try {
+          if (problem === "backup-failed" && parsed?.status === "valid" && getStorage()?.getItem(questStorageKey) === expectedText) {
+            access.remember?.(expectedText);
+            return { status: "failed", data, problem: "backup-failed" };
+          }
+        } catch { /* Cannot re-inspect: keep the original save protected. */ }
+        return { status: "failed", data, problem: problem === "backup-failed" && parsed?.status === "invalid" ? "invalid-save" : "storage" };
+      }
 
       try {
         const storage = getStorage();
         if (!storage) return { status: "failed", data };
-        return { status: "ready", data, storedText: storage.getItem(questStorageKey) };
+        // Detect interference during loading rather than adopting an unrelated baseline.
+        if (storage.getItem(questStorageKey) !== expectedText) return { status: "failed", data, problem: "storage" };
+        loaded = true;
+        access.remember?.(expectedText);
+        return { status: "ready", data, storedText: expectedText };
       } catch {
         console.error("Plantetary could not safely access saved data. Changes will not be saved this session.");
         return { status: "failed", data };
       }
     },
     async save(data) {
-      return saveQuestData(data, getStorage) ? { status: "saved" } : { status: "failed", problem: "storage" };
+      if (conflicted) return { status: "conflict", backup: "failed" };
+      if (!access.canWrite()) return { status: "failed", problem: "denied" };
+      if (!loaded) return { status: "failed", problem: "not-loaded" };
+      try {
+        if (getStorage()?.getItem(questStorageKey) !== expectedText) {
+          conflicted = true;
+          access.pause?.();
+          return { status: "conflict", backup: "failed" };
+        }
+        if (!saveQuestData(data, getStorage)) return { status: "failed", problem: "storage" };
+        expectedText = JSON.stringify(data);
+        access.remember?.(expectedText);
+        return { status: "saved" };
+      } catch { return { status: "failed", problem: "storage" }; }
     },
   };
 }

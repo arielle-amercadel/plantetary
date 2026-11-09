@@ -349,12 +349,12 @@ describe("failed loads", () => {
     expect(env.snap()).toMatchObject({ mode: "browser", loaded: { data: garden("guest") } });
   });
 
-  it("shows a browser save it couldn't read safely, but never writes over it", async () => {
+  it("blocks a browser garden it could not read safely without showing fallback data", async () => {
     const env = setup({ browser: { status: "failed", data: garden("unreadable"), problem: "storage" } });
     env.controller.setAuth({ status: "signed-out" });
     await settle();
 
-    expect(env.snap()).toMatchObject({ phase: "ready", mode: "browser", loaded: { status: "failed", data: garden("unreadable") } });
+    expect(env.snap()).toMatchObject({ phase: "browser-failed", mode: "browser", loaded: null });
     expect(env.play(garden("unreadable, edited"))).toBe("blocked");
     expect(env.browser.writes).toEqual([]);
   });
@@ -621,12 +621,12 @@ describe("only a loaded garden can be played (Codex Step 5 finding 1)", () => {
     expect(isGardenPlayable(env.snap(), env.snap().generation - 1)).toBe(false);
   });
 
-  it("is playable for a browser save that couldn't be read safely, which is still never written", async () => {
+  it("is not playable after a browser load failure and never writes over it", async () => {
     const env = setup({ browser: { status: "failed", data: garden("unreadable"), problem: "storage" } });
     env.controller.setAuth({ status: "signed-out" });
     await settle();
 
-    expect(isGardenPlayable(env.snap(), env.snap().generation)).toBe(true);
+    expect(isGardenPlayable(env.snap(), env.snap().generation)).toBe(false);
     expect(env.play(garden("unreadable, edited"))).toBe("blocked");
   });
 

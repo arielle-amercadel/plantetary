@@ -89,11 +89,26 @@ afterEach(() => {
 });
 
 describe("browser game storage", () => {
+  it("refuses a stale follower's whole-garden write after the editor saved a quest", async () => {
+    const original = createCurrentSave();
+    const storage = createStorage({ [questStorageKey]: JSON.stringify(original) });
+    const editor = createBrowserGameStorage(() => storage, { canWrite: () => true });
+    const follower = createBrowserGameStorage(() => storage, { canWrite: () => false });
+    await editor.load(fallbackData);
+    await follower.load(fallbackData);
+    const changed = { ...original, questLists: { ...original.questLists,
+      personal: [...original.questLists.personal, { id: "new", title: "Keep this quest", category: "Home", difficulty: "Easy" as const, completed: false }] } };
+    await editor.save(changed);
+    const result = await follower.save(withXp(original, 5));
+    expect(result.status).not.toBe("saved");
+    expect(JSON.parse(storage.values.get(questStorageKey)!).questLists.personal).toContainEqual(expect.objectContaining({ id: "new" }));
+  });
+
   it("loads a current save exactly as stored, using the existing key", async () => {
     const savedText = JSON.stringify(createCurrentSave());
     const storage = createStorage({ [questStorageKey]: savedText });
 
-    const result = await createBrowserGameStorage(() => storage).load(fallbackData);
+    const result = await createBrowserGameStorage(() => storage, { canWrite: () => true }).load(fallbackData);
 
     expect(result).toEqual({ status: "ready", data: createCurrentSave(), storedText: savedText });
     expect(storage.writes).toEqual([]);
@@ -102,7 +117,7 @@ describe("browser game storage", () => {
   it("is ready with the fallback for a first-time visitor", async () => {
     const storage = createStorage();
 
-    const result = await createBrowserGameStorage(() => storage).load(fallbackData);
+    const result = await createBrowserGameStorage(() => storage, { canWrite: () => true }).load(fallbackData);
 
     expect(result).toEqual({ status: "ready", data: fallbackData, storedText: null });
     expect(storage.writes).toEqual([]);
@@ -112,7 +127,7 @@ describe("browser game storage", () => {
     const originalText = JSON.stringify(legacyFixture.save);
     const storage = createStorage({ [questStorageKey]: originalText });
 
-    const result = await createBrowserGameStorage(() => storage).load(fallbackData);
+    const result = await createBrowserGameStorage(() => storage, { canWrite: () => true }).load(fallbackData);
 
     expect(result.status).toBe("ready");
     expect(result.data.schemaVersion).toBeGreaterThan(0);
@@ -125,7 +140,7 @@ describe("browser game storage", () => {
     const originalText = JSON.stringify(legacyFixture.save);
     const storage = createStorage({ [questStorageKey]: originalText }, (key) => key === validBackupStorageKey);
 
-    const result = await createBrowserGameStorage(() => storage).load(fallbackData);
+    const result = await createBrowserGameStorage(() => storage, { canWrite: () => true }).load(fallbackData);
 
     expect(result.status).toBe("failed");
     expect(storage.values.get(questStorageKey)).toBe(originalText);
@@ -136,7 +151,7 @@ describe("browser game storage", () => {
       throw new Error("SecurityError");
     }).load(fallbackData);
 
-    expect(result).toEqual({ status: "failed", data: fallbackData });
+    expect(result).toEqual({ status: "failed", data: fallbackData, problem: "storage" });
   });
 
   it("fails when there is no browser storage", async () => {
@@ -148,7 +163,7 @@ describe("browser game storage", () => {
   it("keeps an unreadable save in its backup key, as before", async () => {
     const storage = createStorage({ [questStorageKey]: "{not json" });
 
-    const result = await createBrowserGameStorage(() => storage).load(fallbackData);
+    const result = await createBrowserGameStorage(() => storage, { canWrite: () => true }).load(fallbackData);
 
     expect(result).toEqual({ status: "ready", data: fallbackData, storedText: "{not json" });
     expect(storage.values.get(invalidBackupStorageKey)).toBe("{not json");
@@ -157,7 +172,7 @@ describe("browser game storage", () => {
   it("fails when an unreadable save can't be backed up", async () => {
     const storage = createStorage({ [questStorageKey]: "{not json" }, (key) => key === invalidBackupStorageKey);
 
-    const result = await createBrowserGameStorage(() => storage).load(fallbackData);
+    const result = await createBrowserGameStorage(() => storage, { canWrite: () => true }).load(fallbackData);
 
     expect(result.status).toBe("failed");
     expect(storage.values.get(questStorageKey)).toBe("{not json");
@@ -165,13 +180,16 @@ describe("browser game storage", () => {
 
   it("saves to the existing key in the existing format, and reports a refused write", async () => {
     const storage = createStorage();
-    const gameStorage = createBrowserGameStorage(() => storage);
+    const gameStorage = createBrowserGameStorage(() => storage, { canWrite: () => true });
 
+    await gameStorage.load(fallbackData);
     await expect(gameStorage.save(createCurrentSave())).resolves.toEqual({ status: "saved" });
     expect(storage.values.get(questStorageKey)).toBe(JSON.stringify(createCurrentSave()));
 
     const fullStorage = createStorage({}, () => true);
-    await expect(createBrowserGameStorage(() => fullStorage).save(createCurrentSave())).resolves.toEqual({ status: "failed", problem: "storage" });
+    const full = createBrowserGameStorage(() => fullStorage, { canWrite: () => true });
+    await full.load(fallbackData);
+    await expect(full.save(createCurrentSave())).resolves.toEqual({ status: "failed", problem: "storage" });
   });
 });
 
@@ -193,7 +211,7 @@ describe("game data session: loading states and write protection", () => {
 
   it("blocks every write after a failed load, so starter data never replaces a real save", async () => {
     const storage = createStorage({ [questStorageKey]: JSON.stringify(legacyFixture.save) }, (key) => key === validBackupStorageKey);
-    const session = createGameDataSession(createBrowserGameStorage(() => storage));
+    const session = createGameDataSession(createBrowserGameStorage(() => storage, { canWrite: () => true }));
 
     const outcome = await session.load(fallbackData);
 
@@ -232,7 +250,7 @@ describe("game data session: loading states and write protection", () => {
 describe("game data session: unchanged saves", () => {
   it("doesn't rewrite a current save that loaded without changes", async () => {
     const storage = createStorage({ [questStorageKey]: JSON.stringify(createCurrentSave()) });
-    const session = createGameDataSession(createBrowserGameStorage(() => storage));
+    const session = createGameDataSession(createBrowserGameStorage(() => storage, { canWrite: () => true }));
 
     const { data } = await session.load(fallbackData);
 
@@ -243,7 +261,7 @@ describe("game data session: unchanged saves", () => {
 
   it("writes a change once, then skips repeats of it", async () => {
     const storage = createStorage({ [questStorageKey]: JSON.stringify(createCurrentSave()) });
-    const session = createGameDataSession(createBrowserGameStorage(() => storage));
+    const session = createGameDataSession(createBrowserGameStorage(() => storage, { canWrite: () => true }));
     await session.load(fallbackData);
 
     expect(session.requestSave(withXp(createCurrentSave(), 10))).toBe("saving");
@@ -256,7 +274,7 @@ describe("game data session: unchanged saves", () => {
 
   it("writes the first save for a first-time visitor, as before", async () => {
     const storage = createStorage();
-    const session = createGameDataSession(createBrowserGameStorage(() => storage));
+    const session = createGameDataSession(createBrowserGameStorage(() => storage, { canWrite: () => true }));
     const { data } = await session.load(fallbackData);
 
     expect(session.requestSave(data)).toBe("saving");
@@ -267,7 +285,7 @@ describe("game data session: unchanged saves", () => {
 
   it("writes the browser save synchronously, so a change survives an immediate reload", async () => {
     const storage = createStorage();
-    const session = createGameDataSession(createBrowserGameStorage(() => storage));
+    const session = createGameDataSession(createBrowserGameStorage(() => storage, { canWrite: () => true }));
     await session.load(fallbackData);
 
     session.requestSave(withXp(fallbackData, 5));
@@ -281,7 +299,7 @@ describe("game data session: save failures and ordering", () => {
   it("keeps trying after a refused write instead of treating the data as saved", async () => {
     let refuse = true;
     const storage = createStorage({}, () => refuse);
-    const session = createGameDataSession(createBrowserGameStorage(() => storage));
+    const session = createGameDataSession(createBrowserGameStorage(() => storage, { canWrite: () => true }));
     await session.load(fallbackData);
 
     expect(session.requestSave(withXp(fallbackData, 5))).toBe("saving");
@@ -451,14 +469,14 @@ describe("compatibility with existing browser saves", () => {
     const originalText = JSON.stringify(legacyFixture.save);
     const storage = createStorage({ [questStorageKey]: originalText });
 
-    const firstSession = createGameDataSession(createBrowserGameStorage(() => storage));
+    const firstSession = createGameDataSession(createBrowserGameStorage(() => storage, { canWrite: () => true }));
     const first = await firstSession.load(fallbackData);
     expect(first.status).toBe("ready");
     // The upgraded save differs from the stored text, so the first save writes the new format.
     expect(firstSession.requestSave(first.data)).toBe("saving");
     await firstSession.whenIdle();
 
-    const secondSession = createGameDataSession(createBrowserGameStorage(() => storage));
+    const secondSession = createGameDataSession(createBrowserGameStorage(() => storage, { canWrite: () => true }));
     const second = await secondSession.load(fallbackData);
 
     expect(second).toEqual({ status: "ready", data: first.data });
