@@ -47,6 +47,7 @@ export function signedInUserFromSession(session: { user?: { id?: unknown; email?
 }
 
 export type AuthProblem =
+  | "age-not-confirmed"
   | "network"
   | "rate-limited"
   | "invalid-email"
@@ -59,6 +60,7 @@ export type AuthProblem =
   | "unknown";
 
 export const authProblemMessages: Record<AuthProblem, string> = {
+  "age-not-confirmed": "Please confirm that you're at least 13 years old to get a sign-in link.",
   network: "Plantetary couldn't reach the sign-in service. Check your connection and try again.",
   "rate-limited": "Too many sign-in emails were requested. Please wait a minute, then try again.",
   "invalid-email": "That email address can't be used. Check it and try again.",
@@ -112,7 +114,18 @@ export function normalizeEmail(input: string): string | null {
 
 export type MagicLinkResult = { ok: true; email: string } | { ok: false; problem: AuthProblem };
 
-export async function requestMagicLink(client: AuthClient, input: string, origin: string): Promise<MagicLinkResult> {
+/**
+ * Plantetary accounts are for people 13 and older. Before a link is requested, the player confirms they
+ * are: a plain acknowledgment, not age verification. Nothing about age is asked, sent or stored.
+ */
+export const ageAcknowledgmentText = "By continuing, you confirm that you are at least 13 years old.";
+
+/**
+ * Asks Supabase to email a sign-in link. Asking creates an account for a new address (`shouldCreateUser`),
+ * so nothing is sent unless the player has confirmed the age requirement (`ageConfirmed`).
+ */
+export async function requestMagicLink(client: AuthClient, input: string, origin: string, ageConfirmed: boolean): Promise<MagicLinkResult> {
+  if (ageConfirmed !== true) return { ok: false, problem: "age-not-confirmed" };
   const email = normalizeEmail(input);
   if (!email) return { ok: false, problem: "invalid-email" };
 

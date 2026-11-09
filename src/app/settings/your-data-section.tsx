@@ -65,6 +65,10 @@ export default function YourDataSection() {
             you&apos;d like it deleted. It&apos;s done by hand once we&apos;ve checked the request is yours, so it isn&apos;t
             immediate. The data saved in this browser stays here until you reset it or clear it.
           </p>
+          <p className="settings-description">
+            You can also email to ask for a copy of the information connected to your account, or to correct something
+            that&apos;s inaccurate. We aim to complete verified requests within 30 days.
+          </p>
         </div>
       ) : (
         <p className="settings-description">

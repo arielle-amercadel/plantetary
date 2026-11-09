@@ -12,6 +12,8 @@ import {
   normalizeEmail,
   getMisplacedSignInLinkTarget,
   parseConfirmLink,
+  ageAcknowledgmentText,
+  authProblemMessages,
   requestMagicLink,
   signOutOfThisDevice,
   type AuthClient,
@@ -157,7 +159,7 @@ describe("requesting a magic link", () => {
   it("sends the link to this site's confirm page, and nowhere else", async () => {
     const client = createClient();
 
-    const result = await requestMagicLink(client, "  mira@example.com ", "https://plantetary.example");
+    const result = await requestMagicLink(client, "  mira@example.com ", "https://plantetary.example", true);
 
     expect(result).toEqual({ ok: true, email: "mira@example.com" });
     expect(client.signInWithOtp).toHaveBeenCalledWith({
@@ -166,10 +168,28 @@ describe("requesting a magic link", () => {
     });
   });
 
+  it("sends nothing, and so creates no account, unless the player confirmed they're at least 13", async () => {
+    const client = createClient();
+
+    for (const email of ["mira@example.com", "not an email", ""]) {
+      expect(await requestMagicLink(client, email, "https://plantetary.example", false)).toEqual({ ok: false, problem: "age-not-confirmed" });
+    }
+    expect(client.signInWithOtp).not.toHaveBeenCalled();
+    // Only exactly `true` counts: a value from anywhere else can't stand in for the acknowledgment.
+    expect(await requestMagicLink(client, "mira@example.com", "https://plantetary.example", "yes" as unknown as boolean))
+      .toEqual({ ok: false, problem: "age-not-confirmed" });
+    expect(client.signInWithOtp).not.toHaveBeenCalled();
+  });
+
+  it("asks for the approved 13+ acknowledgment, and says why nothing was sent without it", () => {
+    expect(ageAcknowledgmentText).toBe("By continuing, you confirm that you are at least 13 years old.");
+    expect(authProblemMessages["age-not-confirmed"]).toBe("Please confirm that you're at least 13 years old to get a sign-in link.");
+  });
+
   it("checks the address before contacting Supabase", async () => {
     const client = createClient();
 
-    expect(await requestMagicLink(client, "not an email", "https://plantetary.example")).toEqual({
+    expect(await requestMagicLink(client, "not an email", "https://plantetary.example", true)).toEqual({
       ok: false,
       problem: "invalid-email",
     });
@@ -190,13 +210,13 @@ describe("requesting a magic link", () => {
   ])("explains %s as %s", async (error, problem) => {
     const client = createClient({ signInWithOtp: async () => ({ data: {}, error }) });
 
-    expect(await requestMagicLink(client, "mira@example.com", "https://plantetary.example")).toEqual({ ok: false, problem });
+    expect(await requestMagicLink(client, "mira@example.com", "https://plantetary.example", true)).toEqual({ ok: false, problem });
   });
 
   it("treats a thrown fetch failure as a network problem", async () => {
     const client = createClient({ signInWithOtp: async () => { throw new TypeError("Failed to fetch"); } });
 
-    expect(await requestMagicLink(client, "mira@example.com", "https://plantetary.example")).toEqual({
+    expect(await requestMagicLink(client, "mira@example.com", "https://plantetary.example", true)).toEqual({
       ok: false,
       problem: "network",
     });

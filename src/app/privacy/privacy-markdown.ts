@@ -2,11 +2,13 @@
  * Reads the Privacy Notice (privacy-notice.md) into blocks the page renders. The notice is kept as
  * Markdown so its approved wording lives in one file, unchanged by the page. Only what the notice uses
  * is supported: `#` and `##` headings, paragraphs, `-` lists (nested by two spaces), `1.` lists, and
- * `**bold**` and `` `code` `` within text. Anything else is an error, so a formatting slip can't quietly
- * change what players read.
+ * `**bold**`, `` `code` `` and `[links](https://…)` within text. Links must be `https:`. Anything else
+ * is an error, so a formatting slip can't quietly change what players read, or point them somewhere unsafe.
  */
 
-export type Inline = { kind: "text" | "strong" | "code" | "email"; text: string };
+export type Inline =
+  | { kind: "text" | "strong" | "code" | "email"; text: string }
+  | { kind: "link"; text: string; href: string };
 export type ListItem = { content: Inline[]; children: ListItem[] };
 export type Block =
   | { kind: "heading"; level: 1 | 2; text: string }
@@ -14,6 +16,20 @@ export type Block =
   | { kind: "list"; ordered: boolean; items: ListItem[] };
 
 const emailPattern = /[\w.+-]+@[\w-]+(?:\.[\w-]+)+/g;
+
+/** The link's address, if it's a safe absolute `https:` URL; otherwise an error naming it. */
+export function safeHttpsUrl(href: string): string {
+  let url: URL;
+  try {
+    url = new URL(href);
+  } catch {
+    throw new Error(`Links must be absolute https:// addresses: ${href}`);
+  }
+  if (url.protocol !== "https:" || url.username || url.password || !url.hostname) {
+    throw new Error(`Links must be absolute https:// addresses, without a user name or password: ${href}`);
+  }
+  return url.href;
+}
 
 /** Splits text into plain, **bold**, `code` and email-address pieces. */
 export function parseInline(text: string): Inline[] {
@@ -27,17 +43,21 @@ export function parseInline(text: string): Inline[] {
     }
     if (last < value.length) pieces.push({ kind, text: value.slice(last) });
   };
-  const pattern = /\*\*(.+?)\*\*|`([^`]+)`/g;
+  const pattern = /\*\*(.+?)\*\*|`([^`]+)`|\[([^\]]+)\]\(([^)\s]+)\)/g;
   let last = 0;
   for (const match of text.matchAll(pattern)) {
     if (match.index > last) pushText(text.slice(last, match.index), "text");
     if (match[1] !== undefined) pushText(match[1], "strong");
-    else pieces.push({ kind: "code", text: match[2] });
+    else if (match[2] !== undefined) pieces.push({ kind: "code", text: match[2] });
+    else pieces.push({ kind: "link", text: match[3], href: safeHttpsUrl(match[4]) });
     last = match.index + match[0].length;
   }
   if (last < text.length) pushText(text.slice(last), "text");
   if (pieces.some((piece) => piece.kind !== "code" && /\*\*|`/.test(piece.text))) {
     throw new Error(`Unmatched ** or \` in: ${text}`);
+  }
+  if (pieces.some((piece) => (piece.kind === "text" || piece.kind === "strong") && /\]\(|\[[^\]]*\]\s*\(/.test(piece.text))) {
+    throw new Error(`Malformed link in: ${text}`);
   }
   return pieces;
 }

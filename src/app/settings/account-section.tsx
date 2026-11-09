@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { useAuth, type AuthState } from "../auth/auth-provider";
-import { authProblemMessages } from "../auth/auth-session";
+import { ageAcknowledgmentText, authProblemMessages } from "../auth/auth-session";
 import type { SaveSnapshot } from "../game-data-session";
 import type { AccountChangeTicket } from "../game-storage-controller";
 import { useQuestStore } from "../quest-store";
@@ -32,6 +32,10 @@ export default function AccountSection() {
   const { auth, sendMagicLink, signOut } = useAuth();
   const { storage, storageActions } = useQuestStore();
   const [email, setEmail] = useState("");
+  /** The 13+ acknowledgment for this request only. Never stored or sent anywhere. */
+  const [ageConfirmed, setAgeConfirmed] = useState(false);
+  const [ageMissing, setAgeMissing] = useState(false);
+  const ageCheckboxRef = useRef<HTMLInputElement>(null);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
   const [isError, setIsError] = useState(false);
@@ -84,9 +88,16 @@ export default function AccountSection() {
 
   async function submitEmail(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    // No link (and so no account) until the player confirms they're at least 13.
+    if (!ageConfirmed) {
+      show("", false);
+      setAgeMissing(true);
+      ageCheckboxRef.current?.focus();
+      return;
+    }
     setBusy(true);
     show("", false);
-    const result = await sendMagicLink(email);
+    const result = await sendMagicLink(email, ageConfirmed);
     setBusy(false);
     if (result.ok) {
       show(`Check your inbox at ${result.email}. The sign-in link works once and expires after an hour.`, false);
@@ -293,10 +304,32 @@ export default function AccountSection() {
                     onChange={(event) => setEmail(event.target.value)}
                   />
                 </label>
+              </div>
+              <div className="settings-form-row account-form-row account-age-row">
+                <label className="account-age-confirmation" htmlFor="account-age-confirmed">
+                  <input
+                    ref={ageCheckboxRef}
+                    id="account-age-confirmed"
+                    type="checkbox"
+                    checked={ageConfirmed}
+                    aria-invalid={ageMissing || undefined}
+                    aria-describedby={ageMissing ? "account-age-missing" : undefined}
+                    onChange={(event) => {
+                      setAgeConfirmed(event.target.checked);
+                      if (event.target.checked) setAgeMissing(false);
+                    }}
+                  />
+                  <span>{ageAcknowledgmentText}</span>
+                </label>
                 <button className="settings-action-button" type="submit">
                   {busy ? "Sending…" : "Email me a sign-in link"}
                 </button>
               </div>
+              {ageMissing && (
+                <p className="settings-message is-error" id="account-age-missing" role="alert">
+                  {authProblemMessages["age-not-confirmed"]}
+                </p>
+              )}
             </fieldset>
           </form>
           <p className="settings-description account-privacy-note">

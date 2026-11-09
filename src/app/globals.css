@@ -3974,6 +3974,32 @@ button {
   overflow-wrap: anywhere;
 }
 
+/* The 13+ acknowledgment before a sign-in link is requested. */
+.account-age-row {
+  align-items: center;
+}
+
+.account-age-confirmation {
+  display: flex;
+  flex: 1;
+  align-items: flex-start;
+  gap: 8px;
+  max-width: 420px;
+  color: var(--foreground);
+  font-size: 12px;
+  line-height: 1.5;
+  cursor: pointer;
+}
+
+.account-age-confirmation input {
+  flex: 0 0 auto;
+  width: 18px;
+  height: 18px;
+  margin: 0;
+  accent-color: var(--leaf-dark);
+  cursor: pointer;
+}
+
 .auth-confirm .settings-message {
   margin-top: 0;
 }

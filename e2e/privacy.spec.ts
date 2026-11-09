@@ -43,8 +43,19 @@ test.describe("The Privacy Notice page", () => {
     for (const name of expectedSections) await expect(notice(page).getByRole("region", { name, exact: true })).toBeVisible();
     await expect(notice(page).getByText("Effective date: [DATE — to be set when published]")).toBeVisible();
     const contacts = notice(page).getByRole("link", { name: CONTACT });
-    await expect(contacts).toHaveCount(4);
+    await expect(contacts).toHaveCount(5);
     for (const link of await contacts.all()) await expect(link).toHaveAttribute("href", `mailto:${CONTACT}`);
+  });
+
+  test("links to Supabase's and Vercel's privacy pages, over https", async ({ page }) => {
+    await openApp(page, "/privacy");
+    const services = notice(page).getByRole("region", { name: "Services we use", exact: true });
+    await expect(services.getByRole("link", { name: "Supabase's privacy policy" })).toHaveAttribute("href", "https://supabase.com/privacy");
+    await expect(services.getByRole("link", { name: "Vercel's privacy notice" })).toHaveAttribute("href", "https://vercel.com/legal/privacy-policy");
+    // Every link on the page is to this site, an email address, or an https page.
+    for (const href of await notice(page).getByRole("link").evaluateAll((links) => links.map((link) => link.getAttribute("href") ?? ""))) {
+      expect(href).toMatch(/^(https:\/\/|mailto:hello\.plantetary@gmail\.com$|\/)/);
+    }
   });
 
   test("works without sign-in set up at all, too", async ({ page }) => {
@@ -87,6 +98,7 @@ test.describe("Links to the Privacy Notice", () => {
     const account = page.getByRole("region", { name: "Account" });
     await expect(account.getByRole("button", { name: "Email me a sign-in link" })).toBeVisible();
     await expect(account).toContainText("Signing in stores your email address with Supabase, and your garden too if you use a cloud garden.");
+    await expect(account.getByRole("checkbox", { name: "By continuing, you confirm that you are at least 13 years old." })).toBeVisible();
     await account.getByRole("link", { name: "Read the Privacy Notice" }).click();
     await expect(page).toHaveURL(/\/privacy$/);
   });
@@ -139,6 +151,7 @@ test.describe("Settings → Your data", () => {
     await expect(section).toContainText(`from ${TEST_EMAIL} and say you'd like it deleted`);
     await expect(section).toContainText("It's done by hand once we've checked the request is yours, so it isn't immediate.");
     await expect(section.getByRole("link", { name: CONTACT })).toHaveAttribute("href", `mailto:${CONTACT}`);
+    await expect(section).toContainText("You can also email to ask for a copy of the information connected to your account, or to correct something that's inaccurate. We aim to complete verified requests within 30 days.");
     // Reset can't change a cloud garden, so it isn't offered for it.
     await expect(section).not.toContainText("Reset Plantetary data");
     await expect(page.getByRole("button", { name: "Reset Plantetary data" })).toBeDisabled();

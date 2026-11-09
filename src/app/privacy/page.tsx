@@ -29,6 +29,8 @@ function renderInline(content: Inline[]): ReactNode[] {
     if (piece.kind === "email") {
       return <a key={index} className="text-link" href={`mailto:${piece.text}`}>{piece.text}</a>;
     }
+    // Only https addresses get this far (safeHttpsUrl). They open in the same tab, like the app's own links.
+    if (piece.kind === "link") return <a key={index} className="text-link" href={piece.href}>{piece.text}</a>;
     return piece.text;
   });
 }

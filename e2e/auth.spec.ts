@@ -27,8 +27,13 @@ function accountSection(page: Page) {
   return page.getByRole("region", { name: "Account" });
 }
 
+const AGE_ACKNOWLEDGMENT = "By continuing, you confirm that you are at least 13 years old.";
+const ageCheckbox = (page: Page) => accountSection(page).getByRole("checkbox", { name: AGE_ACKNOWLEDGMENT });
+
+/** Asks for a sign-in link as a player would: the address, the 13+ acknowledgment, then the button. */
 async function requestLink(page: Page, email = TEST_EMAIL) {
   await accountSection(page).getByLabel("Email address").fill(email);
+  await ageCheckbox(page).check();
   await accountSection(page).getByRole("button", { name: "Email me a sign-in link" }).click();
 }
 
@@ -72,6 +77,69 @@ test.describe("Guest mode", () => {
     expect(keys.every((key) => key.startsWith("plantetary-"))).toBe(true);
     const cookies = await page.context().cookies();
     expect(cookies.some((cookie) => cookie.name.startsWith("sb-") && cookie.name.endsWith("-auth-token"))).toBe(true);
+  });
+});
+
+test.describe("The 13+ acknowledgment before a sign-in link", () => {
+  test("nothing is sent until it's confirmed; the reason is announced and focus goes to it", async ({ page }) => {
+    const auth = await useFakeAuth(page);
+    await openApp(page, "/settings");
+    await expect(ageCheckbox(page)).not.toBeChecked();
+
+    await accountSection(page).getByLabel("Email address").fill(TEST_EMAIL);
+    await accountSection(page).getByRole("button", { name: "Email me a sign-in link" }).click();
+
+    const reason = accountSection(page).getByRole("alert");
+    await expect(reason).toHaveText("Please confirm that you're at least 13 years old to get a sign-in link.");
+    await expect(ageCheckbox(page)).toBeFocused();
+    await expect(ageCheckbox(page)).toHaveAttribute("aria-invalid", "true");
+    await expect(ageCheckbox(page)).toHaveAttribute("aria-describedby", await reason.getAttribute("id") ?? "");
+    await expect(accountSection(page)).not.toContainText("Check your inbox");
+    // Not sent, so no account was created for the address.
+    expect(authRequests(auth, "POST /otp")).toHaveLength(0);
+
+    // Confirming clears the message; the link is then sent as usual.
+    await ageCheckbox(page).check();
+    await expect(reason).toHaveCount(0);
+    await accountSection(page).getByRole("button", { name: "Email me a sign-in link" }).click();
+    await expect(accountSection(page)).toContainText(`Check your inbox at ${TEST_EMAIL}`);
+    expect(authRequests(auth, "POST /otp")).toHaveLength(1);
+  });
+
+  test("works from the keyboard, and its label is its accessible name", async ({ page }) => {
+    const auth = await useFakeAuth(page);
+    await openApp(page, "/settings");
+    const email = accountSection(page).getByLabel("Email address");
+    await email.fill(TEST_EMAIL);
+    await email.focus();
+
+    // Email, then the acknowledgment, then the button: confirmed before continuing.
+    await page.keyboard.press("Tab");
+    await expect(ageCheckbox(page)).toBeFocused();
+    await page.keyboard.press("Space");
+    await expect(ageCheckbox(page)).toBeChecked();
+    await page.keyboard.press("Tab");
+    await expect(accountSection(page).getByRole("button", { name: "Email me a sign-in link" })).toBeFocused();
+    await page.keyboard.press("Enter");
+
+    await expect(accountSection(page)).toContainText(`Check your inbox at ${TEST_EMAIL}`);
+    expect(authRequests(auth, "POST /otp")).toHaveLength(1);
+    // Clicking the words ticks it too.
+    await page.reload();
+    await accountSection(page).getByText(AGE_ACKNOWLEDGMENT).click();
+    await expect(ageCheckbox(page)).toBeChecked();
+  });
+
+  test("sends nothing about age: the request is just the address, as before", async ({ page }) => {
+    const auth = await useFakeAuth(page);
+    await openApp(page, "/settings");
+    await requestLink(page);
+    await expect(accountSection(page)).toContainText("Check your inbox");
+    const body = authRequests(auth, "POST /otp")[0].postDataJSON() as Record<string, unknown>;
+    // Field names only: the PKCE code is random text that could contain anything.
+    expect(Object.keys(body).filter((key) => /age|birth|dob/i.test(key))).toEqual([]);
+    expect(body.data ?? {}).toEqual({});
+    expect(body).toMatchObject({ email: TEST_EMAIL, create_user: true });
   });
 });
 
