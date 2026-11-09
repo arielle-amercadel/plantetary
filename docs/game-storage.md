@@ -322,3 +322,55 @@ Tests: `tests/save-status.test.ts` (the leave-page rule), the Step 6 sections of
 | `npx supabase test db` | Database rules, triggers and concurrency (pgTAP), on a local stack | Docker; see [supabase-database.md](supabase-database.md) |
 
 The browser tests never use a real Supabase project. Playwright builds and serves a production build on port 3100 (in `.next/e2e`; `E2E_DEV=1` uses the dev server instead), with `NEXT_PUBLIC_SUPABASE_URL` pointing at a closed local port, and answers every Auth and database request itself with a fake that follows the real rules (RLS by token, revisions, one save per account). **Don't run them against a dev server you started yourself** (`E2E_PORT`) if that server uses a real project in `.env.local`: the fake only answers requests to its own address, so the app would talk to the real project.
+
+## Browser gardens in multiple tabs
+
+Guest players and signed-in players choosing **Keep playing on this device** share one browser garden.
+Only one tab edits it at a time. `browser-garden-coordinator.ts` holds the origin's exclusive
+`plantetary-browser-garden` Web Lock for that browser session. Other tabs display a read-only garden and
+refresh from localStorage events. They never seed saves, write daily rollover, create migration backups,
+save preferences, or reset data. The same rules are enforced by the controller and browser adapter, not
+just by disabled controls.
+
+Close the editing tab to let a waiting tab edit. Refreshing or leaving browser mode releases the lock;
+a new editor loads the latest garden before editing. Background tabs retain ownership: there are no
+expiry timers or forced takeovers that could leave two editors. A browser without Web Locks, or one
+that refuses a lock request, stays read-only. Web Locks require a secure browser context (production
+HTTPS or a supported local development origin).
+
+The save key and JSON format are unchanged. Once ownership and loading are established, garden writes
+remain synchronous. The browser adapter checks the exact previous saved text before each write. An
+unexpected external change pauses saving; download any unsaved changes before explicitly loading the
+latest garden. Stale quest forms preserve their draft but require reopening before saving. Settings
+drafts also cannot overwrite preferences after a garden generation changes. Reset requires the editor
+and retires the old session before loading a fresh garden, preventing old callbacks from restoring removed progress.
+The editor and already-open followers update without page navigation. A small, non-player reset identity
+is stored separately at `plantetary-browser-reset` before any deletion. Drafts compare this identity as
+well as their original quest/category content: an identical-content reset invalidates a draft, while
+ordinary ownership handoff does not. If the marker cannot be stored, reset stops before deleting data.
+A reset that starts but later fails may conservatively invalidate drafts even if rollback restores the garden.
+
+A failed browser reload enters `browser-failed`: saving and garden display are blocked, but unsaved
+changes stay in the session and remain downloadable. Retrying asks again before replacing unsaved data;
+only a successful load discards it. A validated older garden whose migration backup could not be stored
+can be exported and explicitly reset by the editor, provided the original saved bytes are unchanged.
+Unreadable, invalid/unbacked-up, and newer-version failed loads cannot be reset through this recovery
+path. Restore storage access and load safely first; the app explains why reset remains unavailable.
+
+Cloud saves, database rules and import transactions are unchanged. A cloud garden doesn't hold this
+lock. Import previews still read the persisted browser snapshot and recheck it before importing; edits
+saved after that check are not retroactively part of the chosen import.
+
+**Release limitation:** Web Locks coordinate participating app versions only. Reload older Plantetary
+tabs before using the new version. The stored-text check catches sequential interference from older
+code or developer tools, but cannot make an uncoordinated external read/write sequence atomic.
+
+Tests: `tests/browser-garden-coordinator.test.ts`, `tests/game-storage.test.ts`, and
+`e2e/guest-multitab.spec.ts`. Run focused browser tests with one worker, for example
+`E2E_DEV=1 npm run test:e2e -- e2e/guest-multitab.spec.ts --workers=1`, using the isolated fake-Supabase
+server configured by Playwright, never a reused server connected to production.
+
+After a failed reset, the controller checks the persisted garden against its pre-reset baseline.
+If rollback cannot be verified (including a storage-read failure), saving pauses and the original
+in-memory garden remains downloadable. Leave warnings remain active until recovery succeeds.
+A verified rollback does not report lost progress. Successful resets notify same-tab profile listeners.

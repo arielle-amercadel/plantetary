@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import AppShell from "../app-shell";
 import ProfileAvatarArtwork from "../profile-avatar-artwork";
 import { getLocalDateKey } from "../quest-logic";
+import { canResetBrowserData } from "../game-storage-controller";
 import { useQuestStore } from "../quest-store";
 import AccountSection from "./account-section";
 import {
@@ -22,10 +23,10 @@ import {
 } from "../settings-logic";
 
 export default function SettingsPage() {
-  const { totalXp, getDataForExport, hasRestored, storage } = useQuestStore();
+  const { totalXp, getDataForExport, hasRestored, storage, canPlay, writeBrowserData } = useQuestStore();
   // Reset clears this browser only. For a cloud garden it would look like a reset but change nothing
   // saved to the account, so it's turned off until cloud resets exist (Stage 10).
-  const resetUnavailable = storage.mode === "cloud";
+  const resetUnavailable = !canResetBrowserData(storage);
   const [profile, setProfile] = useState<ProfilePreferences>(defaultProfilePreferences);
   const [reminders, setReminders] = useState<ReminderPreferences>(defaultReminderPreferences);
   const [displayName, setDisplayName] = useState(defaultProfilePreferences.displayName);
@@ -37,8 +38,13 @@ export default function SettingsPage() {
   const [reminderError, setReminderError] = useState(false);
   const [dataError, setDataError] = useState(false);
   const [preferencesLoaded, setPreferencesLoaded] = useState(false);
+  const [preferencesDirty, setPreferencesDirty] = useState(false);
+  const [preferencesGeneration, setPreferencesGeneration] = useState(-1);
 
   useEffect(() => {
+    // Keep a stale draft visible, but never let it write after handoff/reset in another tab.
+    if (!storage.mode || (storage.mode === "browser" && storage.phase !== "ready" && storage.phase !== "browser-failed")) return;
+    if (preferencesLoaded && preferencesDirty) return;
     const restorePreferences = () => {
       try {
         const savedProfile = loadProfilePreferences(window.localStorage);
@@ -49,14 +55,16 @@ export default function SettingsPage() {
         setStorageAvailable(false);
       } finally {
         setPreferencesLoaded(true);
+        setPreferencesGeneration(storage.generation);
       }
     };
     const restoreTimer = window.setTimeout(restorePreferences, 0);
     return () => window.clearTimeout(restoreTimer);
-  }, []);
+  }, [storage.generation, storage.mode, storage.phase, preferencesLoaded, preferencesDirty]);
 
   function saveProfile(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (storage.mode === "browser" && preferencesGeneration !== storage.generation) return;
     const nextProfile = { ...profile, displayName: displayName.trim().slice(0, 32) };
     if (!nextProfile.displayName) {
       setProfileError(true);
@@ -65,7 +73,7 @@ export default function SettingsPage() {
     }
 
     try {
-      if (!saveProfilePreferences(window.localStorage, nextProfile)) throw new Error("Storage unavailable");
+      if (!writeBrowserData(storage.generation, () => saveProfilePreferences(window.localStorage, nextProfile))) throw new Error("Storage unavailable");
       setProfile(nextProfile);
       setDisplayName(nextProfile.displayName);
       setProfileError(false);
@@ -79,6 +87,7 @@ export default function SettingsPage() {
 
   function saveReminders(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (storage.mode === "browser" && preferencesGeneration !== storage.generation) return;
     if (reminders.enabled && reminders.questTypes.length === 0) {
       setReminderError(true);
       setReminderMessage("Choose Daily Quests, Personal Quests, or both.");
@@ -86,7 +95,7 @@ export default function SettingsPage() {
     }
 
     try {
-      if (!saveReminderPreferences(window.localStorage, reminders)) throw new Error("Storage unavailable");
+      if (!writeBrowserData(storage.generation, () => saveReminderPreferences(window.localStorage, reminders))) throw new Error("Storage unavailable");
       setReminderError(false);
       setReminderMessage("Reminder preferences saved on this device. Notifications are not sent by Plantetary yet.");
     } catch {
@@ -133,11 +142,14 @@ export default function SettingsPage() {
     }
 
     try {
-      if (!resetPlantetaryStorage(window.localStorage, true)) throw new Error("Storage unavailable");
-      window.location.reload();
+      if (!writeBrowserData(storage.generation, () => resetPlantetaryStorage(window.localStorage, true), true)) throw new Error("Storage unavailable");
+      window.dispatchEvent(new Event(profilePreferencesUpdatedEvent));
+      setPreferencesDirty(false);
+      setDataError(false);
+      setDataMessage("Plantetary data was reset on this device.");
     } catch {
       setDataError(true);
-      setDataMessage("Plantetary could not safely reset its saved data. Please check this browser’s storage settings.");
+      setDataMessage("Plantetary could not safely complete the reset. Check browser storage access and free space, and keep an export before trying again.");
     }
   }
 
@@ -159,12 +171,15 @@ export default function SettingsPage() {
         </header>
 
         <AccountSection />
+        {preferencesLoaded && preferencesGeneration !== storage.generation && storage.mode === "browser" && (
+          <p className="settings-message" role="status">Your garden changed while Settings was open. Your draft is still visible. <button className="settings-action-button" type="button" onClick={() => window.location.reload()}>Reload Settings</button> to load current preferences before saving.</p>
+        )}
 
         <section className="settings-section" aria-labelledby="settings-profile-heading">
           <h2 id="settings-profile-heading">Profile</h2>
           <p className="settings-description">Choose the name and little avatar shown in your cozy corner.</p>
-          <form onSubmit={saveProfile}>
-            <fieldset disabled={!preferencesLoaded || !storageAvailable}>
+          <form onSubmit={saveProfile} onChangeCapture={() => setPreferencesDirty(true)}>
+            <fieldset disabled={!preferencesLoaded || !storageAvailable || (storage.mode === "browser" && (!canPlay || preferencesGeneration !== storage.generation))}>
               <label className="settings-field" htmlFor="profile-display-name">
                 Display name
                 <input
@@ -217,8 +232,8 @@ export default function SettingsPage() {
           <p className="settings-description">
             Save a reminder preference for this device. Plantetary does not currently send notifications or run background reminders.
           </p>
-          <form onSubmit={saveReminders}>
-            <fieldset disabled={!preferencesLoaded || !storageAvailable}>
+          <form onSubmit={saveReminders} onChangeCapture={() => setPreferencesDirty(true)}>
+            <fieldset disabled={!preferencesLoaded || !storageAvailable || (storage.mode === "browser" && (!canPlay || preferencesGeneration !== storage.generation))}>
               <label className="settings-toggle">
                 <input
                   type="checkbox"
@@ -258,10 +273,12 @@ export default function SettingsPage() {
           <h2 id="settings-data-heading">Data management</h2>
           <p className="settings-description">
             Export includes your quests, custom categories, completion history, XP ledger, discoveries, and local preferences. Reset removes Plantetary data and its safety backups from this device.
-            {resetUnavailable && " Your garden is saved to your account, which Reset can't change yet, so it's turned off while you're using your cloud garden."}
+            {storage.mode === "cloud" && " Your garden is saved to your account, which Reset can't change yet, so it's turned off while you're using your cloud garden."}
+            {storage.mode === "browser" && storage.phase === "browser-failed" && resetUnavailable && " Reset is blocked until this garden can be safely loaded and validated. Restore browser storage access or update the app if this save needs a newer version, then try loading again. If changes are unsaved, download them first."}
+            {storage.mode === "browser" && storage.loaded?.problem === "backup-failed" && !resetUnavailable && " Your older garden was validated, but its safety copy could not be stored. Export it first. A confirmed reset permanently removes the garden and its backups. A small amount of free browser storage is required to reset safely."}
           </p>
           <div className="settings-form-row">
-            <button className="settings-action-button" type="button" disabled={!hasRestored} onClick={exportData}>
+            <button className="settings-action-button" type="button" disabled={!hasRestored || !storage.loaded || !preferencesLoaded} onClick={exportData}>
               Export data as JSON
             </button>
             <button className="settings-reset-button" type="button" disabled={resetUnavailable} onClick={resetData}>

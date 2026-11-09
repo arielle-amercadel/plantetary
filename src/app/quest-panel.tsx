@@ -38,11 +38,11 @@ export default function QuestPanel({
 }: QuestPanelProps) {
   const router = useRouter();
   const list = id === "daily-quests" ? "daily" : "personal";
-  const { dailyScheduledQuestIds, todayKey, canPlay } = useQuestStore();
+  const { dailyScheduledQuestIds, todayKey, canPlay, canView } = useQuestStore();
   const progress = getQuestListProgress(quests, list, dailyScheduledQuestIds);
 
   // No quests to play until the garden has loaded: starter quests shown meanwhile must not be playable.
-  if (!canPlay) {
+  if (!canView) {
     return (
       <section className="quest-panel" id={id} aria-labelledby={`${id}-heading`} aria-busy="true">
         <header className="quest-panel-header">
@@ -70,7 +70,7 @@ export default function QuestPanel({
             {progress.completed} / {progress.total} done
           </span>
         </div>
-        {showAddButton && (
+        {showAddButton && canPlay && (
           // The accessible name starts with the visible label ("Add habit", "Add quest"), so speech control
           // can use it (WCAG 2.5.3), and says which list, to tell it apart from the page's other "Add quest" links.
           <Link
@@ -93,10 +93,10 @@ export default function QuestPanel({
             <button
               className={`quest-check${quest.completed ? " is-checked" : ""}`}
               type="button"
-              disabled={list === "daily" && (
+              disabled={!canPlay || (list === "daily" && (
                 !dailyScheduledQuestIds.includes(quest.id) ||
                 !isQuestScheduledOnDate(quest, new Date())
-              )}
+              ))}
               aria-label={`${quest.completed ? "Mark incomplete" : "Complete"}: ${quest.title}`}
               aria-pressed={quest.completed}
               onClick={() => onToggleQuest(quest.id)}
@@ -121,6 +121,7 @@ export default function QuestPanel({
             </span>
             <button
               className="quest-row-action"
+              disabled={!canPlay}
               type="button"
               onClick={() => router.push(`/quests/new?edit=${encodeURIComponent(quest.id)}`)}
               aria-label={`Edit ${quest.title}`}
@@ -130,6 +131,7 @@ export default function QuestPanel({
             </button>
             <button
               className="quest-row-action is-delete"
+              disabled={!canPlay}
               type="button"
               onClick={() => onDeleteQuest(quest.id)}
               aria-label={`Remove ${quest.title}`}

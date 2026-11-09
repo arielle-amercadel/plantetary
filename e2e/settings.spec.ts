@@ -108,10 +108,14 @@ test.describe("Resetting progress", () => {
     await completeQuest(page, QUEST_TITLE);
     await openSettings(page);
 
+    await page.getByRole("radio", { name: "Leaf" }).check();
+    await saveDisplayName(page, "Robin");
     page.once("dialog", (dialog) => dialog.dismiss());
     await page.getByRole("button", { name: "Reset Plantetary data" }).click();
     await expect(page.getByText("Reset canceled. Your saved data is unchanged.")).toBeVisible();
 
+    await expect(page.locator(".player-account .account-copy strong")).toHaveText("Robin");
+    await expect(displayNameField(page)).toHaveValue("Robin");
     await openApp(page);
     await expectHomeXp(page, 5);
   });
@@ -121,15 +125,16 @@ test.describe("Resetting progress", () => {
     await completeQuest(page, QUEST_TITLE);
     await page.getByRole("button", { name: `Remove ${STARTER_DAILY[1]}` }).click();
     await openSettings(page);
+    await page.getByRole("radio", { name: "Leaf" }).check();
     await saveDisplayName(page, "Robin");
 
     page.once("dialog", (dialog) => dialog.accept());
-    await Promise.all([
-      page.waitForEvent("load"),
-      page.getByRole("button", { name: "Reset Plantetary data" }).click(),
-    ]);
+    await page.getByRole("button", { name: "Reset Plantetary data" }).click();
+    await expect(page.getByText("Plantetary data was reset on this device.")).toBeVisible();
     await expect(displayNameField(page)).toHaveValue("Mira");
     expect(await readStorage(page, PROFILE_KEY)).toBeNull();
+    await expect(page.locator(".player-account .account-copy strong")).toHaveText("Mira");
+    await expect(page.locator(".player-account .player-avatar")).toHaveText("M");
 
     await openApp(page);
     await expectHomeXp(page, 0);

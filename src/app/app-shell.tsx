@@ -40,7 +40,8 @@ export default function AppShell({
   children: ReactNode;
   page: "home" | "create" | "journal" | "history" | "all-quests" | "settings";
 }) {
-  const { totalXp, todayKey, pendingPlantGiftIds, hasRestored } = useQuestStore();
+  const { totalXp, todayKey, pendingPlantGiftIds, hasRestored, storage } = useQuestStore();
+  const browserLoadFailed = storage.mode === "browser" && storage.phase === "browser-failed";
   const { level, xpIntoLevel, xpForNextLevel, xpProgressPercent } = getLevelProgress(totalXp);
   const [profile, setProfile] = useState(defaultProfilePreferences);
   // Phones and tablets (up to 1050px, where the sidebar becomes a top bar): the links open from a menu
@@ -185,7 +186,7 @@ export default function AppShell({
           </Link>
         </nav>
 
-        <section className="player-summary" aria-label="Player progress">
+        {!browserLoadFailed && <section className="player-summary" aria-label="Player progress">
           <h2>{profile.displayName}’s adventure</h2>
           <p>Level {level} · Budding botanist</p>
           <div
@@ -201,7 +202,7 @@ export default function AppShell({
           <p className="sidebar-xp-label">
             {xpIntoLevel} / {xpForNextLevel} XP to level {level + 1}
           </p>
-        </section>
+        </section>}
 
         <div className="sidebar-spacer" />
 
@@ -257,7 +258,13 @@ export default function AppShell({
         </header>
         <ImportResult />
         <StorageNotices />
-        {children}
+        {browserLoadFailed && page !== "settings" ? (
+          <main className="settings-content">
+            <h1>Garden unavailable</h1>
+            <p className="settings-description">Use the recovery controls above to keep your unsaved changes or try loading again. Your progress is not shown until it can be loaded safely.</p>
+            <Link className="settings-action-button" href="/settings">Open data management</Link>
+          </main>
+        ) : children}
       </div>
     </div>
   );

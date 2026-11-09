@@ -1,6 +1,8 @@
 "use client";
 
 import { createContext, useContext, useEffect, useState, useSyncExternalStore } from "react";
+import { createBrowserGardenCoordinator } from "./browser-garden-coordinator";
+import { questStorageKey, browserResetStorageKey } from "./quest-storage";
 import { initialStoredQuestData } from "./quest-defaults";
 import type { ReactNode } from "react";
 import type {
@@ -117,8 +119,10 @@ type QuestStoreValue = {
    * True only while a loaded garden is on screen (see isGardenPlayable). Every change to the garden is
    * refused until then, so starter data shown while loading, or before the first-time choice, can't be played.
    */
+  canView: boolean;
   canPlay: boolean;
-  addQuest: (list: QuestListKey, quest: Quest) => void;
+  writeBrowserData: GameStorageController["writeBrowserData"];
+  addQuest: (list: QuestListKey, quest: Quest) => boolean;
   updateQuest: (
     list: QuestListKey,
     questId: string,
@@ -128,7 +132,7 @@ type QuestStoreValue = {
   toggleQuest: (list: QuestListKey, questId: string) => void;
   deleteQuest: (list: QuestListKey, questId: string) => void;
   recoverOrphanedDailyQuest: (questId: string) => void;
-  unwrapPlantGift: (plantId: string) => void;
+  unwrapPlantGift: (plantId: string) => boolean;
   getDataForExport: () => StoredQuestData;
 };
 
@@ -223,6 +227,7 @@ export function QuestProvider({ children }: { children: ReactNode }) {
   /** The generation of the data now in React state. Saves are only sent for the controller's current one. */
   const [appliedGeneration, setAppliedGeneration] = useState(-1);
   const { auth, getSupabaseClient } = useAuth();
+  const [browserCoordinator] = useState(() => createBrowserGardenCoordinator());
   const [controller] = useState<GameStorageController>(() => {
     const deviceChoices = new Set<string>();
     let restoredChoices = false;
@@ -235,7 +240,12 @@ export function QuestProvider({ children }: { children: ReactNode }) {
     };
     return createGameStorageController({
       fallbackData: initialStoredQuestData,
-      createBrowserSession: () => createGameDataSession(createBrowserGameStorage()),
+      browserCoordinator,
+      createBrowserSession: () => createGameDataSession(createBrowserGameStorage(undefined, {
+        canWrite: browserCoordinator.canWrite,
+        pause: browserCoordinator.pause,
+        remember: browserCoordinator.remember,
+      })),
       createCloudSession: (signIn, getAuth) => {
         const client = getSupabaseClient();
         if (!client) return null;
@@ -262,7 +272,20 @@ export function QuestProvider({ children }: { children: ReactNode }) {
   });
   const storage = useSyncExternalStore(controller.subscribe, controller.getSnapshot, () => serverStorageSnapshot);
   const hasRestored = storageStatus !== "loading";
-  const canPlay = hasRestored && isGardenPlayable(storage, appliedGeneration);
+  const canView = hasRestored && isGardenPlayable(storage, appliedGeneration);
+  const canPlay = canView &&
+    (storage.mode !== "browser" || (storage.browserAccess === "editor" && storage.save?.status !== "conflict"));
+  // Check the live generation too: callbacks from a retired render must never edit a new garden.
+  const canMutate = () => canPlay && controller.getSnapshot().generation === appliedGeneration &&
+    (controller.getSnapshot().mode !== "browser" || browserCoordinator.canWrite());
+
+  useEffect(() => {
+    const changed = (event: StorageEvent) => {
+      if (event.storageArea === window.localStorage && (event.key === questStorageKey || event.key === browserResetStorageKey || event.key === null)) controller.browserStorageChanged();
+    };
+    window.addEventListener("storage", changed);
+    return () => window.removeEventListener("storage", changed);
+  }, [controller]);
 
   useEffect(() => {
     controller.setAuth(auth);
@@ -277,8 +300,11 @@ export function QuestProvider({ children }: { children: ReactNode }) {
     // A hidden page may never come back (closed, discarded, or reloaded), so a waiting change is written
     // at once, and unsaved cloud changes are kept in this tab until they're saved or the page returns.
     const onVisibilityChange = () => controller.setPageVisible(document.visibilityState === "visible");
-    const onPageHide = () => controller.setPageVisible(false);
-    const onPageShow = () => controller.setPageVisible(document.visibilityState === "visible");
+    const onPageHide = () => {
+      controller.setPageVisible(false);
+      if (controller.getSnapshot().mode === "browser") controller.suspend();
+    };
+    const onPageShow = () => { controller.resume(); controller.setPageVisible(document.visibilityState === "visible"); };
     document.addEventListener("visibilitychange", onVisibilityChange);
     window.addEventListener("pagehide", onPageHide);
     window.addEventListener("pageshow", onPageShow);
@@ -368,6 +394,7 @@ export function QuestProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     // Never write while loading or after a failed load: the starter data on screen could replace a real save.
     if (storageStatus !== "ready") return;
+    if (storage.mode === "browser" && storage.browserAccess !== "editor" && storage.browserAccess !== "conflict") return;
 
     // Only for the data's own generation: data from an earlier account or storage is never written.
     // Skipped automatically when the data matches what was last saved.
@@ -384,7 +411,7 @@ export function QuestProvider({ children }: { children: ReactNode }) {
       pendingPlantGiftIds,
       starterPlantGiftPending,
     });
-  }, [storageStatus, controller, appliedGeneration, questLists, categoryLists, completionHistory, personalXpByQuestId, personalCompletedOnByQuestId, deletedLegacyPersonalCompletionCount, legacyXpBonus, discoveredPlantIds, pendingPlantGiftIds, starterPlantGiftPending, schemaVersion, todayKey, totalXp]);
+  }, [storageStatus, storage.mode, storage.browserAccess, controller, appliedGeneration, questLists, categoryLists, completionHistory, personalXpByQuestId, personalCompletedOnByQuestId, deletedLegacyPersonalCompletionCount, legacyXpBonus, discoveredPlantIds, pendingPlantGiftIds, starterPlantGiftPending, schemaVersion, todayKey, totalXp]);
 
   const historyForDisplay = completionHistory;
   const streaks = todayKey
@@ -441,7 +468,7 @@ export function QuestProvider({ children }: { children: ReactNode }) {
   }
 
   function addQuest(list: QuestListKey, quest: Quest) {
-    if (!canPlay) return;
+    if (!canMutate()) return false;
     updateQuestList(list, (quests) => [...quests, quest]);
     if (list === "daily") {
       const actionDate = new Date();
@@ -452,6 +479,7 @@ export function QuestProvider({ children }: { children: ReactNode }) {
         actionDate,
       ));
     }
+    return true;
   }
 
   function updateQuest(
@@ -459,7 +487,7 @@ export function QuestProvider({ children }: { children: ReactNode }) {
     questId: string,
     updates: Partial<Omit<Quest, "id" | "completed">>,
   ): boolean {
-    if (!canPlay) return false;
+    if (!canMutate()) return false;
     const existingQuest = questLists[list].find((quest) => quest.id === questId);
     if (!existingQuest) return false;
     const updatedQuest = {
@@ -481,7 +509,7 @@ export function QuestProvider({ children }: { children: ReactNode }) {
   }
 
   function addCategory(list: QuestListKey, name: string) {
-    if (!canPlay) return false;
+    if (!canMutate()) return false;
     const trimmedName = name.trim();
     if (!trimmedName || findCategoryMatch(categoryLists[list], trimmedName)) return false;
 
@@ -493,7 +521,7 @@ export function QuestProvider({ children }: { children: ReactNode }) {
   }
 
   function toggleQuest(list: QuestListKey, questId: string) {
-    if (!canPlay) return;
+    if (!canMutate()) return;
     if (list === "daily") {
       const actionDate = new Date();
       const actionDateKey = getLocalDateKey(actionDate);
@@ -558,7 +586,7 @@ export function QuestProvider({ children }: { children: ReactNode }) {
   }
 
   function deleteQuest(list: QuestListKey, questId: string) {
-    if (!canPlay) return;
+    if (!canMutate()) return;
     if (list === "personal") {
       const quest = questLists.personal.find((item) => item.id === questId);
       if (quest) {
@@ -584,7 +612,7 @@ export function QuestProvider({ children }: { children: ReactNode }) {
   }
 
   function recoverOrphanedDailyQuest(questId: string) {
-    if (!canPlay) return;
+    if (!canMutate()) return;
     const actionDateKey = getLocalDateKey(new Date());
     setCompletionHistory((current) => recoverOrphanedDailyQuestFromHistory(
       current,
@@ -596,11 +624,12 @@ export function QuestProvider({ children }: { children: ReactNode }) {
   }
 
   function unwrapPlantGift(plantId: string) {
-    if (!canPlay) return;
-    if (!pendingPlantGiftIds.includes(plantId)) return;
+    if (!canMutate()) return false;
+    if (!pendingPlantGiftIds.includes(plantId)) return false;
     const result = unwrapPlantGiftState(discoveredPlantIds, pendingPlantGiftIds, plantId);
     setDiscoveredPlantIds(result.discoveredPlantIds);
     setPendingPlantGiftIds(result.pendingPlantGiftIds);
+    return true;
   }
 
   const storageActions: StorageActions = {
@@ -642,7 +671,7 @@ export function QuestProvider({ children }: { children: ReactNode }) {
 
   return (
     <QuestStoreContext.Provider
-      value={{ questLists, categoryLists, totalXp, completedTodayCounts, completedOverallCounts, completionHistoryView, todayKey, discoveredPlantIds, pendingPlantGiftIds, starterPlantGiftPending, currentStreak: streaks.currentStreak, longestStreak: streaks.longestStreak, streakWeek, dailyCompletedQuestIds, dailyScheduledQuestIds, recoverableDailyQuestIds, storageStatus, hasRestored, canPlay, storage, storageActions, addQuest, updateQuest, addCategory, toggleQuest, deleteQuest, recoverOrphanedDailyQuest, unwrapPlantGift, getDataForExport }}
+      value={{ questLists, categoryLists, totalXp, completedTodayCounts, completedOverallCounts, completionHistoryView, todayKey, discoveredPlantIds, pendingPlantGiftIds, starterPlantGiftPending, currentStreak: streaks.currentStreak, longestStreak: streaks.longestStreak, streakWeek, dailyCompletedQuestIds, dailyScheduledQuestIds, recoverableDailyQuestIds, storageStatus, hasRestored, canView, canPlay, writeBrowserData: controller.writeBrowserData, storage, storageActions, addQuest, updateQuest, addCategory, toggleQuest, deleteQuest, recoverOrphanedDailyQuest, unwrapPlantGift, getDataForExport }}
     >
       {children}
     </QuestStoreContext.Provider>

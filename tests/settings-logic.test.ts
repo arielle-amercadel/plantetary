@@ -1,3 +1,4 @@
+import { browserResetStorageKey } from "../src/app/quest-storage";
 import { describe, expect, it } from "vitest";
 import type { SettingsStorage } from "../src/app/settings-logic";
 import {
@@ -106,6 +107,44 @@ describe("Settings data management", () => {
 
     expect(resetPlantetaryStorage(storage, false)).toBe(false);
     expect(JSON.stringify([...values.entries()])).toBe(before);
+  });
+
+  it("does not delete any data if the reset identity cannot be stored", () => {
+    const { storage, values } = makeStorage({ "plantetary-quest-data": "keep this", unrelated: "keep me" });
+    const originalWrite = storage.setItem;
+    storage.setItem = (key, value) => {
+      if (key === browserResetStorageKey) throw new Error("QuotaExceededError");
+      originalWrite(key, value);
+    };
+    expect(resetPlantetaryStorage(storage, true)).toBe(false);
+    expect(values.get("plantetary-quest-data")).toBe("keep this");
+    expect(values.get("unrelated")).toBe("keep me");
+  });
+
+  it("restores removed data when deletion fails after publishing reset identity", () => {
+    const { storage, values } = makeStorage({
+      "plantetary-quest-data": "original garden",
+      "plantetary-quest-data-backup-v1": "original backup",
+    });
+    const originalRemove = storage.removeItem;
+    storage.removeItem = (key) => {
+      if (key === "plantetary-quest-data-backup-v1") throw new Error("Removal blocked");
+      originalRemove(key);
+    };
+    expect(resetPlantetaryStorage(storage, true)).toBe(false);
+    expect(values.get("plantetary-quest-data")).toBe("original garden");
+    expect(values.get("plantetary-quest-data-backup-v1")).toBe("original backup");
+    // The published identity remains: drafts conservatively treat this as a reset attempt.
+    expect(values.get(browserResetStorageKey)).toBeTruthy();
+  });
+
+  it("publishes a new reset identity even when garden content is absent or identical", () => {
+    const { storage } = makeStorage({});
+    expect(resetPlantetaryStorage(storage, true)).toBe(true);
+    const first = storage.getItem(browserResetStorageKey);
+    expect(first).toBeTruthy();
+    expect(resetPlantetaryStorage(storage, true)).toBe(true);
+    expect(storage.getItem(browserResetStorageKey)).not.toBe(first);
   });
 
   it("clears only Plantetary data after confirmation and preserves unrelated browser storage", () => {

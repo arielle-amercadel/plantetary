@@ -26,11 +26,12 @@ export default function StorageNotices() {
   /** The generation whose conflict has the "Load latest garden?" confirmation open, so it never carries over. */
   const [confirmingGeneration, setConfirmingGeneration] = useState<number | null>(null);
   const save = storage.save;
+  const browserLoadFailed = storage.mode === "browser" && storage.phase === "browser-failed";
   const inConflict = storage.phase === "ready" && save?.status === "conflict";
   const failingSave = storage.phase === "ready" && save?.status === "error" && save.nextRetryAt === null && save.hasUnsavedChanges
     ? save
     : null;
-  const confirmingReload = inConflict && confirmingGeneration === storage.generation;
+  const confirmingReload = (inConflict || browserLoadFailed) && confirmingGeneration === storage.generation;
   /** After a load of the latest garden failed: the changes from before are only in the session now. */
   const unsavedBehindFailedLoad = storage.phase === "cloud-failed" && Boolean(save?.hasUnsavedChanges);
 
@@ -71,8 +72,56 @@ export default function StorageNotices() {
     }
   }
 
+  const reloadActions = confirmingReload ? (
+    <div
+      className="storage-confirm"
+      role="alertdialog"
+      aria-labelledby="save-conflict-confirm-heading"
+      aria-describedby="save-conflict-confirm-text"
+    >
+      <p className="settings-message is-error" id="save-conflict-confirm-heading"><strong>Load the latest garden?</strong></p>
+      <p className="settings-description" id="save-conflict-confirm-text">
+        Loading the version saved {storage.mode === "cloud" ? "in your account" : "in this browser"} replaces the garden on this page, including every
+        change here that hasn&apos;t been saved. A copy you downloaded earlier doesn&apos;t include
+        changes made since, so download again if you want to keep them all.
+      </p>
+      <div className="storage-notice-actions">
+        <button className="settings-action-button" type="button" disabled={busy} onClick={downloadUnsaved}>
+          Download my changes
+        </button>
+        <button className="settings-reset-button" type="button" disabled={busy} onClick={() => void loadLatest()}>
+          Load latest anyway
+        </button>
+        <button className="settings-action-button" type="button" disabled={busy} onClick={() => setConfirmingGeneration(null)}>
+          Cancel
+        </button>
+      </div>
+    </div>
+  ) : (
+    <div className="storage-notice-actions">
+      {save?.hasUnsavedChanges && (
+        <button className="settings-action-button" type="button" disabled={busy} onClick={downloadUnsaved}>
+          Download my changes
+        </button>
+      )}
+      <button className="settings-reset-button" type="button" disabled={busy} onClick={askToLoadLatest}>
+        {busy ? "Loading…" : browserLoadFailed ? "Try loading latest garden" : "Load latest garden"}
+      </button>
+    </div>
+  );
+
   return (
     <>
+      {storage.mode === "browser" && storage.browserAccess && storage.browserAccess !== "editor" && storage.browserAccess !== "conflict" && (
+        <section className="settings-section storage-notice" aria-label="Browser garden editing">
+          <h2>Viewing your garden</h2>
+          <p className="settings-description" role="status">
+            {storage.browserAccess === "unsupported"
+              ? "This browser cannot safely coordinate editing between tabs. Your garden is read-only. Use an up-to-date browser to edit it."
+              : "Plantetary is open in another tab. You can view your garden here, but editing is paused to protect your progress. Close the editing tab to resume here automatically."}
+          </p>
+        </section>
+      )}
       {storage.phase === "choose" && (
         <section className="settings-section storage-notice" aria-labelledby="cloud-choice-heading">
           <h2 id="cloud-choice-heading">Start your cloud garden?</h2>
@@ -163,19 +212,32 @@ export default function StorageNotices() {
         </section>
       )}
 
-      {storage.phase === "ready" && storage.mode === "browser" && storage.loaded?.status === "failed" && (
-        <p className="settings-message is-error storage-notice" role="alert">
-          Plantetary couldn&apos;t safely read the progress saved in this browser, so changes won&apos;t be saved
-          this visit. Your saved progress hasn&apos;t been changed.
-        </p>
+      {browserLoadFailed && (
+        <section className="settings-section storage-notice is-warning" aria-labelledby="browser-failed-heading">
+          <h2 id="browser-failed-heading">Your browser garden couldn&apos;t be loaded</h2>
+          <p className="settings-description" role="alert">
+            {storage.problem === "backup-failed"
+              ? "Your older garden was read successfully, but its safety copy could not be stored. Saving is paused. In Settings, export your garden before choosing whether to reset it."
+              : storage.problem === "newer-version"
+                ? "This garden was saved by a newer version of Plantetary. Update the app before loading it. Saving and reset are blocked to protect your data."
+                : storage.problem === "invalid-save"
+                  ? "The saved garden could not be validated or safely backed up. Saving and reset are blocked, and the original has been kept."
+                  : "Plantetary could not safely load the garden saved in this browser. Saving is paused and your saved garden has not been replaced."}
+          </p>
+          {save?.hasUnsavedChanges && (
+            <p className="settings-description">Your unsaved changes are still kept on this page. Download them before retrying. They will only be replaced when loading the latest garden succeeds.</p>
+          )}
+          {reloadActions}
+        </section>
       )}
 
       {inConflict && save.status === "conflict" && (
         <section className="settings-section storage-notice is-warning" aria-labelledby="save-conflict-heading">
-          <h2 id="save-conflict-heading">Your garden changed somewhere else</h2>
+          <h2 id="save-conflict-heading">{storage.browserResetUnverified ? "Your progress may not be saved" : "Your garden changed somewhere else"}</h2>
           <p className="settings-description" role="alert">
-            Your garden was saved from another tab or device after this page loaded, so saving here has paused
-            to keep from overwriting it.{" "}
+            {storage.browserResetUnverified
+              ? "The reset failed and Plantetary could not verify that your saved garden was restored. Your original garden is retained on this page. Download it before leaving or reloading. Saving is paused."
+              : "Your garden was saved from another tab or device after this page loaded, so saving here has paused to keep from overwriting it."}{" "}
             {save.hasUnsavedChanges
               ? <>Your latest changes on this page haven&apos;t been saved. {describeConflictBackup(save.backup)}</>
               : null}
@@ -184,43 +246,7 @@ export default function StorageNotices() {
             Download your changes to keep a copy, then load the latest garden to keep playing. Changes made here
             until then won&apos;t be saved.
           </p>
-          {confirmingReload ? (
-            <div
-              className="storage-confirm"
-              role="alertdialog"
-              aria-labelledby="save-conflict-confirm-heading"
-              aria-describedby="save-conflict-confirm-text"
-            >
-              <p className="settings-message is-error" id="save-conflict-confirm-heading"><strong>Load the latest garden?</strong></p>
-              <p className="settings-description" id="save-conflict-confirm-text">
-                Loading the version saved in your account replaces the garden on this page, including every
-                change here that hasn&apos;t been saved. A copy you downloaded earlier doesn&apos;t include
-                changes made since, so download again if you want to keep them all.
-              </p>
-              <div className="storage-notice-actions">
-                <button className="settings-action-button" type="button" disabled={busy} onClick={downloadUnsaved}>
-                  Download my changes
-                </button>
-                <button className="settings-reset-button" type="button" disabled={busy} onClick={() => void loadLatest()}>
-                  Load latest anyway
-                </button>
-                <button className="settings-action-button" type="button" disabled={busy} onClick={() => setConfirmingGeneration(null)}>
-                  Cancel
-                </button>
-              </div>
-            </div>
-          ) : (
-            <div className="storage-notice-actions">
-              {save.hasUnsavedChanges && (
-                <button className="settings-action-button" type="button" disabled={busy} onClick={downloadUnsaved}>
-                  Download my changes
-                </button>
-              )}
-              <button className="settings-reset-button" type="button" disabled={busy} onClick={askToLoadLatest}>
-                {busy ? "Loading…" : "Load latest garden"}
-              </button>
-            </div>
-          )}
+          {reloadActions}
         </section>
       )}
 

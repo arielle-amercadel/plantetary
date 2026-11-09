@@ -155,7 +155,7 @@ export default function PlantJournalScreen() {
   /** After reaching the first or last page, that button is disabled, so focus moves to the other one. */
   const pendingPageFocus = useRef<"previous" | "next" | null>(null);
   const [revealedPlantId, setRevealedPlantId] = useState<string | null>(null);
-  const { totalXp, discoveredPlantIds, pendingPlantGiftIds, unwrapPlantGift, hasRestored } = useQuestStore();
+  const { totalXp, discoveredPlantIds, pendingPlantGiftIds, unwrapPlantGift, hasRestored, canPlay } = useQuestStore();
   const { level, xpIntoLevel, xpForNextLevel } = getLevelProgress(totalXp);
   const nextDiscovery = getNextPlantProgress(totalXp, discoveredPlantIds, pendingPlantGiftIds);
   const giftsAreLastRemaining = getPlantCollectionStatus(totalXp, discoveredPlantIds, pendingPlantGiftIds) === "gifts-waiting";
@@ -244,9 +244,9 @@ export default function PlantJournalScreen() {
           <button
             className="journal-gift-button"
             type="button"
+            disabled={!canPlay}
             onClick={() => {
-              unwrapPlantGift(nextGift.id);
-              setRevealedPlantId(nextGift.id);
+              if (unwrapPlantGift(nextGift.id)) setRevealedPlantId(nextGift.id);
             }}
           >
             Unwrap gift
