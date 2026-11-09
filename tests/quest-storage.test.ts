@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { getStreakValues, getXpLedgerTotal } from "../src/app/quest-logic";
 import {
+  browserResetStorageKey,
   invalidBackupStorageKey,
   latestQuestSaveVersion,
   loadQuestData,
@@ -578,7 +579,7 @@ describe("default browser storage", () => {
 });
 
 describe("storage keys", () => {
-  it("are all cleared by the Settings reset", () => {
+  it("are cleared by Settings reset, retaining only non-player reset metadata", () => {
     const storage = createStorage({
       [questStorageKey]: "save",
       [validBackupStorageKey]: "backup",
@@ -586,6 +587,6 @@ describe("storage keys", () => {
     });
 
     expect(resetPlantetaryStorage(storage, true)).toBe(true);
-    expect(storage.values.size).toBe(0);
+    expect([...storage.values.keys()]).toEqual([browserResetStorageKey]);
   });
 });

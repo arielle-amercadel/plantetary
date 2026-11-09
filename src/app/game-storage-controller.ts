@@ -1,3 +1,4 @@
+import type { BrowserGardenCoordinator, BrowserAccess, BrowserCoordinationEvent } from "./browser-garden-coordinator";
 import type { AuthState } from "./auth/auth-controller";
 import { inspectBrowserGarden, type BrowserGardenSummary, type BrowserSavePreview } from "./browser-save-preview";
 import type { CloudGameStorage, CloudGardenDownload, CloudImportResult, VerifiedSignIn } from "./cloud-game-storage";
@@ -21,8 +22,8 @@ export type StorageTarget =
 /**
  * - `waiting`: checking who's signed in.
  * - `loading`: reading the save.
- * - `ready`: `loaded` is the data to play. For browser storage, `loaded.status` may be `failed`: the
- *   save couldn't be read safely, so it's shown but never written over (see `loaded.problem`).
+ * - `ready`: `loaded` is the data to play.
+ * - `browser-failed`: no playable garden; a validated legacy save may be retained only for export/reset.
  * - `choose`: a verified account with no cloud save. Nothing is shown or written until the player
  *   chooses to start a fresh cloud garden or to keep playing on this device.
  * - `cloud-failed`: the cloud save couldn't be loaded. Nothing is shown or written: never starter data
@@ -32,7 +33,7 @@ export type StorageTarget =
  * - `import-unresolved`: an import was sent, and whether it happened isn't known yet (`unresolvedImport`).
  *   Nothing is shown or written until it's verified, retried or left (see `verifyBrowserImport`).
  */
-export type StoragePhase = "waiting" | "loading" | "ready" | "choose" | "cloud-failed" | "importing" | "import-unresolved";
+export type StoragePhase = "waiting" | "loading" | "ready" | "choose" | "cloud-failed" | "browser-failed" | "importing" | "import-unresolved";
 
 export type StorageControllerSnapshot = {
   /**
@@ -40,11 +41,15 @@ export type StorageControllerSnapshot = {
    * only accepted for the current generation, so data from an earlier one can never be written.
    */
   generation: number;
+  browserAccess?: BrowserAccess;
+  /** Local reset identity, independent of garden content and ordinary ownership handoff. */
+  browserResetToken?: string | null;
+  browserResetUnverified?: boolean;
   phase: StoragePhase;
   mode: "browser" | "cloud" | null;
   /** The signed-in account this storage belongs to (cloud), or that chose this device (browser), or null. */
   account: VerifiedSignIn["user"] | null;
-  /** The data to play, once `phase` is `ready`. */
+  /** Playable data in `ready`, or a validated legacy save for export/reset in `browser-failed`. */
   loaded: { status: "ready" | "failed"; data: StoredQuestData; problem?: GameStorageProblem } | null;
   /** Why loading failed (`cloud-failed`, or a browser load that failed). */
   problem: GameStorageProblem | null;
@@ -119,10 +124,17 @@ export type AccountChangePreparation = {
  * Whether the garden on screen can be played: the controller's current generation has loaded data, and
  * that same generation is what's on screen. Until then (checking who's signed in, loading, the first-time
  * choice, a failed cloud load, or the moment before new data is shown), nothing may change it.
- * A browser save that couldn't be read safely is playable, as it always has been, but never saved.
+ * A failed browser load is not playable; any retained unsaved garden remains available for recovery.
  */
 export function isGardenPlayable(storage: StorageControllerSnapshot, shownGeneration: number): boolean {
   return storage.phase === "ready" && storage.loaded !== null && shownGeneration === storage.generation;
+}
+
+/** UI eligibility only; the mutation boundary also rechecks ownership, generation and stored bytes. */
+export function canResetBrowserData(storage: StorageControllerSnapshot): boolean {
+  return storage.mode === "browser" && storage.browserAccess === "editor" && storage.save?.status !== "conflict" &&
+    ((storage.phase === "ready" && storage.loaded?.status === "ready") ||
+     (storage.phase === "browser-failed" && storage.loaded?.problem === "backup-failed"));
 }
 
 /** An email with most of its name hidden: enough for its owner to recognise, not to read off a shared screen. */
@@ -199,6 +211,7 @@ export type GameStorageControllerOptions = {
   /** Starter data, used before anything loads and for a fresh cloud garden. */
   fallbackData: StoredQuestData;
   createBrowserSession: () => GameDataSession;
+  browserCoordinator?: BrowserGardenCoordinator;
   /**
    * A cloud session for this verified sign-in, or null if cloud saving isn't available. With its storage's
    * import methods (a `CloudSessionHandle`), this browser's garden can be imported into the account.
@@ -218,6 +231,9 @@ export type GameStorageControllerOptions = {
 };
 
 export type GameStorageController = {
+  /** Browser-only local settings/reset boundary. A stale UI callback cannot authorize a write. */
+  writeBrowserData: (generation: number, action: () => boolean, reset?: boolean) => boolean;
+  browserStorageChanged: () => void;
   readCloudGardenForDownload: () => Promise<CloudGardenDownload>;
   getSnapshot: () => StorageControllerSnapshot;
   subscribe: (listener: () => void) => () => void;
@@ -328,6 +344,7 @@ export function createGameStorageController(options: GameStorageControllerOption
   const tickets = new Map<number, { session: GameDataSession | null; generation: number; accountId: string | null }>();
   let snapshot: StorageControllerSnapshot = {
     generation: 0,
+    ...(options.browserCoordinator ? { browserAccess: "follower" as const } : {}),
     phase: "waiting",
     mode: null,
     account: null,
@@ -581,15 +598,17 @@ export function createGameStorageController(options: GameStorageControllerOption
     const mode = snapshot.mode;
     switch (save.status) {
       case "saved":
-        update({ phase: "ready", loaded: { status: "ready", data }, problem: null, save });
+        update({ phase: "ready", browserResetUnverified: false, loaded: { status: "ready", data }, problem: null, save });
         return;
       case "empty":
         update({ phase: "choose", loaded: null, problem: null, save });
         return;
       case "load-failed":
         if (mode === "browser") {
-          // As always for browser saves: shown, so the player can keep playing, but never written over.
-          update({ phase: "ready", loaded: { status: "failed", data, ...(problem ? { problem } : {}) }, problem: problem ?? null, save });
+          // Never present fallback starter data as a loaded garden. A validated legacy save is kept
+          // only for export/reset recovery; failed reloads retain unsaved data inside the session.
+          update({ phase: "browser-failed", loaded: problem === "backup-failed" ? { status: "failed", data, problem } : null,
+            problem: problem ?? null, save });
         } else {
           update({ phase: "cloud-failed", loaded: null, problem: save.problem ?? problem ?? "unknown", save });
         }
@@ -600,9 +619,28 @@ export function createGameStorageController(options: GameStorageControllerOption
     }
   }
 
+  function browserChanged(event: BrowserCoordinationEvent) {
+    if (target.kind !== "browser") return;
+    const coordinator = options.browserCoordinator;
+    if (!coordinator) return;
+    if (event === "acquired") { start(); return; }
+    if (event === "changed" && coordinator.getAccess() === "editor") {
+      if (!coordinator.hasExternalChange() && snapshot.browserResetToken === coordinator.getResetToken()) return;
+      coordinator.pause();
+      session?.pauseForConflict?.();
+    } else if (event === "changed" && coordinator.getAccess() !== "conflict") {
+      // Followers have no editable garden state. A new session also invalidates old form callbacks.
+      start();
+      return;
+    }
+    update({ browserAccess: coordinator.getAccess(), browserResetToken: coordinator.getResetToken(), save: session?.getSnapshot() ?? null });
+  }
+
   /** Replaces the session with a fresh one for the current target, and loads it. */
   function start() {
     closeSession();
+    if (target.kind === "browser") options.browserCoordinator?.start(browserChanged);
+    else options.browserCoordinator?.stop();
     // Any import belongs to the session being replaced: its plan, its unresolved state and its running
     // request no longer apply to what's shown next.
     importer = null;
@@ -648,7 +686,9 @@ export function createGameStorageController(options: GameStorageControllerOption
     update({
       generation,
       phase: "loading",
+      browserResetUnverified: false,
       mode: target.kind,
+      ...(options.browserCoordinator ? { browserAccess: options.browserCoordinator.getAccess(), browserResetToken: options.browserCoordinator.getResetToken() } : {}),
       account,
       loaded: null,
       problem: null,
@@ -756,6 +796,33 @@ export function createGameStorageController(options: GameStorageControllerOption
   }
 
   return {
+    browserStorageChanged() { options.browserCoordinator?.changed(); },
+    writeBrowserData(generation, action, reset = false) {
+      if (generation !== snapshot.generation) return false;
+      // Cloud-only profile/reminder settings keep their existing local behavior; reset stays browser-only.
+      if (target.kind === "cloud" && !reset) return action();
+      if (!session || target.kind !== "browser" || !options.browserCoordinator?.canWrite()) return false;
+      if (reset ? !canResetBrowserData(snapshot) : snapshot.phase !== "ready" || snapshot.loaded?.status !== "ready") return false;
+      if (options.browserCoordinator.hasExternalChange()) { browserChanged("changed"); return false; }
+      if (!action()) {
+        // The reset helper attempts rollback, but its failure is not proof that progress survived.
+        // Compare against the pre-action baseline; unreadable storage is unverified too.
+        if (reset && options.browserCoordinator.hasExternalChange()) {
+          options.browserCoordinator.pause();
+          session.pauseForConflict?.(session.getUnsavedData() ?? snapshot.loaded?.data);
+          update({ browserAccess: options.browserCoordinator.getAccess(), browserResetUnverified: true,
+            browserResetToken: options.browserCoordinator.getResetToken(), save: session.getSnapshot() });
+        }
+        if (reset) update({ browserResetToken: options.browserCoordinator.getResetToken() });
+        return false;
+      }
+      if (reset) {
+        // Explicit reset discards this session. No stale state or recovery may re-seed the old garden.
+        acknowledgedLoss = { session, data: session?.getUnsavedData() ?? null };
+        start();
+      }
+      return true;
+    },
     async readCloudGardenForDownload() {
       const owner = session;
       const ownImporter = importer;
@@ -785,6 +852,8 @@ export function createGameStorageController(options: GameStorageControllerOption
     },
     requestSave(generation, data) {
       if (!session || generation !== snapshot.generation || snapshot.phase !== "ready") return "blocked";
+      if (target.kind === "browser" && options.browserCoordinator &&
+          !options.browserCoordinator.canWrite() && options.browserCoordinator.getAccess() !== "conflict") return "blocked";
       return session.requestSave(data);
     },
     startFreshCloudGarden() {
@@ -807,7 +876,7 @@ export function createGameStorageController(options: GameStorageControllerOption
       return true;
     },
     async retryLoad() {
-      if (snapshot.phase !== "cloud-failed") return;
+      if (snapshot.phase !== "cloud-failed" && snapshot.phase !== "browser-failed") return;
       const current = session;
       // A session that closed (its account changed) can't load again; a fresh one is made for the target.
       if (!current || current.getSnapshot().status === "closed") {
@@ -815,19 +884,26 @@ export function createGameStorageController(options: GameStorageControllerOption
         return;
       }
       const generation = snapshot.generation + 1;
-      update({ generation, phase: "loading", problem: null });
+      if (target.kind === "browser") options.browserCoordinator?.acknowledgeConflict();
+      update({ generation, phase: "loading", loaded: null, problem: null });
       const outcome = await current.reload(fallbackData);
       if (outcome.cancelled) return;
+      if (target.kind === "browser" && outcome.status === "failed" && outcome.problem !== "backup-failed") options.browserCoordinator?.pause();
+      if (options.browserCoordinator) update({ browserAccess: options.browserCoordinator.getAccess(), browserResetToken: options.browserCoordinator.getResetToken() });
       applyLoad(current, generation, outcome.data, outcome.problem);
     },
     async reloadLatest() {
       const current = session;
-      if (!current || snapshot.phase !== "ready") return null;
+      if (!current || (snapshot.phase !== "ready" && snapshot.phase !== "browser-failed")) return null;
       const generation = snapshot.generation + 1;
+      if (target.kind === "browser") options.browserCoordinator?.acknowledgeConflict();
       // A new generation at once, so nothing on screen now can be saved over the latest save.
-      update({ generation, phase: "loading", loaded: null });
+      update({ generation, phase: "loading", loaded: null,
+        ...(options.browserCoordinator ? { browserAccess: options.browserCoordinator.getAccess(), browserResetToken: options.browserCoordinator.getResetToken() } : {}) });
       const outcome = await current.reload(fallbackData);
       if (outcome.cancelled) return outcome;
+      if (target.kind === "browser" && outcome.status === "failed" && outcome.problem !== "backup-failed") options.browserCoordinator?.pause();
+      if (options.browserCoordinator) update({ browserAccess: options.browserCoordinator.getAccess(), browserResetToken: options.browserCoordinator.getResetToken() });
       applyLoad(current, generation, outcome.data, outcome.problem);
       return outcome;
     },

@@ -34,13 +34,22 @@ function CreateQuestRoute() {
   const editId = searchParams.get("edit");
   // A link from a quest panel can choose the type. Editing ignores it: the quest's own list decides.
   const initialType = editId === null ? readQuestTypeParam(searchParams.get("type")) : null;
-  const { questLists, hasRestored } = useQuestStore();
-  const editSelection = editId === null ? undefined : findQuestForEditing(questLists, editId);
-  const editingQuest = editSelection?.quest;
-  const editingList: QuestListKey | undefined = editSelection?.list;
+  const { questLists, canView, storage } = useQuestStore();
+  const routeKey = editId ?? `create-${initialType ?? ""}`;
+  const gardenKey = storage.mode === "browser"
+    ? `browser-${storage.account?.id ?? "guest"}`
+    : `${storage.mode}-${storage.account?.id ?? ""}-${storage.generation}`;
+  const formKey = `${gardenKey}:${routeKey}`;
+  // Pin the opened quest/form across follower refreshes. Replacing the garden must not erase a draft.
+  const [opened, setOpened] = useState<{ key: string; selection: ReturnType<typeof findQuestForEditing> } | null>(null);
+  if (canView && opened?.key !== formKey) {
+    setOpened({ key: formKey, selection: editId === null ? undefined : findQuestForEditing(questLists, editId) });
+  }
+  const selection = opened?.key === formKey ? opened : null;
+  const editingQuest = selection?.selection?.quest;
+  const editingList: QuestListKey | undefined = selection?.selection?.list;
 
-  // Until the garden loads, only the shell: it shows any choice or error about where the garden is saved.
-  if (!hasRestored) {
+  if (!selection) {
     return (
       <AppShell page="create">
         <main className="create-quest-content" aria-busy="true" />
@@ -90,7 +99,12 @@ function CreateQuestForm({
 }) {
   const isEditing = editId !== null;
   const router = useRouter();
-  const { addQuest, updateQuest, addCategory, categoryLists, todayKey } = useQuestStore();
+  const { addQuest, updateQuest, addCategory, questLists, categoryLists, todayKey, canPlay, storage } = useQuestStore();
+  const source = JSON.stringify([questLists, categoryLists]);
+  const [openedSource] = useState(source);
+  const [openedResetToken] = useState(storage.browserResetToken);
+  // Acquiring the lock may replace an identical session. Only changed source data invalidates a draft.
+  const staleForm = openedSource !== source || openedResetToken !== storage.browserResetToken;
   const [title, setTitle] = useState(editingQuest?.title ?? "");
   const [questType, setQuestType] = useState<QuestListKey | "">(editingList ?? initialType ?? "");
   const [categorySelection, setCategorySelection] = useState(editingQuest?.category ?? "");
@@ -135,7 +149,7 @@ function CreateQuestForm({
     ? Boolean(repeatSchedule) && (repeatSchedule !== "Selected days" || selectedDays.length > 0)
     : questType === "personal" && isSavableDueDate(dueDate);
   const canSave = Boolean(
-    title.trim() && questType && categoryValue && !categoryError && difficulty && hasValidSchedule,
+    canPlay && !staleForm && title.trim() && questType && categoryValue && !categoryError && difficulty && hasValidSchedule,
   );
 
   function selectQuestType(type: QuestListKey) {
@@ -185,7 +199,10 @@ function CreateQuestForm({
         difficulty,
         completed: false,
       };
-      addQuest(questType, quest);
+      if (!addQuest(questType, quest)) {
+        setSaveError("Your garden changed before this quest could be added. Keep your draft and reopen the form before saving.");
+        return;
+      }
     }
     router.push("/");
   }
@@ -208,6 +225,7 @@ function CreateQuestForm({
           <FigmaIcon src="/icon-sprout.svg" size={28} />
         </header>
 
+        {staleForm && <p className="settings-message is-error" role="alert">Your garden changed while this form was open. Copy any notes you want to keep, then reopen the quest form before saving.</p>}
         <form className="create-quest-layout" onSubmit={saveQuest}>
           <div className="create-form-panel">
             <div className="create-form-contents">

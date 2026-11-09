@@ -13,6 +13,7 @@ import {
 } from "./quest-logic";
 import { migratePlantDiscoveries } from "./plant-journal-logic";
 
+export const browserResetStorageKey = "plantetary-browser-reset";
 export const questStorageKey = "plantetary-quest-data";
 export const validBackupStorageKey = "plantetary-quest-data-backup-v1";
 export const invalidBackupStorageKey = "plantetary-quest-data-invalid-backup";
@@ -25,6 +26,7 @@ export type LoadedQuestData = {
   data: StoredQuestData;
   /** False when saving could destroy data that could not be read or backed up. */
   canPersist: boolean;
+  problem?: "backup-failed" | "storage";
 };
 
 function getBrowserStorage(): QuestStorage | undefined {
@@ -200,6 +202,7 @@ export function loadQuestData(
   getStorage: GetQuestStorage = getBrowserStorage,
 ): LoadedQuestData {
   let canPersist = true;
+  let problem: LoadedQuestData["problem"];
   let restoredData = fallbackData;
 
   try {
@@ -211,21 +214,24 @@ export function loadQuestData(
         if (save.status === "valid") {
           if (save.upgraded && !preserveRawValueIfAbsent(storage, validBackupStorageKey, rawData)) {
             canPersist = false;
+            problem = "backup-failed";
             console.error("Plantetary could not back up saved data before migrating it. Changes will not be saved this session.");
           }
           restoredData = save.data;
         } else if (!preserveRawValueIfAbsent(storage, invalidBackupStorageKey, rawData)) {
           canPersist = false;
+          problem = "backup-failed";
           console.error("Plantetary could not back up invalid saved data. Defaults will not overwrite it this session.");
         }
       }
     }
   } catch {
     canPersist = false;
+    problem = "storage";
     console.error("Plantetary could not safely access saved data. Changes will not be saved this session.");
   }
 
-  return { data: restoredData, canPersist };
+  return { data: restoredData, canPersist, ...(problem ? { problem } : {}) };
 }
 
 /** Writes the whole save, returning false rather than throwing if the browser refuses it. */

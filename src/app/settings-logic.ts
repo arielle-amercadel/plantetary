@@ -1,3 +1,4 @@
+import { browserResetStorageKey } from "./quest-storage";
 import type { StoredQuestData } from "./quest-types";
 
 export const reminderPreferencesStorageKey = "plantetary-reminder-preferences-v1";
@@ -151,6 +152,11 @@ export function resetPlantetaryStorage(storage: SettingsStorage, confirmed: bool
 
   const removed: string[] = [];
   try {
+    // Publish identity before deletion, even for an absent/identical garden. If storage is too full
+    // for this small marker, fail without removing anything. An interrupted reset still fences drafts.
+    const resetToken = crypto.randomUUID();
+    storage.setItem(browserResetStorageKey, resetToken);
+    if (storage.getItem(browserResetStorageKey) !== resetToken) return false;
     for (const key of plantetaryStorageKeys) {
       storage.removeItem(key);
       removed.push(key);
