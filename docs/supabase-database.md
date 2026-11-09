@@ -119,8 +119,28 @@ migrations must not be edited or reapplied manually.
 
 Plantetary is live at https://plantetary.vercel.app, using the hosted Supabase project **plantetary** (Postgres 17, matching `major_version` in `supabase/config.toml`).
 
-- **Previously recorded production migrations (not reverified during staging testing):** the first seven files in `supabase/migrations/` were recorded as applied, through Stage 8's `20261107090000_add_browser_import_rpc.sql`, with each in both the Local and Remote columns of the migration listing.
-- **Previously recorded as pending in production; verify current production history before applying:** `20261108090000_remove_player_delete_permissions.sql`, with **Applying a new migration to the hosted project** below. It changes no rows: every save and backup stays exactly as it is. Afterwards, a signed-in player who tries to delete their save or a backup through the API gets `permission denied`; nothing in the app does that, so players notice nothing. Saving, loading, conflict and upgrade backups, imports, backup limits and deleting an account all work as before. The deployed app needs no change, so it can be applied before or after any release; to undo it, a new migration would grant `delete` again and recreate the two policies.
+### Production metadata verification — November 8, 2026
+
+Read-only production metadata verification was completed on November 8, 2026
+(U.S. Central time) for **plantetary** (`egtqukzfpuegqzsheehv`). The recorded
+results were:
+
+- All eight expected migrations are recorded as applied, including `20261108090000_remove_player_delete_permissions.sql`.
+- Effective table and column permissions match the repository configuration.
+- RLS is enabled on all three public application tables, and all nine policies contain the expected `auth.uid()` ownership checks.
+- The two private tables have RLS disabled; private-schema restrictions and denied application-role grants protect them. Neither `anon` nor `authenticated` has private-schema USAGE/CREATE, superuser or BYPASSRLS privileges.
+- All five expected functions have the intended security settings, ownership, search paths and execution permissions.
+- All five account-related foreign keys are validated and configured with `ON DELETE CASCADE`.
+- All four expected application triggers are present, enabled and connected to the expected helpers.
+
+**Limits:** these were metadata inspections, not penetration tests or behavioral
+isolation tests. No production accounts were created or deleted. Function
+bodies were not independently reviewed. Trigger `WHEN` expressions remain
+unverified: the original inspection query failed, and the corrected query
+omitted them. Provider retention and external deletion behavior were not verified.
+
+### Historical production observations
+
 - **Checked from outside, as an anonymous visitor (read-only):** requests for `quest_saves`, `save_backups` and `profiles` with only the publishable key are refused (HTTP 401, permission denied); the `private` schema isn't exposed; only email sign-in is enabled, with email confirmation on.
 - **Real players' data lives here now.** Apply any new migration with **Applying a new migration to the hosted project** below, backup first, and test by hand only with your own test addresses.
 

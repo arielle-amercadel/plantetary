@@ -79,6 +79,11 @@ Confirm ownership (section 1) and find the account (section 2), then delete it (
 
 Deleting the user removes, in the same step, everything Plantetary's database holds for them: their save, all backups, any profile row, their revision counter, and backup-retention lock rows (every table's `user_id` is `on delete cascade`; see [supabase-database.md](supabase-database.md)). Players can't delete their save or backups themselves; only deleting the account (or the owner) can.
 
+Production's five cascade relationships were verified through read-only metadata
+inspection on November 8, 2026; this did not exercise an actual production
+deletion. See [the production verification record](supabase-database.md#production-metadata-verification--november-8-2026).
+The staging deletion test below remains separate behavioral evidence.
+
 Don't delete rows table by table instead, and don't use the `service_role` or secret key from anywhere outside the dashboard.
 
 **Check that it's gone:**

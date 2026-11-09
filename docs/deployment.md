@@ -8,7 +8,7 @@ Plantetary is live at **https://plantetary.vercel.app**, deployed by Vercel from
 
 **Done:**
 
-- **Production database (previously recorded; not reverified during staging testing):** the first seven migrations applied to the hosted Supabase project **plantetary**, through Stage 8 (see [supabase-database.md → Hosted project status](supabase-database.md#hosted-project-status)). The eighth, which removes players' delete permissions, was recorded as pending; verify production history before treating that as current.
+- **Production database metadata:** verified read-only on November 8, 2026 (U.S. Central time). All eight migrations and the expected permissions, RLS policies, function settings, cascade constraints and trigger wiring were confirmed. See [the production verification record](supabase-database.md#production-metadata-verification--november-8-2026) for scope and limitations. Production account deletion and two-account behavioral isolation were not tested.
 - **Vercel:** the two Supabase variables set for Production (below), and the site redeployed with them.
 - **Supabase Auth:** Site URL and Redirect URLs set for https://plantetary.vercel.app.
 - **Checked by hand on the live site:** sign-in, cloud saving and loading, guest progress staying in the browser, and the mobile layout.
@@ -39,7 +39,7 @@ No secret belongs anywhere in this setup. The app uses the project URL and the *
 The notice remains a draft; tests check source text and behavior, not legal or publication approval.
 Before publication, the owner must confirm:
 
-- The hosted migration state and effective grants/RLS, especially whether `20261108090000_remove_player_delete_permissions.sql` is applied. Repository migrations and tests do not establish production permissions.
+- Production metadata verification is [recorded separately](supabase-database.md#production-metadata-verification--november-8-2026). Remaining database verification gaps include independent function-body review, trigger `WHEN` expressions and behavioral isolation testing. Metadata checks do not establish successful production account deletion.
 - Ownership and monitoring of the support mailbox, request handling capacity for the stated 30-day aim, and the ownership-verification process.
 - Actual maintenance-copy retention procedures supporting the stated 30-day deletion practice.
 - A verified production account-deletion procedure, including checking application rows are removed and identifying provider-held copies. The [single-account staging test](account-deletion.md#staging-account-deletion-test-record) provides limited staging evidence only; it does not complete this requirement.
